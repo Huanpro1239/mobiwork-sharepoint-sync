@@ -15,24 +15,28 @@
       "page_size_param": null,
       "page_size": 500,
       "data_path": "data",
-      "explode_field": "thoi_gian_vt"
+      "explode_field": "thoi_gian_vt",
+      "fixed_params": {}
     },
     {
       "key": "new_customer",
       "enabled": false,
       "name": "MoMoiKhachHang",
       "folder": "02_MoMoiKhachHang",
-      "url": null,
-      "url_env": "MOBIWORK_CUSTOMER_URL",
+      "url": "https://openapi.mobiwork.vn/OpenAPI/V1/Customer",
+      "url_env": null,
       "method": "GET",
-      "from_param": "fromDate",
-      "to_param": "toDate",
-      "date_format": "%Y-%m-%d",
-      "page_param": null,
-      "page_size_param": null,
-      "page_size": 500,
+      "from_param": "tu_ngay",
+      "to_param": "den_ngay",
+      "date_format": "%d/%m/%Y",
+      "page_param": "page_number",
+      "page_size_param": "page_size",
+      "page_size": 30,
       "data_path": "data",
-      "explode_field": null
+      "explode_field": null,
+      "fixed_params": {
+        "kieu_ngay": "cdate"
+      }
     },
     {
       "key": "order",
@@ -49,7 +53,8 @@
       "page_size_param": null,
       "page_size": 500,
       "data_path": "data",
-      "explode_field": null
+      "explode_field": null,
+      "fixed_params": {}
     }
   ]
 }
