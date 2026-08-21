@@ -14,36 +14,49 @@ Target SharePoint:
 
 - MobiWork credentials are GitHub Actions secrets.
 - Microsoft authentication uses GitHub OIDC / Microsoft Entra federated credentials.
-- Do not commit `.env`, API tokens, client secrets, passwords, or exported business data.
+- Do not commit `.env`, API tokens, client secrets, passwords, Authorization headers, or exported business data.
 - Production should use the least-privilege SharePoint permission model (for example `Sites.Selected` plus a grant to the Planning site).
 
-## Status
+## Current API mapping status
 
-The repository scaffold is intentionally safe-by-default: all reports in `config/reports.json` start with `"enabled": false` until the real MobiWork Swagger endpoints, parameters, pagination and response paths are verified.
+### Visit report — verified
+
+- GET `https://openapi.mobiwork.vn/OpenAPI/V1/VisitData`
+- required date parameters: `tu_ngay`, `den_ngay`
+- date format: `dd/mm/yyyy`
+- optional filters `phong_ban_nv` and `ma_nv` are omitted to retrieve all available staff
+- response rows live at `data`
+- `data` is grouped by employee; each employee has nested `thoi_gian_vt`
+- the pipeline explodes `thoi_gian_vt` so one Excel row represents one visit and inherits `ma_nv` + `ten_nhan_vien`
+
+The new-customer and order reports remain disabled until their Swagger request/response shapes are verified.
 
 ## Required GitHub Actions secrets
 
+MobiWork:
+
 - `MOBIWORK_USER`
 - `MOBIWORK_TOKEN`
-- `MOBIWORK_VISIT_URL`
-- `MOBIWORK_CUSTOMER_URL`
-- `MOBIWORK_ORDER_URL`
+
+Microsoft (required only when SharePoint upload is enabled):
+
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
 
-Never paste secret values into source files.
+Do not store API endpoints as secrets unless they are genuinely confidential. Verified public endpoint paths are kept in `config/reports.json`.
 
-## MobiWork mapping
+## MobiWork mapping workflow
 
-For each report, use the MobiWork OpenAPI/Swagger page to verify:
+For each remaining report, use the MobiWork OpenAPI/Swagger page to verify:
 
 1. HTTP method
 2. request URL
 3. from/to date parameter names
-4. pagination parameter names and page size
-5. JSON path containing the rows (for example `data` or `data.items`)
+4. pagination parameters, if any
+5. JSON path containing the records
+6. whether records contain nested lists that must be exploded
 
-Then update `config/reports.json` and set the verified report to `"enabled": true`.
+Then update `config/reports.json` and enable only the verified report.
 
 ## Manual test
 
@@ -56,7 +69,7 @@ Dry-run mode calls MobiWork and generates Excel, but does not authenticate to or
 
 ## Production schedule
 
-The workflow is configured for `06:07` daily in `Asia/Ho_Chi_Minh`. Scheduled workflows only run from the default branch. Scheduled execution is additionally gated by the repository variable `PRODUCTION_ENABLED=true`, so merging the scaffold cannot accidentally call production APIs before configuration is complete.
+The workflow is configured for `06:07` daily in `Asia/Ho_Chi_Minh`. Scheduled workflows only run from the default branch. Scheduled execution is additionally gated by the repository variable `PRODUCTION_ENABLED=true`, so merging the scaffold cannot accidentally run production before configuration is complete.
 
 ## Output layout
 
