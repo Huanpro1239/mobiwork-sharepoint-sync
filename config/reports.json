@@ -63,7 +63,7 @@
     },
     {
       "key": "bill",
-      "enabled": false,
+      "enabled": true,
       "name": "DonBanHang",
       "folder": "04_DonBanHang",
       "url": "https://openapi.mobiwork.vn/OpenAPI/V1/Bill",
