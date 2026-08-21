@@ -1,0 +1,73 @@
+name: MobiWork DMS Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "Number of previous days to refresh"
+        required: true
+        default: "3"
+      dry_run:
+        description: "Fetch/export only; do not upload to SharePoint"
+        required: true
+        type: boolean
+        default: true
+  schedule:
+    - cron: "7 6 * * *"
+      timezone: "Asia/Ho_Chi_Minh"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sync:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.PRODUCTION_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Azure login with GitHub OIDC
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Sync MobiWork reports
+        env:
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '3' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: python src/main.py
+
+      - name: Upload dry-run Excel artifacts
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobiwork-dry-run-output
+          path: output/*.xlsx
+          if-no-files-found: ignore
+          retention-days: 3

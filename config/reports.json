@@ -1,0 +1,55 @@
+{
+  "reports": [
+    {
+      "key": "visit",
+      "enabled": true,
+      "name": "BaoCaoViengTham",
+      "folder": "01_BaoCaoViengTham",
+      "url": "https://openapi.mobiwork.vn/OpenAPI/V1/VisitData",
+      "url_env": null,
+      "method": "GET",
+      "from_param": "tu_ngay",
+      "to_param": "den_ngay",
+      "date_format": "%d/%m/%Y",
+      "page_param": null,
+      "page_size_param": null,
+      "page_size": 500,
+      "data_path": "data",
+      "explode_field": "thoi_gian_vt"
+    },
+    {
+      "key": "new_customer",
+      "enabled": false,
+      "name": "MoMoiKhachHang",
+      "folder": "02_MoMoiKhachHang",
+      "url": null,
+      "url_env": "MOBIWORK_CUSTOMER_URL",
+      "method": "GET",
+      "from_param": "fromDate",
+      "to_param": "toDate",
+      "date_format": "%Y-%m-%d",
+      "page_param": null,
+      "page_size_param": null,
+      "page_size": 500,
+      "data_path": "data",
+      "explode_field": null
+    },
+    {
+      "key": "order",
+      "enabled": false,
+      "name": "DonHang",
+      "folder": "03_DonHang",
+      "url": null,
+      "url_env": "MOBIWORK_ORDER_URL",
+      "method": "GET",
+      "from_param": "fromDate",
+      "to_param": "toDate",
+      "date_format": "%Y-%m-%d",
+      "page_param": null,
+      "page_size_param": null,
+      "page_size": 500,
+      "data_path": "data",
+      "explode_field": null
+    }
+  ]
+}
