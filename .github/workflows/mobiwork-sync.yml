@@ -158,6 +158,8 @@ jobs:
         env:
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+          MOBIWORK_MAX_RETRIES: "8"
           SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
           SHAREPOINT_SITE_PATH: "/sites/Planning"
           SHAREPOINT_LIBRARY: "MobiWorkDMS"
