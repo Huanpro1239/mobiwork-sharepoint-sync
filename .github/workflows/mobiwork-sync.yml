@@ -108,6 +108,33 @@ jobs:
             --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id,displayName,webUrl' \
             --output json
 
+      - name: Show SharePoint target drive
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SITE_ID=$(az rest \
+            --method get \
+            --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' \
+            --query id -o tsv)
+          echo "Planning site id: $SITE_ID"
+
+          DRIVES=$(az rest \
+            --method get \
+            --url "https://graph.microsoft.com/v1.0/sites/$SITE_ID/drives" \
+            --output json)
+
+          echo "Document libraries returned by Graph:"
+          echo "$DRIVES" | jq -r '.value[] | "- name=\(.name) id=\(.id) webUrl=\(.webUrl)"'
+
+          DRIVE_ID=$(echo "$DRIVES" | jq -r '.value[] | select((.name | ascii_downcase) == "mobiworkdms") | .id' | head -n 1)
+          if [ -z "$DRIVE_ID" ] || [ "$DRIVE_ID" = "null" ]; then
+            echo "::error::Microsoft Graph did not return a document library named MobiWorkDMS."
+            exit 1
+          fi
+          echo "MobiWorkDMS drive id: $DRIVE_ID"
+          echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
+
       - name: Sync MobiWork reports
         env:
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
@@ -118,6 +145,31 @@ jobs:
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '3' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: python src/main.py
+
+      - name: Verify SharePoint upload
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${SHAREPOINT_DRIVE_ID:-}" ]; then
+            echo "::error::SHAREPOINT_DRIVE_ID was not resolved."
+            exit 1
+          fi
+
+          CHILDREN=$(az rest \
+            --method get \
+            --url "https://graph.microsoft.com/v1.0/drives/$SHAREPOINT_DRIVE_ID/root/children" \
+            --output json)
+
+          echo "MobiWorkDMS root contents after sync:"
+          echo "$CHILDREN" | jq -r '.value[] | "- name=\(.name) webUrl=\(.webUrl)"'
+          COUNT=$(echo "$CHILDREN" | jq '.value | length')
+          echo "Root item count: $COUNT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::Sync finished but MobiWorkDMS is still empty according to Microsoft Graph."
+            exit 1
+          fi
 
       - name: Upload dry-run Excel artifacts
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
