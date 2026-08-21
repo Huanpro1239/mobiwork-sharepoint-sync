@@ -45,10 +45,12 @@ def export_excel(
     report_name: str,
     target_date: date,
     export_mode: str = "flat",
+    file_suffix: str | None = None,
 ) -> Path:
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{report_name}_{target_date:%Y-%m-%d}.xlsx"
+    suffix = file_suffix or f"{target_date:%Y-%m-%d}"
+    path = output_dir / f"{report_name}_{suffix}.xlsx"
 
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
         if export_mode == "order":
