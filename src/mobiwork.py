@@ -85,6 +85,14 @@ class MobiWorkClient:
         )
 
     def fetch_report(self, cfg: ReportConfig, target_date: date) -> list[dict[str, Any]]:
+        return self.fetch_report_range(cfg, target_date, target_date)
+
+    def fetch_report_range(
+        self, cfg: ReportConfig, from_date: date, to_date: date
+    ) -> list[dict[str, Any]]:
+        if to_date < from_date:
+            raise ValueError("to_date must be on or after from_date")
+
         url = (cfg.url or "").strip()
         if not url and cfg.url_env:
             url = os.environ.get(cfg.url_env, "").strip()
@@ -93,12 +101,11 @@ class MobiWorkClient:
                 f"Missing endpoint for report={cfg.key}; configure url or url_env"
             )
 
-        date_text = target_date.strftime(cfg.date_format)
         base_params: dict[str, Any] = dict(cfg.fixed_params)
         if cfg.from_param:
-            base_params[cfg.from_param] = date_text
+            base_params[cfg.from_param] = from_date.strftime(cfg.date_format)
         if cfg.to_param:
-            base_params[cfg.to_param] = date_text
+            base_params[cfg.to_param] = to_date.strftime(cfg.date_format)
 
         all_records: list[dict[str, Any]] = []
         page = 1
