@@ -44,6 +44,29 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
+      - name: Validate MobiWork secrets
+        env:
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+        shell: bash
+        run: |
+          missing=0
+          if [ -z "$MOBIWORK_USER" ]; then
+            echo "::error::MOBIWORK_USER is missing or unavailable to this workflow. Create it under Settings > Secrets and variables > Actions > Repository secrets."
+            missing=1
+          else
+            echo "MOBIWORK_USER: available"
+          fi
+          if [ -z "$MOBIWORK_TOKEN" ]; then
+            echo "::error::MOBIWORK_TOKEN is missing or unavailable to this workflow. Create it under Settings > Secrets and variables > Actions > Repository secrets."
+            missing=1
+          else
+            echo "MOBIWORK_TOKEN: available"
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
       - name: Azure login with GitHub OIDC
         if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         uses: azure/login@v3
