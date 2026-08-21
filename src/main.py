@@ -45,8 +45,8 @@ def run(lookback_days: int, dry_run: bool) -> None:
         for cfg in reports:
             LOG.info("Fetching report=%s", cfg.key)
             records = mobiwork.fetch_report(cfg, target_date)
-            path = export_excel(records, cfg.name, target_date)
-            LOG.info("Exported %s rows -> %s", len(records), path)
+            path = export_excel(records, cfg.name, target_date, cfg.export_mode)
+            LOG.info("Exported %s source rows -> %s", len(records), path)
 
             if dry_run:
                 continue
