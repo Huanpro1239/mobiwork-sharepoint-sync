@@ -46,13 +46,13 @@ jobs:
 
       - name: Validate MobiWork secrets
         env:
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER }}
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
         shell: bash
         run: |
           missing=0
           if [ -z "$MOBIWORK_USER" ]; then
-            echo "::error::MOBIWORK_USER is missing or unavailable to this workflow. Create it under Settings > Secrets and variables > Actions > Repository secrets."
+            echo "::error::MOBIWORK_USER/MOBIWORK_USER_ID is missing or unavailable to this workflow. Create it under Settings > Secrets and variables > Actions > Repository secrets."
             missing=1
           else
             echo "MOBIWORK_USER: available"
@@ -77,7 +77,7 @@ jobs:
 
       - name: Sync MobiWork reports
         env:
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER }}
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
           SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
           SHAREPOINT_SITE_PATH: "/sites/Planning"
