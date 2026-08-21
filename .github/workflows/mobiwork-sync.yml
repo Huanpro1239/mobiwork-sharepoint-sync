@@ -4,25 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       sync_mode:
-        description: "incremental = daily refresh; backfill = historical date range"
+        description: "bootstrap = first full history load; incremental = normal daily refresh"
         required: true
         type: choice
         options:
           - incremental
-          - backfill
+          - bootstrap
         default: incremental
       lookback_days:
-        description: "Incremental only: number of previous days to refresh"
+        description: "Incremental only: previous days to refresh"
         required: true
-        default: "3"
-      backfill_start_date:
-        description: "Backfill only: start date YYYY-MM-DD"
-        required: false
-        default: ""
-      backfill_end_date:
-        description: "Backfill only: end date YYYY-MM-DD"
-        required: false
-        default: ""
+        default: "1"
       dry_run:
         description: "Fetch/export only; do not upload to SharePoint"
         required: true
@@ -68,13 +60,13 @@ jobs:
         run: |
           missing=0
           if [ -z "$MOBIWORK_USER" ]; then
-            echo "::error::MOBIWORK_USER/MOBIWORK_USER_ID is missing or unavailable to this workflow. Create it under Settings > Secrets and variables > Actions > Repository secrets."
+            echo "::error::MOBIWORK_USER/MOBIWORK_USER_ID is missing or unavailable to this workflow."
             missing=1
           else
             echo "MOBIWORK_USER: available"
           fi
           if [ -z "$MOBIWORK_TOKEN" ]; then
-            echo "::error::MOBIWORK_TOKEN is missing or unavailable to this workflow. Create it under Settings > Secrets and variables > Actions > Repository secrets."
+            echo "::error::MOBIWORK_TOKEN is missing or unavailable to this workflow."
             missing=1
           else
             echo "MOBIWORK_TOKEN: available"
@@ -83,22 +75,15 @@ jobs:
             exit 1
           fi
 
-      - name: Validate sync parameters
+      - name: Show sync mode
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        env:
-          SYNC_MODE: ${{ inputs.sync_mode }}
-          BACKFILL_START_DATE: ${{ inputs.backfill_start_date }}
-          BACKFILL_END_DATE: ${{ inputs.backfill_end_date }}
         shell: bash
         run: |
-          if [ "$SYNC_MODE" = "backfill" ]; then
-            if [ -z "$BACKFILL_START_DATE" ] || [ -z "$BACKFILL_END_DATE" ]; then
-              echo "::error::Backfill requires both backfill_start_date and backfill_end_date in YYYY-MM-DD format."
-              exit 1
-            fi
-            echo "Backfill requested: $BACKFILL_START_DATE -> $BACKFILL_END_DATE"
+          if [ "${{ inputs.sync_mode }}" = "bootstrap" ]; then
+            echo "FIRST-RUN BOOTSTRAP: scanning from yesterday backward month-by-month."
+            echo "The scan stops after 24 consecutive months where all reports are empty."
           else
-            echo "Incremental refresh requested."
+            echo "INCREMENTAL: refreshing the previous ${{ inputs.lookback_days }} day(s)."
           fi
 
       - name: Validate Microsoft OIDC configuration
@@ -110,13 +95,13 @@ jobs:
         run: |
           missing=0
           if [ -z "$AZURE_CLIENT_ID" ]; then
-            echo "::error::AZURE_CLIENT_ID is missing. Create it under Settings > Secrets and variables > Actions > Repository secrets."
+            echo "::error::AZURE_CLIENT_ID is missing."
             missing=1
           else
             echo "AZURE_CLIENT_ID: available"
           fi
           if [ -z "$AZURE_TENANT_ID" ]; then
-            echo "::error::AZURE_TENANT_ID is missing. Create it under Settings > Secrets and variables > Actions > Repository secrets."
+            echo "::error::AZURE_TENANT_ID is missing."
             missing=1
           else
             echo "AZURE_TENANT_ID: available"
@@ -177,9 +162,9 @@ jobs:
           SHAREPOINT_SITE_PATH: "/sites/Planning"
           SHAREPOINT_LIBRARY: "MobiWorkDMS"
           SYNC_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_mode || 'incremental' }}
-          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '3' }}
-          BACKFILL_START_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.backfill_start_date || '' }}
-          BACKFILL_END_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.backfill_end_date || '' }}
+          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
+          BOOTSTRAP_EMPTY_MONTHS: "24"
+          BOOTSTRAP_FLOOR_DATE: "2000-01-01"
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: python src/main.py
 
