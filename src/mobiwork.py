@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 import requests
 from requests.auth import HTTPBasicAuth
+
+
+LOG = logging.getLogger("mobiwork_sync")
 
 
 @dataclass(frozen=True)
@@ -69,10 +74,25 @@ def expand_records(
 
 
 class MobiWorkClient:
-    def __init__(self, user: str, token: str, timeout: int = 120) -> None:
+    def __init__(
+        self,
+        user: str,
+        token: str,
+        timeout: int = 120,
+        min_interval_seconds: float = 1.5,
+        max_retries: int = 8,
+    ) -> None:
         if not user or not token:
             raise ValueError("Missing MOBIWORK_USER or MOBIWORK_TOKEN")
+        if min_interval_seconds < 0:
+            raise ValueError("min_interval_seconds must be >= 0")
+        if max_retries < 0 or max_retries > 20:
+            raise ValueError("max_retries must be between 0 and 20")
+
         self.timeout = timeout
+        self.min_interval_seconds = min_interval_seconds
+        self.max_retries = max_retries
+        self._last_request_at = 0.0
         self.session = requests.Session()
         self.session.auth = HTTPBasicAuth(user, token)
         self.session.headers.update({"Accept": "application/json"})
@@ -82,7 +102,62 @@ class MobiWorkClient:
         return cls(
             user=os.environ.get("MOBIWORK_USER", ""),
             token=os.environ.get("MOBIWORK_TOKEN", ""),
+            min_interval_seconds=float(
+                os.environ.get("MOBIWORK_MIN_INTERVAL_SECONDS", "1.5")
+            ),
+            max_retries=int(os.environ.get("MOBIWORK_MAX_RETRIES", "8")),
         )
+
+    def _throttle(self) -> None:
+        if self.min_interval_seconds <= 0 or self._last_request_at <= 0:
+            return
+        elapsed = time.monotonic() - self._last_request_at
+        remaining = self.min_interval_seconds - elapsed
+        if remaining > 0:
+            time.sleep(remaining)
+
+    @staticmethod
+    def _retry_delay(response: requests.Response, attempt: int) -> float:
+        retry_after = str(response.headers.get("Retry-After", "")).strip()
+        if retry_after:
+            try:
+                return min(max(float(retry_after), 1.0), 180.0)
+            except ValueError:
+                pass
+
+        # 5, 10, 20, 40, 60, 60... seconds.
+        return min(5.0 * (2**attempt), 60.0)
+
+    def _get_with_retry(
+        self, url: str, params: dict[str, Any], report_key: str, page: int
+    ) -> requests.Response:
+        retryable_statuses = {429, 500, 502, 503, 504}
+
+        for attempt in range(self.max_retries + 1):
+            self._throttle()
+            response = self.session.get(url, params=params, timeout=self.timeout)
+            self._last_request_at = time.monotonic()
+
+            if response.status_code not in retryable_statuses:
+                response.raise_for_status()
+                return response
+
+            if attempt >= self.max_retries:
+                response.raise_for_status()
+
+            delay = self._retry_delay(response, attempt)
+            LOG.warning(
+                "MobiWork HTTP %s report=%s page=%s. Retry %s/%s in %.0fs",
+                response.status_code,
+                report_key,
+                page,
+                attempt + 1,
+                self.max_retries,
+                delay,
+            )
+            time.sleep(delay)
+
+        raise RuntimeError("Unreachable retry loop")
 
     def fetch_report(self, cfg: ReportConfig, target_date: date) -> list[dict[str, Any]]:
         return self.fetch_report_range(cfg, target_date, target_date)
@@ -120,8 +195,7 @@ class MobiWorkClient:
             if cfg.method.upper() != "GET":
                 raise NotImplementedError(f"Unsupported method: {cfg.method}")
 
-            response = self.session.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
+            response = self._get_with_retry(url, params, cfg.key, page)
             payload = response.json()
 
             if isinstance(payload, dict) and payload.get("status") is False:
