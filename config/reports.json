@@ -69,15 +69,17 @@
       "url": "https://openapi.mobiwork.vn/OpenAPI/V1/Bill",
       "url_env": null,
       "method": "GET",
-      "from_param": null,
-      "to_param": null,
+      "from_param": "tu_ngay",
+      "to_param": "den_ngay",
       "date_format": "%d/%m/%Y",
-      "page_param": null,
-      "page_size_param": null,
-      "page_size": 500,
+      "page_param": "page_number",
+      "page_size_param": "page_size",
+      "page_size": 100,
       "data_path": "data",
       "explode_field": null,
-      "fixed_params": {},
+      "fixed_params": {
+        "kieu_ngay": "cdate"
+      },
       "export_mode": "order"
     }
   ]
