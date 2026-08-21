@@ -20,7 +20,7 @@
     },
     {
       "key": "new_customer",
-      "enabled": false,
+      "enabled": true,
       "name": "MoMoiKhachHang",
       "folder": "02_MoMoiKhachHang",
       "url": "https://openapi.mobiwork.vn/OpenAPI/V1/Customer",
