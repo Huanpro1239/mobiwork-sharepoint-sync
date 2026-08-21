@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
@@ -26,6 +26,7 @@ class ReportConfig:
     page_size: int = 500
     data_path: str | None = "data"
     explode_field: str | None = None
+    fixed_params: dict[str, Any] = field(default_factory=dict)
 
 
 def get_by_path(payload: Any, path: str | None) -> Any:
@@ -92,7 +93,7 @@ class MobiWorkClient:
             )
 
         date_text = target_date.strftime(cfg.date_format)
-        base_params: dict[str, Any] = {}
+        base_params: dict[str, Any] = dict(cfg.fixed_params)
         if cfg.from_param:
             base_params[cfg.from_param] = date_text
         if cfg.to_param:
