@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import calendar
 import json
 import logging
 import os
@@ -36,21 +35,6 @@ def parse_iso_date(value: str, field_name: str) -> date:
         raise ValueError(f"{field_name} must use YYYY-MM-DD format") from exc
 
 
-def month_windows(start_date: date, end_date: date) -> list[tuple[date, date]]:
-    if end_date < start_date:
-        raise ValueError("BACKFILL_END_DATE must be on or after BACKFILL_START_DATE")
-
-    windows: list[tuple[date, date]] = []
-    current = start_date
-    while current <= end_date:
-        last_day = calendar.monthrange(current.year, current.month)[1]
-        natural_month_end = date(current.year, current.month, last_day)
-        window_end = min(end_date, natural_month_end)
-        windows.append((current, window_end))
-        current = window_end + timedelta(days=1)
-    return windows
-
-
 def build_clients(dry_run: bool) -> tuple[MobiWorkClient, SharePointClient | None, str | None]:
     mobiwork = MobiWorkClient.from_env()
     if dry_run:
@@ -72,6 +56,7 @@ def enabled_reports() -> list[ReportConfig]:
 
 
 def run_incremental(lookback_days: int, dry_run: bool) -> None:
+    """Daily mode: export one file per day, normally D-1 only."""
     reports = enabled_reports()
     mobiwork, sharepoint, drive_id = build_clients(dry_run)
 
@@ -91,25 +76,56 @@ def run_incremental(lookback_days: int, dry_run: bool) -> None:
             LOG.info("Uploaded -> %s", uploaded.get("webUrl", remote_folder))
 
 
-def run_backfill(start_date: date, end_date: date, dry_run: bool) -> None:
+def run_bootstrap(
+    dry_run: bool,
+    empty_month_stop: int,
+    floor_date: date,
+) -> None:
+    """One-time history load: walk backward month by month from yesterday.
+
+    The scan stops after `empty_month_stop` consecutive months where all enabled
+    reports return zero rows, or when `floor_date` is reached. This avoids asking
+    the user to know the oldest MobiWork date in advance while still protecting
+    against isolated empty months inside the historical period.
+    """
+    if empty_month_stop < 1 or empty_month_stop > 120:
+        raise ValueError("BOOTSTRAP_EMPTY_MONTHS must be between 1 and 120")
+
     reports = enabled_reports()
     mobiwork, sharepoint, drive_id = build_clients(dry_run)
-    windows = month_windows(start_date, end_date)
+    yesterday = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date() - timedelta(days=1)
+
+    cursor_end = yesterday
+    consecutive_empty_months = 0
+    partition_count = 0
 
     LOG.info(
-        "Historical backfill: %s -> %s (%s monthly partitions)",
-        start_date,
-        end_date,
-        len(windows),
+        "Bootstrap history: start=%s, direction=newest-to-oldest, floor=%s, "
+        "stop_after_empty_months=%s",
+        yesterday,
+        floor_date,
+        empty_month_stop,
     )
 
-    for from_date, to_date in windows:
-        LOG.info("Backfill partition: %s -> %s", from_date, to_date)
+    while cursor_end >= floor_date:
+        month_start = cursor_end.replace(day=1)
+        from_date = max(month_start, floor_date)
+        to_date = cursor_end
+        partition_count += 1
+        month_total_rows = 0
+
+        LOG.info("Bootstrap partition #%s: %s -> %s", partition_count, from_date, to_date)
         file_suffix = f"History_{from_date:%Y-%m-%d}_to_{to_date:%Y-%m-%d}"
 
         for cfg in reports:
             LOG.info("Fetching report=%s range=%s..%s", cfg.key, from_date, to_date)
             records = mobiwork.fetch_report_range(cfg, from_date, to_date)
+            month_total_rows += len(records)
+
+            if not records:
+                LOG.info("No rows for report=%s in %s..%s; skipping empty file", cfg.key, from_date, to_date)
+                continue
+
             path = export_excel(
                 records,
                 cfg.name,
@@ -126,30 +142,48 @@ def run_backfill(start_date: date, end_date: date, dry_run: bool) -> None:
             uploaded = sharepoint.upload_file(drive_id, path, remote_folder)
             LOG.info("Uploaded -> %s", uploaded.get("webUrl", remote_folder))
 
+        if month_total_rows == 0:
+            consecutive_empty_months += 1
+            LOG.info(
+                "All reports empty for this month. Consecutive empty months: %s/%s",
+                consecutive_empty_months,
+                empty_month_stop,
+            )
+        else:
+            consecutive_empty_months = 0
+            LOG.info("Partition contains %s source rows across all reports", month_total_rows)
+
+        if consecutive_empty_months >= empty_month_stop:
+            LOG.info(
+                "Bootstrap stop condition reached after %s consecutive empty months. "
+                "Historical scan complete.",
+                consecutive_empty_months,
+            )
+            break
+
+        cursor_end = month_start - timedelta(days=1)
+    else:
+        LOG.info("Bootstrap reached hard floor date %s", floor_date)
+
 
 def run(
     sync_mode: str,
     lookback_days: int,
     dry_run: bool,
-    backfill_start_date: str = "",
-    backfill_end_date: str = "",
+    bootstrap_empty_months: int,
+    bootstrap_floor_date: str,
 ) -> None:
     mode = sync_mode.strip().lower()
     if mode == "incremental":
         run_incremental(lookback_days, dry_run)
         return
 
-    if mode == "backfill":
-        if not backfill_start_date or not backfill_end_date:
-            raise ValueError(
-                "BACKFILL_START_DATE and BACKFILL_END_DATE are required in backfill mode"
-            )
-        start_date = parse_iso_date(backfill_start_date, "BACKFILL_START_DATE")
-        end_date = parse_iso_date(backfill_end_date, "BACKFILL_END_DATE")
-        run_backfill(start_date, end_date, dry_run)
+    if mode == "bootstrap":
+        floor_date = parse_iso_date(bootstrap_floor_date, "BOOTSTRAP_FLOOR_DATE")
+        run_bootstrap(dry_run, bootstrap_empty_months, floor_date)
         return
 
-    raise ValueError("SYNC_MODE must be incremental or backfill")
+    raise ValueError("SYNC_MODE must be incremental or bootstrap")
 
 
 def parse_args() -> argparse.Namespace:
@@ -157,20 +191,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sync-mode",
         default=os.environ.get("SYNC_MODE", "incremental"),
-        choices=("incremental", "backfill"),
+        choices=("incremental", "bootstrap"),
     )
     parser.add_argument(
         "--lookback-days",
         type=int,
-        default=int(os.environ.get("LOOKBACK_DAYS", "3")),
+        default=int(os.environ.get("LOOKBACK_DAYS", "1")),
     )
     parser.add_argument(
-        "--backfill-start-date",
-        default=os.environ.get("BACKFILL_START_DATE", ""),
+        "--bootstrap-empty-months",
+        type=int,
+        default=int(os.environ.get("BOOTSTRAP_EMPTY_MONTHS", "24")),
     )
     parser.add_argument(
-        "--backfill-end-date",
-        default=os.environ.get("BACKFILL_END_DATE", ""),
+        "--bootstrap-floor-date",
+        default=os.environ.get("BOOTSTRAP_FLOOR_DATE", "2000-01-01"),
     )
     parser.add_argument(
         "--dry-run",
@@ -190,6 +225,6 @@ if __name__ == "__main__":
         args.sync_mode,
         args.lookback_days,
         args.dry_run,
-        args.backfill_start_date,
-        args.backfill_end_date,
+        args.bootstrap_empty_months,
+        args.bootstrap_floor_date,
     )
