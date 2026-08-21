@@ -1,0 +1,49 @@
+{
+  "reports": [
+    {
+      "key": "visit",
+      "enabled": false,
+      "name": "BaoCaoViengTham",
+      "folder": "01_BaoCaoViengTham",
+      "url_env": "MOBIWORK_VISIT_URL",
+      "method": "GET",
+      "from_param": "fromDate",
+      "to_param": "toDate",
+      "date_format": "%Y-%m-%d",
+      "page_param": null,
+      "page_size_param": null,
+      "page_size": 500,
+      "data_path": "data"
+    },
+    {
+      "key": "new_customer",
+      "enabled": false,
+      "name": "MoMoiKhachHang",
+      "folder": "02_MoMoiKhachHang",
+      "url_env": "MOBIWORK_CUSTOMER_URL",
+      "method": "GET",
+      "from_param": "fromDate",
+      "to_param": "toDate",
+      "date_format": "%Y-%m-%d",
+      "page_param": null,
+      "page_size_param": null,
+      "page_size": 500,
+      "data_path": "data"
+    },
+    {
+      "key": "order",
+      "enabled": false,
+      "name": "DonHang",
+      "folder": "03_DonHang",
+      "url_env": "MOBIWORK_ORDER_URL",
+      "method": "GET",
+      "from_param": "fromDate",
+      "to_param": "toDate",
+      "date_format": "%Y-%m-%d",
+      "page_param": null,
+      "page_size_param": null,
+      "page_size": 500,
+      "data_path": "data"
+    }
+  ]
+}
