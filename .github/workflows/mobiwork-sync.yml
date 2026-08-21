@@ -21,7 +21,7 @@ on:
         type: boolean
         default: true
   schedule:
-    - cron: "7 6 * * *"
+    - cron: "0 9 * * *"
       timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   sync:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.PRODUCTION_ENABLED == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
