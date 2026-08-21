@@ -27,6 +27,7 @@ class ReportConfig:
     data_path: str | None = "data"
     explode_field: str | None = None
     fixed_params: dict[str, Any] = field(default_factory=dict)
+    export_mode: str = "flat"
 
 
 def get_by_path(payload: Any, path: str | None) -> Any:
