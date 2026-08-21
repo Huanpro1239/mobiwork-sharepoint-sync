@@ -3,10 +3,26 @@ name: MobiWork DMS Sync
 on:
   workflow_dispatch:
     inputs:
+      sync_mode:
+        description: "incremental = daily refresh; backfill = historical date range"
+        required: true
+        type: choice
+        options:
+          - incremental
+          - backfill
+        default: incremental
       lookback_days:
-        description: "Number of previous days to refresh"
+        description: "Incremental only: number of previous days to refresh"
         required: true
         default: "3"
+      backfill_start_date:
+        description: "Backfill only: start date YYYY-MM-DD"
+        required: false
+        default: ""
+      backfill_end_date:
+        description: "Backfill only: end date YYYY-MM-DD"
+        required: false
+        default: ""
       dry_run:
         description: "Fetch/export only; do not upload to SharePoint"
         required: true
@@ -24,7 +40,7 @@ jobs:
   sync:
     if: ${{ github.event_name == 'workflow_dispatch' || vars.PRODUCTION_ENABLED == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -65,6 +81,24 @@ jobs:
           fi
           if [ "$missing" -ne 0 ]; then
             exit 1
+          fi
+
+      - name: Validate sync parameters
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          SYNC_MODE: ${{ inputs.sync_mode }}
+          BACKFILL_START_DATE: ${{ inputs.backfill_start_date }}
+          BACKFILL_END_DATE: ${{ inputs.backfill_end_date }}
+        shell: bash
+        run: |
+          if [ "$SYNC_MODE" = "backfill" ]; then
+            if [ -z "$BACKFILL_START_DATE" ] || [ -z "$BACKFILL_END_DATE" ]; then
+              echo "::error::Backfill requires both backfill_start_date and backfill_end_date in YYYY-MM-DD format."
+              exit 1
+            fi
+            echo "Backfill requested: $BACKFILL_START_DATE -> $BACKFILL_END_DATE"
+          else
+            echo "Incremental refresh requested."
           fi
 
       - name: Validate Microsoft OIDC configuration
@@ -142,7 +176,10 @@ jobs:
           SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
           SHAREPOINT_SITE_PATH: "/sites/Planning"
           SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SYNC_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_mode || 'incremental' }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '3' }}
+          BACKFILL_START_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.backfill_start_date || '' }}
+          BACKFILL_END_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.backfill_end_date || '' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: python src/main.py
 
