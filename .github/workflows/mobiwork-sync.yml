@@ -56,9 +56,6 @@ jobs:
         env:
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
-          MOBIWORK_VISIT_URL: ${{ secrets.MOBIWORK_VISIT_URL }}
-          MOBIWORK_CUSTOMER_URL: ${{ secrets.MOBIWORK_CUSTOMER_URL }}
-          MOBIWORK_ORDER_URL: ${{ secrets.MOBIWORK_ORDER_URL }}
           SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
           SHAREPOINT_SITE_PATH: "/sites/Planning"
           SHAREPOINT_LIBRARY: "MobiWorkDMS"
