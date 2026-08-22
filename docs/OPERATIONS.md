@@ -2,7 +2,7 @@
 
 ## Normal production schedule
 
-The `MobiWork DMS Sync` workflow runs every day at **09:07 Asia/Ho_Chi_Minh**.
+The `MobiWork DMS Sync` workflow runs every day at **09:00 Asia/Ho_Chi_Minh**.
 
 Normal scheduled execution uses:
 
