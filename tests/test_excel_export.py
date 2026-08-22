@@ -74,6 +74,39 @@ class BuildOrderFramesTests(unittest.TestCase):
         self.assertEqual(float(header.iloc[0]["phai_thanh_toan"]), 17000.0)
         self.assertEqual(header.iloc[0]["ngay_dat"], pd.Timestamp("2022-11-17 00:00:00"))
 
+    def test_missing_or_invalid_stt_gets_deterministic_unused_numbers(self):
+        records = [
+            {
+                "ma_phieu": "PX001",
+                "san_pham": [
+                    {"stt": 2, "ma_sp": "A"},
+                    {"stt": None, "ma_sp": "B"},
+                    {"stt": "", "ma_sp": "C"},
+                    {"stt": "not-a-number", "ma_sp": "D"},
+                ],
+            }
+        ]
+
+        _, detail = build_order_frames(records)
+
+        self.assertEqual(detail["ma_sp"].tolist(), ["A", "B", "C", "D"])
+        self.assertEqual(detail["stt"].astype(int).tolist(), [2, 1, 3, 4])
+        self.assertFalse(detail[["ma_phieu", "stt"]].duplicated().any())
+
+    def test_missing_stt_does_not_hide_duplicate_source_line_numbers(self):
+        records = [
+            {
+                "ma_phieu": "PX002",
+                "san_pham": [
+                    {"stt": 1, "ma_sp": "A"},
+                    {"stt": None, "ma_sp": "B"},
+                    {"stt": 1, "ma_sp": "C"},
+                ],
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "duplicate key"):
+            build_order_frames(records)
+
     def test_duplicate_line_key_is_rejected(self):
         duplicate = [dict(SAMPLE_BILLS[0])]
         duplicate[0]["san_pham"] = [
