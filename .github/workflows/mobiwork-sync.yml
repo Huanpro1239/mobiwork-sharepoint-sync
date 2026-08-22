@@ -14,7 +14,7 @@ on:
       lookback_days:
         description: "Incremental only: previous days to refresh"
         required: true
-        default: "3"
+        default: "1"
       dry_run:
         description: "Fetch/export only; do not upload to SharePoint"
         required: true
@@ -25,9 +25,6 @@ on:
         required: true
         type: boolean
         default: false
-  schedule:
-    - cron: "0 9 * * *"
-      timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
   contents: read
@@ -89,7 +86,7 @@ jobs:
           echo "MobiWork credentials: available"
 
       - name: Validate Microsoft OIDC configuration
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        if: ${{ inputs.dry_run == false }}
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -111,7 +108,7 @@ jobs:
           echo "Microsoft OIDC configuration: available"
 
       - name: Azure login with GitHub OIDC
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        if: ${{ inputs.dry_run == false }}
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -119,7 +116,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Resolve SharePoint document library
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        if: ${{ inputs.dry_run == false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -143,7 +140,7 @@ jobs:
           echo "MobiWorkDMS drive id resolved"
           echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
 
-      - name: Sync MobiWork reports
+      - name: Sync all MobiWork reports
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -158,13 +155,13 @@ jobs:
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
-          SYNC_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_mode || 'incremental' }}
-          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '3' }}
+          SYNC_MODE: ${{ inputs.sync_mode }}
+          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           BOOTSTRAP_EMPTY_MONTHS: "24"
           BOOTSTRAP_FLOOR_DATE: "2000-01-01"
-          RESET_BOOTSTRAP_STATE: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_bootstrap_state || false }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-        run: python src/main.py
+          RESET_BOOTSTRAP_STATE: ${{ inputs.reset_bootstrap_state }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python src/run_all_reports.py
 
       - name: Publish run summary
         if: ${{ always() }}
@@ -186,22 +183,34 @@ jobs:
               f"- Status: **{data.get('status', 'unknown')}**",
               f"- Mode: `{data.get('mode', '')}`",
               f"- Run ID: `{data.get('run_id', '')}`",
-              f"- Files: **{data.get('file_count', len(data.get('files', [])))}**",
-              f"- Source rows: **{data.get('source_row_count', 0):,}**",
+              f"- Successful report executions: **{data.get('successful_report_count', 0)}**",
+              f"- Failed report executions: **{data.get('failed_report_count', 0)}**",
+              f"- Uploaded files: **{data.get('file_count', len(data.get('files', [])))}**",
+              f"- Uploaded source rows: **{data.get('source_row_count', 0):,}**",
           ]
           if data.get("error"):
-              lines.append(f"- Error: `{data['error']}`")
+              lines.append(f"- Error summary: `{data['error']}`")
 
-          files = data.get("files", [])
-          if files:
-              lines.extend(["", "| Report | Rows | File |", "|---|---:|---|"])
-              for item in files:
+          results = data.get("report_results", [])
+          if results:
+              lines.extend([
+                  "",
+                  "| Date | Report | Status | Rows | Verification | File |",
+                  "|---|---|---|---:|---|---|",
+              ])
+              for item in results:
                   filename = item.get("filename", "")
                   web_url = item.get("web_url")
                   file_cell = f"[{filename}]({web_url})" if web_url else filename
                   lines.append(
-                      f"| {item.get('report', '')} | {int(item.get('source_rows', 0)):,} | {file_cell} |"
+                      f"| {item.get('target_date', '')} | {item.get('report', '')} | "
+                      f"{item.get('status', '')} | {int(item.get('source_rows', 0)):,} | "
+                      f"{item.get('verification_mode', '')} | {file_cell} |"
                   )
+                  if item.get("error"):
+                      lines.append(
+                          f"|  | ↳ error |  |  |  | `{item['error']}` |"
+                      )
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
@@ -217,7 +226,7 @@ jobs:
           retention-days: 14
 
       - name: Upload dry-run Excel artifacts
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+        if: ${{ always() && inputs.dry_run == true }}
         uses: actions/upload-artifact@v7
         with:
           name: mobiwork-dry-run-output-${{ github.run_id }}
