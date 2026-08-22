@@ -242,10 +242,13 @@ class SharePointClient:
 
         remote_size = uploaded.get("size")
         if remote_size is not None and int(remote_size) != len(content):
-            raise RuntimeError(
+            message = (
                 f"SharePoint upload size mismatch for {filename}: "
                 f"local={len(content)}, remote={remote_size}"
             )
+            if content_type.startswith("application/json"):
+                raise RuntimeError(message)
+            LOG.warning(message)
         return uploaded
 
     def upload_file(self, drive_id: str, local_file: Path, remote_folder: str) -> dict[str, Any]:

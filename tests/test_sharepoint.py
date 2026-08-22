@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 import requests
 
@@ -73,6 +74,54 @@ class SharePointClientTests(unittest.TestCase):
         client._request("GET", "https://graph.microsoft.com/v1.0/two")
 
         self.assertEqual(credential.calls, 1)
+
+    def test_binary_upload_size_mismatch_logs_warning_only(self):
+        client = SharePointClient(
+            "example.sharepoint.com",
+            "/sites/Planning",
+            "MobiWorkDMS",
+            credential=FakeCredential(),
+            session=FakeSession([200]),
+        )
+        payload = {"size": 20}
+        with (
+            mock.patch.object(client, "ensure_folder_path", return_value="folder-id"),
+            mock.patch.object(client, "_request") as request_mock,
+            self.assertLogs("mobiwork_sync", level="WARNING") as logs,
+        ):
+            request_mock.return_value.json.return_value = payload
+            uploaded = client._put_content(
+                "drive-id",
+                "Reports",
+                "report.xlsx",
+                b"1234567890",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        self.assertEqual(uploaded, payload)
+        self.assertIn("SharePoint upload size mismatch for report.xlsx", "\n".join(logs.output))
+
+    def test_json_upload_size_mismatch_raises(self):
+        client = SharePointClient(
+            "example.sharepoint.com",
+            "/sites/Planning",
+            "MobiWorkDMS",
+            credential=FakeCredential(),
+            session=FakeSession([200]),
+        )
+        with (
+            mock.patch.object(client, "ensure_folder_path", return_value="folder-id"),
+            mock.patch.object(client, "_request") as request_mock,
+        ):
+            request_mock.return_value.json.return_value = {"size": 20}
+            with self.assertRaises(RuntimeError):
+                client._put_content(
+                    "drive-id",
+                    "_sync_runs",
+                    "sync_manifest.json",
+                    b"1234567890",
+                    "application/json; charset=utf-8",
+                )
 
 
 if __name__ == "__main__":
