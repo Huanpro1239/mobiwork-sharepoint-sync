@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,71 @@ def _validate_excel_size(frame: pd.DataFrame, label: str) -> None:
         )
 
 
+def _valid_line_number(value: Any) -> int | None:
+    """Return a positive integer line number or None when MobiWork did not provide one."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric) or numeric <= 0 or not numeric.is_integer():
+        return None
+    return int(numeric)
+
+
+def _normalize_order_items(order: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize sold/promo lines and fill only missing/invalid ``stt`` values.
+
+    Some historical MobiWork Order/Bill rows omit ``stt`` inside ``san_pham``.
+    A line without ``stt`` must not be dropped, but ``ma_phieu + stt`` still needs to
+    remain a deterministic business key. Existing valid line numbers are preserved;
+    missing/invalid values receive the first unused positive integer in source order.
+    Duplicate line numbers supplied by MobiWork are intentionally not repaired and are
+    still rejected by the downstream uniqueness check.
+    """
+    standard_items = order.get("san_pham") or []
+    promo_items = order.get("san_pham_km") or []
+    if not isinstance(standard_items, list):
+        raise TypeError("san_pham must be a list")
+    if not isinstance(promo_items, list):
+        raise TypeError("san_pham_km must be a list when present")
+
+    normalized: list[dict[str, Any]] = []
+    for item in standard_items:
+        if not isinstance(item, dict):
+            raise TypeError("san_pham contains a non-object item")
+        normalized.append(dict(item))
+
+    for item in promo_items:
+        if not isinstance(item, dict):
+            raise TypeError("san_pham_km contains a non-object item")
+        promo_item = dict(item)
+        promo_item.setdefault("is_km", True)
+        normalized.append(promo_item)
+
+    used = {
+        line_number
+        for item in normalized
+        if (line_number := _valid_line_number(item.get("stt"))) is not None
+    }
+    candidate = 1
+    for item in normalized:
+        line_number = _valid_line_number(item.get("stt"))
+        if line_number is not None:
+            item["stt"] = line_number
+            continue
+        while candidate in used:
+            candidate += 1
+        item["stt"] = candidate
+        used.add(candidate)
+        candidate += 1
+
+    return normalized
+
+
 def build_order_frames(
     records: list[dict[str, Any]],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -100,24 +166,8 @@ def build_order_frames(
         }
         header_rows.append(header)
 
-        standard_items = order.get("san_pham") or []
-        promo_items = order.get("san_pham_km") or []
-        if not isinstance(standard_items, list):
-            raise TypeError("san_pham must be a list")
-        if not isinstance(promo_items, list):
-            raise TypeError("san_pham_km must be a list when present")
-
-        for item in standard_items:
-            if not isinstance(item, dict):
-                raise TypeError("san_pham contains a non-object item")
+        for item in _normalize_order_items(order):
             detail_rows.append({**header, **item})
-
-        for item in promo_items:
-            if not isinstance(item, dict):
-                raise TypeError("san_pham_km contains a non-object item")
-            normalized_item = dict(item)
-            normalized_item.setdefault("is_km", True)
-            detail_rows.append({**header, **normalized_item})
 
     header_frame = (
         pd.json_normalize(header_rows, sep="_") if header_rows else pd.DataFrame()
