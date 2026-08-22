@@ -6,14 +6,18 @@ on:
       - feature/grade-vieng-tham-images
     paths:
       - src/grade_visit_images.py
+      - src/grade_visit_images_local.py
       - tests/test_grade_visit_images.py
+      - requirements-vision.txt
       - .github/workflows/grade-vieng-tham-images.yml
   pull_request:
     branches:
       - main
     paths:
       - src/grade_visit_images.py
+      - src/grade_visit_images_local.py
       - tests/test_grade_visit_images.py
+      - requirements-vision.txt
       - .github/workflows/grade-vieng-tham-images.yml
   workflow_dispatch:
     inputs:
@@ -21,14 +25,13 @@ on:
         description: "Maximum new images to grade; blank means all pending"
         required: false
         default: ""
-      batch_size:
-        description: "Images per model request (1-20)"
+      local_batch_size:
+        description: "Images per local CLIP inference batch"
         required: true
-        default: "20"
+        default: "32"
 
 permissions:
   contents: write
-  models: read
 
 concurrency:
   group: grade-dms-visit-images-${{ github.ref }}
@@ -40,12 +43,13 @@ jobs:
     timeout-minutes: 350
     env:
       PYTHONUNBUFFERED: "1"
-      GRADE_MODEL: openai/gpt-4o-mini
-      GRADE_BATCH_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_size || '20' }}
+      TOKENIZERS_PARALLELISM: "false"
+      GRADE_LOCAL_MODEL: openai/clip-vit-base-patch32
+      GRADE_LOCAL_BATCH_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.local_batch_size || '32' }}
+      GRADE_DOWNLOAD_WORKERS: "12"
       # Push/PR is a safety smoke-test. Manual dispatch can grade all remaining rows.
       GRADE_MAX_ROWS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_rows || '20' }}
       GRADE_OUTPUT_PATH: results/vieng_tham_grading.csv
-      GRADE_STOP_ON_RATE_LIMIT: "true"
 
     steps:
       - name: Checkout
@@ -59,18 +63,23 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-vision.txt
+
+      - name: Install OCR runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends tesseract-ocr
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-vision.txt
 
       - name: Run grading rule tests
         run: python -m unittest tests.test_grade_visit_images -v
 
-      - name: Grade visit images
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python src/grade_visit_images.py
+      - name: Grade visit images locally
+        run: python src/grade_visit_images_local.py
 
       - name: Commit grading checkpoint
         if: ${{ always() && github.event_name != 'pull_request' }}
