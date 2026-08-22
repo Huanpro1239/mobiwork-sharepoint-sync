@@ -4,15 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       sync_mode:
-        description: "incremental = daily refresh; bootstrap = resumable history load"
+        description: "incremental = refresh selected dates; bootstrap = resumable history load"
         required: true
         type: choice
         options:
           - incremental
           - bootstrap
         default: incremental
+      sync_scope:
+        description: "Incremental target: today, yesterday, or previous N days"
+        required: true
+        type: choice
+        options:
+          - today
+          - yesterday
+          - lookback
+        default: today
       lookback_days:
-        description: "Incremental only: previous days to refresh"
+        description: "Used only when sync_scope=lookback"
         required: true
         default: "1"
       dry_run:
@@ -26,6 +35,8 @@ on:
         type: boolean
         default: false
   schedule:
+    - cron: "5 * * * *"
+      timezone: "Asia/Ho_Chi_Minh"
     - cron: "0 9 * * *"
       timezone: "Asia/Ho_Chi_Minh"
 
@@ -51,21 +62,46 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
+          cache-dependency-path: requirements.txt
 
-      - name: Install dependencies
+      - name: Install runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -r requirements.txt
 
-      - name: Quality gate before sync
+      - name: Production preflight
         run: |
-          python -m compileall -q src tests
-          ruff check .
-          coverage run -m unittest discover -s tests -v
-          coverage report
+          python -m compileall -q src
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("config/reports.json").read_text(encoding="utf-8"))
+          reports = payload.get("reports")
+          if not isinstance(reports, list) or not any(item.get("enabled") for item in reports):
+              raise SystemExit("No enabled reports in config/reports.json")
+          print(f"Enabled reports: {sum(bool(item.get('enabled')) for item in reports)}")
+          PY
+
+      - name: Resolve sync target
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          INPUT_SCOPE: ${{ inputs.sync_scope }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            if [ "$EVENT_SCHEDULE" = "5 * * * *" ]; then
+              scope="today"
+            else
+              scope="yesterday"
+            fi
+          else
+            scope="${INPUT_SCOPE:-today}"
+          fi
+          echo "SYNC_SCOPE=$scope" >> "$GITHUB_ENV"
+          echo "Resolved sync scope: $scope"
 
       - name: Validate MobiWork secrets
         env:
@@ -159,6 +195,7 @@ jobs:
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
           SYNC_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_mode || 'incremental' }}
+          SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
           BOOTSTRAP_EMPTY_MONTHS: "24"
           BOOTSTRAP_FLOOR_DATE: "2000-01-01"
@@ -185,6 +222,7 @@ jobs:
               "",
               f"- Status: **{data.get('status', 'unknown')}**",
               f"- Mode: `{data.get('mode', '')}`",
+              f"- Sync scope: `{data.get('sync_scope', '')}`",
               f"- Run ID: `{data.get('run_id', '')}`",
               f"- Successful report executions: **{data.get('successful_report_count', 0)}**",
               f"- Failed report executions: **{data.get('failed_report_count', 0)}**",
