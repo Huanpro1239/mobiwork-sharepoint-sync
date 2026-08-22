@@ -7,6 +7,7 @@ on:
     paths:
       - src/grade_visit_images.py
       - src/grade_visit_images_local.py
+      - src/build_grading_contact_sheet.py
       - tests/test_grade_visit_images.py
       - requirements-vision.txt
       - .github/workflows/grade-vieng-tham-images.yml
@@ -16,6 +17,7 @@ on:
     paths:
       - src/grade_visit_images.py
       - src/grade_visit_images_local.py
+      - src/build_grading_contact_sheet.py
       - tests/test_grade_visit_images.py
       - requirements-vision.txt
       - .github/workflows/grade-vieng-tham-images.yml
@@ -50,6 +52,7 @@ jobs:
       # Push/PR is a safety smoke-test. Manual dispatch can grade all remaining rows.
       GRADE_MAX_ROWS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_rows || '20' }}
       GRADE_OUTPUT_PATH: results/vieng_tham_grading.csv
+      GRADE_CONTACT_SHEET: results/smoke_contact_sheet.jpg
 
     steps:
       - name: Checkout
@@ -81,6 +84,9 @@ jobs:
       - name: Grade visit images locally
         run: python -m src.grade_visit_images_local
 
+      - name: Build smoke contact sheet
+        run: python -m src.build_grading_contact_sheet
+
       - name: Commit grading checkpoint
         if: ${{ always() && github.event_name != 'pull_request' }}
         shell: bash
@@ -108,5 +114,6 @@ jobs:
           path: |
             results/vieng_tham_grading.csv
             results/vieng_tham_grading.summary.json
+            results/smoke_contact_sheet.jpg
           if-no-files-found: ignore
           retention-days: 14
