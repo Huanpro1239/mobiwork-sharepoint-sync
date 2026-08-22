@@ -1,0 +1,51 @@
+{
+  "reports": [
+    {
+      "key": "visit",
+      "enabled": false,
+      "name": "VisitReport",
+      "folder": "01_VisitReport",
+      "url": "https://openapi.mobiwork.vn/OpenAPI/V1/VisitData",
+      "url_env": null,
+      "method": "GET",
+      "from_param": "tu_ngay",
+      "to_param": "den_ngay",
+      "date_format": "%d/%m/%Y",
+      "page_param": null,
+      "page_size_param": null,
+      "page_size": 500,
+      "data_path": "data",
+      "explode_field": "thoi_gian_vt",
+      "fixed_params": {},
+      "export_mode": "flat"
+    },
+    {
+      "key": "order",
+      "enabled": false,
+      "name": "OrderReport",
+      "folder": "02_OrderReport",
+      "url": "https://openapi.mobiwork.vn/OpenAPI/V1/Order",
+      "url_env": null,
+      "method": "GET",
+      "from_param": "tu_ngay",
+      "to_param": "den_ngay",
+      "date_format": "%d/%m/%Y",
+      "page_param": "page_number",
+      "page_size_param": "page_size",
+      "page_size": 100,
+      "data_path": "data",
+      "explode_field": null,
+      "fixed_params": {
+        "kieu_ngay": "cdate"
+      },
+      "export_mode": "order",
+      "primary_key": [
+        "ma_phieu"
+      ],
+      "required_fields": [
+        "ma_phieu",
+        "san_pham"
+      ]
+    }
+  ]
+}
