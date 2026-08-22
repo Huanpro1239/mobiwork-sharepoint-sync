@@ -92,6 +92,130 @@ jobs:
 
           echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
 
+      - name: Export previous-day visit workbook for binary probe
+        env:
+          PYTHONUNBUFFERED: "1"
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+          MOBIWORK_MAX_RETRIES: "8"
+          MOBIWORK_TIMEOUT_SECONDS: "120"
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python - <<'PY'
+          import json
+          from datetime import datetime, timedelta
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          from excel_export import export_excel
+          from mobiwork import MobiWorkClient, ReportConfig
+
+          payload = json.loads(Path("config/reports.json").read_text(encoding="utf-8"))
+          raw = next(item for item in payload["reports"] if item["key"] == "visit")
+          cfg = ReportConfig(**raw)
+          target = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date() - timedelta(days=1)
+          records = MobiWorkClient.from_env().fetch_report(cfg, target)
+          path = export_excel(records, cfg.name, target, cfg.export_mode)
+          info = {
+              "target_date": target.isoformat(),
+              "path": str(path),
+              "rows": len(records),
+              "size": path.stat().st_size,
+          }
+          Path("output/raw_probe_source.json").write_text(
+              json.dumps(info, indent=2), encoding="utf-8"
+          )
+          print(f"Raw probe source: {info}")
+          PY
+
+      - name: Raw curl binary upload preflight
+        id: raw_probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          TOKEN=$(az account get-access-token \
+            --resource 'https://graph.microsoft.com/' \
+            --query accessToken -o tsv)
+          LOCAL=$(jq -r '.path' output/raw_probe_source.json)
+          TARGET_DATE=$(jq -r '.target_date' output/raw_probe_source.json)
+          PROBE_NAME="__raw_probe_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.xlsx"
+          REMOTE_PATH="01_BaoCaoViengTham/${TARGET_DATE:0:4}/${TARGET_DATE:5:2}/${PROBE_NAME}"
+          PUT_JSON=/tmp/raw-probe-put.json
+          REMOTE_FILE=/tmp/raw-probe-remote.xlsx
+          ITEM_ID=""
+
+          cleanup() {
+            if [ -n "$ITEM_ID" ]; then
+              curl --silent --show-error \
+                -X DELETE \
+                -H "Authorization: Bearer $TOKEN" \
+                "https://graph.microsoft.com/v1.0/drives/${SHAREPOINT_DRIVE_ID}/items/${ITEM_ID}" \
+                -o /dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          LOCAL_SIZE=$(stat -c%s "$LOCAL")
+          LOCAL_SHA=$(sha256sum "$LOCAL" | awk '{print $1}')
+          echo "Raw probe local size=$LOCAL_SIZE sha256=$LOCAL_SHA"
+
+          HTTP_CODE=$(curl --silent --show-error --fail-with-body \
+            -o "$PUT_JSON" \
+            -w '%{http_code}' \
+            -X PUT \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' \
+            -H "Content-Length: $LOCAL_SIZE" \
+            --data-binary "@$LOCAL" \
+            "https://graph.microsoft.com/v1.0/drives/${SHAREPOINT_DRIVE_ID}/root:/${REMOTE_PATH}:/content")
+
+          ITEM_ID=$(jq -r '.id // empty' "$PUT_JSON")
+          RETURNED_NAME=$(jq -r '.name // empty' "$PUT_JSON")
+          RESPONSE_SIZE=$(jq -r '.size // -1' "$PUT_JSON")
+          if [ -z "$ITEM_ID" ]; then
+            echo "::error::Raw Graph PUT did not return an item id."
+            cat "$PUT_JSON"
+            exit 1
+          fi
+          echo "Raw PUT http=$HTTP_CODE name=$RETURNED_NAME id=$ITEM_ID response_size=$RESPONSE_SIZE"
+
+          curl --silent --show-error --fail --location \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://graph.microsoft.com/v1.0/drives/${SHAREPOINT_DRIVE_ID}/items/${ITEM_ID}/content" \
+            -o "$REMOTE_FILE"
+
+          REMOTE_SIZE=$(stat -c%s "$REMOTE_FILE")
+          REMOTE_SHA=$(sha256sum "$REMOTE_FILE" | awk '{print $1}')
+          echo "Raw probe remote size=$REMOTE_SIZE sha256=$REMOTE_SHA"
+
+          python - "$HTTP_CODE" "$ITEM_ID" "$RETURNED_NAME" "$LOCAL_SIZE" "$RESPONSE_SIZE" "$REMOTE_SIZE" "$LOCAL_SHA" "$REMOTE_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          keys = [
+              "http_code", "item_id", "returned_name", "local_size",
+              "response_size", "remote_size", "local_sha256", "remote_sha256"
+          ]
+          values = sys.argv[1:]
+          data = dict(zip(keys, values, strict=True))
+          for key in ("local_size", "response_size", "remote_size"):
+              data[key] = int(data[key])
+          data["match"] = (
+              data["local_size"] == data["remote_size"]
+              and data["local_sha256"] == data["remote_sha256"]
+          )
+          Path("output/raw_binary_probe.json").write_text(
+              json.dumps(data, indent=2), encoding="utf-8"
+          )
+          print(json.dumps(data, indent=2))
+          if not data["match"]:
+              raise SystemExit("Raw curl binary upload/download hash mismatch")
+          PY
+
       - name: Sync previous day production data
         env:
           PYTHONUNBUFFERED: "1"
@@ -121,31 +245,38 @@ jobs:
           import os
           from pathlib import Path
 
-          path = Path("output/sync_manifest.json")
-          if not path.exists():
-              raise SystemExit(0)
-
-          data = json.loads(path.read_text(encoding="utf-8"))
-          lines = [
-              "## One-time Production Validation",
-              "",
-              f"- Status: **{data.get('status', 'unknown')}**",
-              f"- Run ID: `{data.get('run_id', '')}`",
-              f"- Files: **{data.get('file_count', len(data.get('files', [])))}**",
-              f"- Source rows: **{data.get('source_row_count', 0):,}**",
-          ]
-          if data.get("error"):
-              lines.append(f"- Error: `{data['error']}`")
+          manifest_path = Path("output/sync_manifest.json")
+          probe_path = Path("output/raw_binary_probe.json")
+          lines = ["## One-time Production Validation", ""]
+          if probe_path.exists():
+              probe = json.loads(probe_path.read_text(encoding="utf-8"))
+              lines.extend([
+                  f"- Raw binary probe: **{'PASS' if probe.get('match') else 'FAIL'}**",
+                  f"- Probe local/remote size: `{probe.get('local_size')}` / `{probe.get('remote_size')}`",
+              ])
+          if manifest_path.exists():
+              data = json.loads(manifest_path.read_text(encoding="utf-8"))
+              lines.extend([
+                  f"- Status: **{data.get('status', 'unknown')}**",
+                  f"- Run ID: `{data.get('run_id', '')}`",
+                  f"- Files: **{data.get('file_count', len(data.get('files', [])))}**",
+                  f"- Source rows: **{data.get('source_row_count', 0):,}**",
+              ])
+              if data.get("error"):
+                  lines.append(f"- Error: `{data['error']}`")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
           PY
 
-      - name: Upload validation manifest
+      - name: Upload validation diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: production-validation-manifest-${{ github.run_id }}
-          path: output/sync_manifest.json
+          name: production-validation-diagnostics-${{ github.run_id }}
+          path: |
+            output/sync_manifest.json
+            output/raw_binary_probe.json
+            output/raw_probe_source.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -161,18 +292,31 @@ jobs:
           import shlex
           from pathlib import Path
 
-          path = Path('output/sync_manifest.json')
-          if not path.exists():
+          manifest_path = Path('output/sync_manifest.json')
+          probe_path = Path('output/raw_binary_probe.json')
+          probe = None
+          if probe_path.exists():
+              probe = json.loads(probe_path.read_text(encoding='utf-8'))
+
+          if not manifest_path.exists():
               state = 'failure'
-              description = 'validation failed: sync manifest missing'
+              if probe is None:
+                  description = 'validation failed before raw binary probe completed'
+              elif not probe.get('match'):
+                  description = (
+                      f"raw binary mismatch local={probe.get('local_size')} "
+                      f"remote={probe.get('remote_size')}"
+                  )
+              else:
+                  description = 'raw binary probe passed; production sync did not complete'
           else:
-              data = json.loads(path.read_text(encoding='utf-8'))
+              data = json.loads(manifest_path.read_text(encoding='utf-8'))
               status = str(data.get('status', 'failed'))
               files = int(data.get('file_count', len(data.get('files', []))))
               rows = int(data.get('source_row_count', 0))
               if status == 'success':
                   state = 'success'
-                  description = f'success files={files} rows={rows}'
+                  description = f'success files={files} rows={rows} raw_probe=pass'
               else:
                   state = 'failure'
                   error = str(data.get('error', 'sync failed')).replace('\n', ' ')[:90]
