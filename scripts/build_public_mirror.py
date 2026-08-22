@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 from pathlib import Path
 
@@ -121,7 +122,12 @@ def _sanitize_public_text_files(output_dir: Path) -> None:
             continue
         updated = text
         for private_value, public_value in PUBLIC_TEXT_REPLACEMENTS.items():
-            updated = updated.replace(private_value, public_value)
+            updated = re.sub(
+                re.escape(private_value),
+                lambda _match, replacement=public_value: replacement,
+                updated,
+                flags=re.IGNORECASE,
+            )
         if updated != text:
             path.write_text(updated, encoding="utf-8")
 
