@@ -566,6 +566,49 @@ class SharePointClient:
             "application/json; charset=utf-8",
         )
 
+    def download_file_bytes(self, drive_id: str, remote_path: str) -> bytes | None:
+        item = self.get_item_by_path(drive_id, remote_path)
+        if not item:
+            return None
+        if "folder" in item:
+            raise RuntimeError(f"SharePoint path {remote_path!r} is a folder, not a file")
+        item_id = str(item.get("id", "")).strip()
+        if not item_id:
+            raise RuntimeError(f"SharePoint file {remote_path!r} has no driveItem id")
+        return self._download_item_content(drive_id, item_id)
+
+    def list_folder_children(self, drive_id: str, remote_folder: str) -> list[dict[str, Any]]:
+        folder = self.get_item_by_path(drive_id, remote_folder)
+        if not folder:
+            return []
+        if "folder" not in folder:
+            raise RuntimeError(f"SharePoint path {remote_folder!r} is not a folder")
+        folder_id = str(folder.get("id", "")).strip()
+        if not folder_id:
+            raise RuntimeError(f"SharePoint folder {remote_folder!r} has no driveItem id")
+
+        url: str | None = f"{self._item_url(drive_id, folder_id)}/children?$top=200"
+        items: list[dict[str, Any]] = []
+        while url:
+            payload = self._request("GET", url).json()
+            value = payload.get("value", [])
+            if not isinstance(value, list):
+                raise TypeError("Microsoft Graph children response value must be a list")
+            items.extend(item for item in value if isinstance(item, dict))
+            next_link = payload.get("@odata.nextLink")
+            url = str(next_link).strip() if next_link else None
+        return items
+
+    def delete_path(self, drive_id: str, remote_path: str) -> bool:
+        item = self.get_item_by_path(drive_id, remote_path)
+        if not item:
+            return False
+        item_id = str(item.get("id", "")).strip()
+        if not item_id:
+            raise RuntimeError(f"SharePoint item {remote_path!r} has no driveItem id")
+        self._delete_item(drive_id, item_id)
+        return True
+
     def download_json(self, drive_id: str, remote_path: str) -> dict[str, Any] | None:
         encoded = quote(remote_path.strip("/"), safe="/")
         metadata_url = f"{GRAPH}/drives/{drive_id}/root:/{encoded}"

@@ -14,12 +14,7 @@ from mobiwork import ReportConfig  # noqa: E402
 
 
 class FakeMobiWork:
-    def __init__(self):
-        self.calls = []
-
-    def fetch_report(self, cfg, target_date):
-        self.calls.append(cfg.key)
-        return [{"report": cfg.key}]
+    pass
 
 
 class FakeSharePoint:
@@ -39,6 +34,12 @@ class FakeSharePoint:
             "semantic_match": True,
             "webUrl": f"https://example/{Path(path).name}",
         }
+
+    def list_folder_children(self, drive_id, remote_folder):
+        return []
+
+    def delete_path(self, drive_id, remote_path):
+        return True
 
 
 class IncrementalScopeTests(unittest.TestCase):
@@ -76,25 +77,24 @@ class AllReportsRunnerTests(unittest.TestCase):
             ReportConfig(key="order", enabled=True, name="order", folder="03"),
             ReportConfig(key="bill", enabled=True, name="bill", folder="04"),
         ]
-        mobiwork = FakeMobiWork()
         sharepoint = FakeSharePoint(fail_report="visit")
         manifest = runner.core._new_manifest("incremental", False)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
-            def fake_export(records, name, target_date, export_mode):
-                path = temp_path / f"{name}_{target_date.isoformat()}.xlsx"
-                path.write_bytes(f"workbook-{name}".encode())
-                return path
+            def fake_master(cfg, target_date, mobiwork, sp, drive_id, dry_run):
+                path = temp_path / f"{cfg.name}_{target_date:%Y-%m}.xlsx"
+                path.write_bytes(f"workbook-{cfg.name}".encode())
+                return path, 1, 10, False, 0
 
             with (
                 patch.object(runner.core, "target_dates", return_value=[date(2026, 8, 21)]),
-                patch.object(runner, "export_excel", side_effect=fake_export),
+                patch.object(runner, "_build_or_update_master", side_effect=fake_master),
             ):
                 results = runner.run_incremental_all_reports(
                     reports,
-                    mobiwork,
+                    FakeMobiWork(),
                     sharepoint,
                     "drive",
                     1,
@@ -103,17 +103,47 @@ class AllReportsRunnerTests(unittest.TestCase):
                     sync_scope="lookback",
                 )
 
-        self.assertEqual(mobiwork.calls, ["visit", "new_customer", "order", "bill"])
         self.assertEqual(len(sharepoint.calls), 4)
         self.assertEqual(len(results), 4)
         self.assertEqual(results[0]["status"], "failed")
         self.assertEqual([item["status"] for item in results[1:]], ["success"] * 3)
         self.assertEqual(len(manifest["files"]), 3)
+        self.assertTrue(all(item.get("master_rows") == 10 for item in results))
 
         runner._finalize_manifest(manifest, results)
         self.assertEqual(manifest["status"], "partial_failure")
         self.assertEqual(manifest["failed_report_count"], 1)
         self.assertEqual(manifest["successful_report_count"], 3)
+
+    def test_cleanup_deletes_only_legacy_report_files(self):
+        class CleanupSharePoint:
+            def __init__(self):
+                self.deleted = []
+
+            def list_folder_children(self, drive_id, remote_folder):
+                return [
+                    {"name": "BaoCaoViengTham_2026-08.xlsx"},
+                    {"name": "BaoCaoViengTham_2026-08-21.xlsx"},
+                    {"name": "BaoCaoViengTham_History_2026-08-01_to_2026-08-20.xlsx"},
+                    {"name": "__sync_tmp_abc__BaoCaoViengTham_2026-08-21.xlsx"},
+                    {"name": "notes.xlsx"},
+                ]
+
+            def delete_path(self, drive_id, remote_path):
+                self.deleted.append(remote_path)
+                return True
+
+        sp = CleanupSharePoint()
+        deleted = runner._cleanup_legacy_files(
+            sp,
+            "drive",
+            "01_BaoCaoViengTham/2026/08",
+            "BaoCaoViengTham",
+            "BaoCaoViengTham_2026-08.xlsx",
+        )
+        self.assertEqual(len(deleted), 3)
+        self.assertFalse(any(name == "BaoCaoViengTham_2026-08.xlsx" for name in deleted))
+        self.assertFalse(any("notes.xlsx" in name for name in deleted))
 
     def test_all_success_is_marked_success(self):
         results = [
