@@ -2,9 +2,14 @@
 
 ## Normal production schedule
 
-`MobiWork DMS Sync` runs every day at **09:00 Asia/Ho_Chi_Minh**.
+`MobiWork DMS Sync` uses two automatic schedules in `Asia/Ho_Chi_Minh`:
 
-Scheduled execution is fixed to:
+```text
+HH:05 every hour -> SYNC_SCOPE=today
+09:00 every day  -> SYNC_SCOPE=yesterday
+```
+
+Both use:
 
 ```text
 SYNC_MODE=incremental
@@ -12,11 +17,25 @@ LOOKBACK_DAYS=1
 DRY_RUN=false
 ```
 
-The scheduled run refreshes **D-1 only**. Example: the 22/08 run refreshes 21/08.
+The hourly run repeatedly refreshes the current Vietnam calendar day. The 09:00 run finalizes D-1. Example on 22/08: the 09:00 run refreshes 21/08; 09:05 and later hourly runs refresh 22/08.
 
-GitHub schedules are configured for 09:00 local time, but the hosted runner may actually start a few minutes later when GitHub has queue pressure. The intended trigger remains 09:00.
+Minute `05` is deliberate: it reduces top-of-hour GitHub queue pressure and prevents the hourly trigger from being identical to the 09:00 D-1 trigger. The shared concurrency lock ensures only one production job writes SharePoint at a time, so the 09:05 job waits if the 09:00 finalization is still running.
 
-## Daily execution policy
+GitHub-hosted runners can start a few minutes after the configured trigger when queue pressure exists. The data freshness target is therefore approximately one hour plus runner/API processing time, not sub-minute real time.
+
+## Incremental scopes
+
+The runner supports:
+
+```text
+today      -> current Vietnam date
+yesterday  -> previous Vietnam date
+lookback   -> previous N days
+```
+
+Automatic hourly runs use `today`; automatic 09:00 runs use `yesterday`. `lookback` is for controlled manual recovery when older MobiWork data is corrected.
+
+## Execution policy
 
 All enabled reports are attempted independently in this order:
 
@@ -50,30 +69,58 @@ For Excel files, production verifies the downloaded SharePoint workbook semantic
 
 A semantic mismatch fails closed. Physical package differences alone are accepted when worksheet business content is identical.
 
-Existing dated files are replaced using a staged upload/promotion process with rollback protection.
+Existing dated files are replaced using a staged upload/promotion process with rollback protection. Hourly runs replace the same current-day filenames, so the document library does not accumulate 24 Excel copies per day.
 
 ## Manual refresh
 
-Use `workflow_dispatch` for controlled recovery or investigation.
+Use `workflow_dispatch` for controlled recovery, immediate refresh, or investigation.
 
-Normal manual refresh settings:
+For the latest current-day data:
 
 ```text
 sync_mode=incremental
+sync_scope=today
 lookback_days=1
 dry_run=false
-reset_bootstrap_state=false
 ```
 
-If a known MobiWork correction affects older data, increase `lookback_days` only enough to cover the affected period. Do not routinely refresh several old days without a business reason.
-
-For inspection without SharePoint writes:
+To finalize/retry the previous day:
 
 ```text
-dry_run=true
+sync_mode=incremental
+sync_scope=yesterday
+lookback_days=1
+dry_run=false
 ```
 
-Dry-run Excel outputs are retained as short-lived GitHub Actions artifacts.
+For older corrections:
+
+```text
+sync_mode=incremental
+sync_scope=lookback
+lookback_days=N
+dry_run=false
+```
+
+For inspection without SharePoint writes, set `dry_run=true`. Dry-run Excel outputs are retained as short-lived GitHub Actions artifacts.
+
+## Production preflight vs CI
+
+Hourly production intentionally does not rerun the full unit-test suite every hour. It performs a lightweight production preflight:
+
+1. compile Python sources;
+2. parse `config/reports.json`;
+3. confirm at least one report is enabled;
+4. validate runtime secrets/OIDC configuration before production writes.
+
+Full code quality checks run in `.github/workflows/ci.yml` on pull requests and pushes to `main`:
+
+- Python compilation;
+- Ruff;
+- unit tests;
+- coverage threshold.
+
+This separation keeps hourly refresh latency low without weakening change-control quality gates.
 
 ## Production checklist after code changes
 
@@ -81,12 +128,13 @@ Before merging a production change:
 
 1. CI must be green.
 2. Confirm the workflow still targets `MobiWorkDMS` on `/sites/Planning`.
-3. Confirm scheduled mode remains `incremental`, `lookback_days=1`, `dry_run=false`.
-4. Confirm all enabled reports remain in `config/reports.json`.
-5. Confirm semantic Excel verification tests pass.
-6. Confirm continue-on-report-error tests pass.
-7. For data-contract changes, run a manual one-day dry run and inspect schema/row counts.
-8. For SharePoint/authentication changes, run a manual one-day production sync before relying on the next schedule.
+3. Confirm hourly schedule remains `5 * * * *` with `Asia/Ho_Chi_Minh`.
+4. Confirm D-1 finalization remains `0 9 * * *` with `Asia/Ho_Chi_Minh`.
+5. Confirm scheduled runs remain `incremental` and `dry_run=false`.
+6. Confirm all enabled reports remain in `config/reports.json`.
+7. Confirm incremental-scope, semantic-verification and continue-on-report-error tests pass.
+8. For data-contract changes, run a manual dry run and inspect schema/row counts.
+9. For SharePoint/authentication changes, run a manual production sync before relying on automation.
 
 ## Failure behavior
 
@@ -110,12 +158,13 @@ Transient timeouts, rate limits, and temporary `5xx` responses are retried autom
 When a production run fails:
 
 1. Open the GitHub Actions **Job Summary**.
-2. Inspect the report table and identify failed report(s).
-3. Download `sync_manifest.json` from the run artifact if needed.
-4. Inspect the failed step log.
-5. Check MobiWork HTTP status/message and pagination behavior.
-6. Check Graph HTTP status, retry behavior, OIDC and SharePoint permissions.
-7. Check the latest `_sync_runs/YYYY/MM/*.json` audit manifest in SharePoint.
+2. Check `Sync scope` to know whether the run targeted today, yesterday, or lookback.
+3. Inspect the report table and identify failed report(s).
+4. Download `sync_manifest.json` from the run artifact if needed.
+5. Inspect the failed step log.
+6. Check MobiWork HTTP status/message and pagination behavior.
+7. Check Graph HTTP status, retry behavior, OIDC and SharePoint permissions.
+8. Check the latest `_sync_runs/YYYY/MM/*.json` audit manifest in SharePoint.
 
 Do not keep increasing retry counts to hide deterministic failures. Separate transient failures (`429`, `5xx`, timeout) from authentication, schema, permission, and data-contract failures.
 
@@ -124,6 +173,7 @@ Do not keep increasing retry counts to hide deterministic failures. Separate tra
 Each production run records:
 
 - run ID and timestamps;
+- sync scope;
 - enabled reports;
 - source rows per report;
 - report-level success/failure;
@@ -140,6 +190,8 @@ The local manifest is `output/sync_manifest.json`; production also uploads it to
 ```text
 _sync_runs/YYYY/MM/<run_id>.json
 ```
+
+Hourly execution intentionally creates hourly audit JSON records. These are operational trace records, not duplicate business Excel files.
 
 ## Bootstrap history
 
@@ -185,11 +237,11 @@ If a release causes deterministic failure:
 1. Do not repeatedly rerun the same failing release.
 2. Revert the responsible PR on `main`.
 3. Confirm CI passes for the revert.
-4. Run a one-day dry run when data mapping changed.
-5. Run a one-day production incremental sync when SharePoint/authentication behavior changed.
+4. Run a dry run when data mapping changed.
+5. Run a production incremental sync when SharePoint/authentication behavior changed.
 6. Fix the issue on a new branch.
 
-Daily filenames are deterministic, so a corrected rerun safely replaces the affected day.
+Deterministic dated filenames make corrected reruns safe: the affected day is replaced instead of duplicated.
 
 ## Change-control rules
 
@@ -201,6 +253,7 @@ Treat these as data-contract changes and review them carefully:
 - order/detail table structure;
 - timezone conversion;
 - MobiWork date filters;
+- incremental scope/date resolution;
 - pagination semantics;
 - semantic workbook verification rules;
 - bootstrap checkpoint/stop behavior.
