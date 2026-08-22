@@ -1,1 +1,1 @@
-2026-08-22 production validation run 6 with raw curl binary transport preflight.
+2026-08-22 production validation run 7: all reports with semantic Excel verification and continue-on-error.
