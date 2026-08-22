@@ -25,6 +25,9 @@ on:
         required: true
         type: boolean
         default: false
+  schedule:
+    - cron: "0 9 * * *"
+      timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
   contents: read
@@ -37,7 +40,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -86,7 +89,7 @@ jobs:
           echo "MobiWork credentials: available"
 
       - name: Validate Microsoft OIDC configuration
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -108,7 +111,7 @@ jobs:
           echo "Microsoft OIDC configuration: available"
 
       - name: Azure login with GitHub OIDC
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -116,7 +119,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Resolve SharePoint document library
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -155,12 +158,12 @@ jobs:
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
-          SYNC_MODE: ${{ inputs.sync_mode }}
-          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+          SYNC_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_mode || 'incremental' }}
+          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
           BOOTSTRAP_EMPTY_MONTHS: "24"
           BOOTSTRAP_FLOOR_DATE: "2000-01-01"
-          RESET_BOOTSTRAP_STATE: ${{ inputs.reset_bootstrap_state }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          RESET_BOOTSTRAP_STATE: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_bootstrap_state || false }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_all_reports.py
 
       - name: Publish run summary
@@ -190,6 +193,8 @@ jobs:
           ]
           if data.get("error"):
               lines.append(f"- Error summary: `{data['error']}`")
+          if data.get("audit_upload_error"):
+              lines.append(f"- Audit upload error: `{data['audit_upload_error']}`")
 
           results = data.get("report_results", [])
           if results:
@@ -208,9 +213,7 @@ jobs:
                       f"{item.get('verification_mode', '')} | {file_cell} |"
                   )
                   if item.get("error"):
-                      lines.append(
-                          f"|  | ↳ error |  |  |  | `{item['error']}` |"
-                      )
+                      lines.append(f"|  | ↳ error |  |  |  | `{item['error']}` |")
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
@@ -226,7 +229,7 @@ jobs:
           retention-days: 14
 
       - name: Upload dry-run Excel artifacts
-        if: ${{ always() && inputs.dry_run == true }}
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
         uses: actions/upload-artifact@v7
         with:
           name: mobiwork-dry-run-output-${{ github.run_id }}
