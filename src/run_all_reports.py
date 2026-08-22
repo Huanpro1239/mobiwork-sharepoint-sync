@@ -6,8 +6,18 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import main as core
-from excel_export import export_excel
 from mobiwork import MobiWorkClient, ReportConfig
+from monthly_master import (
+    build_month_from_partitions,
+    frames_from_records,
+    is_legacy_report_file,
+    master_filename,
+    master_row_count,
+    merge_partition,
+    month_dates_through,
+    read_master,
+    write_master,
+)
 from sharepoint_semantic import SemanticSharePointClient
 
 
@@ -22,12 +32,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def incremental_target_dates(sync_scope: str, lookback_days: int) -> list[date]:
-    """Resolve incremental dates in Vietnam local time.
-
-    today: current business day, used by the hourly near-real-time refresh.
-    yesterday: previous business day, used by the 09:00 daily finalization.
-    lookback: previous N days, retained for manual recovery/backfill.
-    """
+    """Resolve incremental dates in Vietnam local time."""
     scope = sync_scope.strip().casefold()
     today_vn = datetime.now(core.VN_TZ).date()
 
@@ -60,8 +65,86 @@ def _result_entry(cfg: ReportConfig, target_date: date) -> dict[str, Any]:
         "report": cfg.key,
         "report_name": cfg.name,
         "target_date": target_date.isoformat(),
+        "month_master": f"{target_date:%Y-%m}",
         "status": "running",
     }
+
+
+def _cleanup_legacy_files(
+    sharepoint: SemanticSharePointClient,
+    drive_id: str,
+    remote_folder: str,
+    report_name: str,
+    canonical_name: str,
+) -> list[str]:
+    deleted: list[str] = []
+    for item in sharepoint.list_folder_children(drive_id, remote_folder):
+        if "folder" in item:
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name or not is_legacy_report_file(name, report_name, canonical_name):
+            continue
+        remote_path = f"{remote_folder}/{name}"
+        if sharepoint.delete_path(drive_id, remote_path):
+            deleted.append(name)
+            LOG.info("Removed legacy SharePoint report file: %s", remote_path)
+    return deleted
+
+
+def _build_or_update_master(
+    cfg: ReportConfig,
+    target_date: date,
+    mobiwork: MobiWorkClient,
+    sharepoint: SemanticSharePointClient | None,
+    drive_id: str | None,
+    dry_run: bool,
+) -> tuple[Any, int, int, bool, int]:
+    """Return path, target-day rows, master rows, rebuilt flag, rebuild days."""
+    remote_folder = f"{cfg.folder}/{target_date:%Y}/{target_date:%m}"
+    canonical_name = master_filename(cfg.name, target_date)
+    remote_path = f"{remote_folder}/{canonical_name}"
+
+    if dry_run:
+        records = mobiwork.fetch_report(cfg, target_date)
+        frames = build_month_from_partitions([(target_date, records)], cfg.export_mode)
+        path = write_master(frames, cfg.name, target_date)
+        return path, len(records), master_row_count(frames, cfg.export_mode), False, 0
+
+    if not sharepoint or not drive_id:
+        raise RuntimeError("SharePoint client is unavailable in production mode")
+
+    existing_content = sharepoint.download_file_bytes(drive_id, remote_path)
+    if existing_content is None:
+        rebuild_dates = month_dates_through(target_date)
+        partitions: list[tuple[date, list[dict[str, Any]]]] = []
+        target_rows = 0
+        LOG.info(
+            "Monthly master missing; rebuilding report=%s month=%s days=%s",
+            cfg.key,
+            target_date.strftime("%Y-%m"),
+            len(rebuild_dates),
+        )
+        for rebuild_date in rebuild_dates:
+            records = mobiwork.fetch_report(cfg, rebuild_date)
+            partitions.append((rebuild_date, records))
+            if rebuild_date == target_date:
+                target_rows = len(records)
+        frames = build_month_from_partitions(partitions, cfg.export_mode)
+        path = write_master(frames, cfg.name, target_date)
+        return (
+            path,
+            target_rows,
+            master_row_count(frames, cfg.export_mode),
+            True,
+            len(rebuild_dates),
+        )
+
+    existing_frames = read_master(existing_content, cfg.export_mode)
+    records = mobiwork.fetch_report(cfg, target_date)
+    incoming = frames_from_records(records, cfg.export_mode, target_date)
+    merged = merge_partition(existing_frames, incoming, target_date, cfg.export_mode)
+    path = write_master(merged, cfg.name, target_date)
+    return path, len(records), master_row_count(merged, cfg.export_mode), False, 0
 
 
 def run_incremental_all_reports(
@@ -83,19 +166,31 @@ def run_incremental_all_reports(
             result = _result_entry(cfg, target_date)
             results.append(result)
             path = None
-            source_rows = 0
-            remote_folder: str | None = None
+            remote_folder = f"{cfg.folder}/{target_date:%Y}/{target_date:%m}"
 
             try:
-                LOG.info("Fetching report=%s", cfg.key)
-                records = mobiwork.fetch_report(cfg, target_date)
-                source_rows = len(records)
-                result["source_rows"] = source_rows
-
-                path = export_excel(records, cfg.name, target_date, cfg.export_mode)
+                path, target_rows, master_rows, rebuilt, rebuild_days = _build_or_update_master(
+                    cfg,
+                    target_date,
+                    mobiwork,
+                    sharepoint,
+                    drive_id,
+                    dry_run,
+                )
+                result["source_rows"] = target_rows
+                result["master_rows"] = master_rows
+                result["month_rebuilt"] = rebuilt
+                result["rebuild_days"] = rebuild_days
                 result["filename"] = path.name
                 result["local_size_bytes"] = path.stat().st_size
-                LOG.info("Exported %s source rows -> %s", source_rows, path)
+                result["remote_folder"] = remote_folder
+                LOG.info(
+                    "Prepared monthly master report=%s target_rows=%s master_rows=%s file=%s",
+                    cfg.key,
+                    target_rows,
+                    master_rows,
+                    path,
+                )
 
                 uploaded: dict[str, Any] | None = None
                 if not dry_run:
@@ -103,25 +198,34 @@ def run_incremental_all_reports(
                         raise RuntimeError(
                             "SharePoint client is unavailable in production mode"
                         )
-                    remote_folder = f"{cfg.folder}/{target_date:%Y}/{target_date:%m}"
-                    result["remote_folder"] = remote_folder
                     uploaded = sharepoint.upload_file(drive_id, path, remote_folder)
                     result["remote_size_bytes"] = uploaded.get("size")
                     result["verification_mode"] = uploaded.get("verification_mode")
                     result["semantic_match"] = uploaded.get("semantic_match")
                     result["web_url"] = uploaded.get("webUrl")
                     LOG.info(
-                        "Uploaded report=%s -> %s verification=%s",
+                        "Uploaded monthly master report=%s -> %s verification=%s",
                         cfg.key,
                         uploaded.get("webUrl", remote_folder),
                         uploaded.get("verification_mode", "standard"),
                     )
 
+                    deleted = _cleanup_legacy_files(
+                        sharepoint,
+                        drive_id,
+                        remote_folder,
+                        cfg.name,
+                        path.name,
+                    )
+                    result["cleanup_deleted_count"] = len(deleted)
+                    if deleted:
+                        result["cleanup_deleted_files"] = deleted
+
                 core._record_export(
                     manifest,
                     cfg,
                     path,
-                    source_rows,
+                    master_rows,
                     remote_folder,
                     uploaded,
                 )
@@ -171,6 +275,7 @@ def run_incremental() -> dict[str, Any]:
     manifest = core._new_manifest("incremental", dry_run)
     manifest["reports"] = [cfg.key for cfg in reports]
     manifest["sync_scope"] = sync_scope
+    manifest["storage_model"] = "single_monthly_master_per_report"
     manifest["execution_policy"] = "continue_on_report_error"
     manifest["xlsx_verification"] = "semantic_cell_content"
 
@@ -221,8 +326,6 @@ def run() -> dict[str, Any]:
     if mode == "incremental":
         return run_incremental()
     if mode == "bootstrap":
-        # Reuse the existing resumable bootstrap orchestration, but inject the
-        # semantic SharePoint client so Excel verification is consistent.
         core.SharePointClient = SemanticSharePointClient
         return core.run(
             "bootstrap",
