@@ -93,6 +93,25 @@ class BuildOrderFramesTests(unittest.TestCase):
         self.assertEqual(detail["stt"].astype(int).tolist(), [2, 1, 3, 4])
         self.assertFalse(detail[["ma_phieu", "stt"]].duplicated().any())
 
+    def test_empty_child_ma_phieu_inherits_parent_business_key(self):
+        records = [
+            {
+                "ma_phieu": "PX-PARENT",
+                "san_pham": [
+                    {"ma_phieu": None, "stt": None, "ma_sp": "A"},
+                    {"ma_phieu": "", "stt": "", "ma_sp": "B"},
+                    {"stt": 3, "ma_sp": "C"},
+                ],
+            }
+        ]
+
+        _, detail = build_order_frames(records)
+
+        self.assertEqual(detail["ma_phieu"].tolist(), ["PX-PARENT"] * 3)
+        self.assertEqual(detail["stt"].astype(int).tolist(), [1, 2, 3])
+        self.assertFalse(detail[["ma_phieu", "stt"]].isna().any().any())
+        self.assertFalse(detail[["ma_phieu", "stt"]].duplicated().any())
+
     def test_missing_stt_does_not_hide_duplicate_source_line_numbers(self):
         records = [
             {
