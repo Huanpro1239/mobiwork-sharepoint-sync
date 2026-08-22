@@ -275,15 +275,17 @@ class RunOrchestrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             try:
                 os.chdir(temp_dir)
-                with patch.object(
-                    sync_main,
-                    "enabled_reports",
-                    side_effect=RuntimeError("broken config"),
+                with (
+                    patch.object(
+                        sync_main,
+                        "enabled_reports",
+                        side_effect=RuntimeError("broken config"),
+                    ),
+                    self.assertRaisesRegex(RuntimeError, "broken config"),
                 ):
-                    with self.assertRaisesRegex(RuntimeError, "broken config"):
-                        sync_main.run(
-                            "incremental", 3, True, 24, "2000-01-01", False
-                        )
+                    sync_main.run(
+                        "incremental", 3, True, 24, "2000-01-01", False
+                    )
                 saved = json.loads(
                     Path("output/sync_manifest.json").read_text(encoding="utf-8")
                 )
