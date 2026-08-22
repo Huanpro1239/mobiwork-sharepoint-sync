@@ -1,1 +1,1 @@
-2026-08-22 production validation run 3 using existing-item overwrite semantics.
+2026-08-22 production validation run 4 using staged SharePoint replacement with rollback.

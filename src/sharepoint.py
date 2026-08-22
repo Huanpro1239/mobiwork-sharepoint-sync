@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from uuid import uuid4
 
 import requests
 from azure.identity import AzureCliCredential
@@ -221,16 +222,27 @@ class SharePointClient:
             parent_id = created["id"]
         return parent_id
 
+    @staticmethod
+    def _item_url(drive_id: str, item_id: str) -> str:
+        return f"{GRAPH}/drives/{drive_id}/items/{quote(item_id, safe='')}"
+
+    def _download_item_content(self, drive_id: str, item_id: str) -> bytes:
+        return self._request(
+            "GET",
+            f"{self._item_url(drive_id, item_id)}/content",
+            timeout=300,
+        ).content
+
     def _verify_uploaded_size(
         self,
         drive_id: str,
         filename: str,
         uploaded: dict[str, Any],
         expected_size: int,
-        verification_attempts: int = 5,
+        verification_attempts: int = 3,
         expected_content: bytes | None = None,
     ) -> dict[str, Any]:
-        """Verify upload metadata, then verify actual bytes if metadata remains stale."""
+        """Verify metadata first, then exact bytes when SharePoint metadata is stale."""
         remote_size = uploaded.get("size")
         if remote_size is not None and int(remote_size) == expected_size:
             return uploaded
@@ -244,7 +256,7 @@ class SharePointClient:
 
         last_size = remote_size
         last_metadata: dict[str, Any] = uploaded
-        metadata_url = f"{GRAPH}/drives/{drive_id}/items/{quote(item_id, safe='')}"
+        metadata_url = self._item_url(drive_id, item_id)
         for attempt in range(verification_attempts):
             metadata = self._request("GET", metadata_url).json()
             last_metadata = metadata
@@ -253,7 +265,7 @@ class SharePointClient:
                 return {**uploaded, **metadata}
 
             if attempt < verification_attempts - 1:
-                delay = min(1.0 * (2**attempt), 5.0)
+                delay = min(1.0 * (2**attempt), 3.0)
                 LOG.warning(
                     "SharePoint metadata size not settled for %s: local=%s, remote=%s. "
                     "Recheck %s/%s in %.1fs",
@@ -267,10 +279,7 @@ class SharePointClient:
                 time.sleep(delay)
 
         if expected_content is not None:
-            content_url = (
-                f"{GRAPH}/drives/{drive_id}/items/{quote(item_id, safe='')}/content"
-            )
-            actual_content = self._request("GET", content_url, timeout=300).content
+            actual_content = self._download_item_content(drive_id, item_id)
             if actual_content == expected_content:
                 LOG.warning(
                     "SharePoint size metadata remained stale for %s, but downloaded "
@@ -280,7 +289,6 @@ class SharePointClient:
                 verified = {**uploaded, **last_metadata}
                 verified["size"] = expected_size
                 return verified
-
             raise RuntimeError(
                 f"SharePoint upload content mismatch for {filename}: "
                 f"local={expected_size}, downloaded={len(actual_content)}, "
@@ -291,6 +299,155 @@ class SharePointClient:
             f"SharePoint upload size mismatch for {filename}: "
             f"local={expected_size}, remote={last_size} after metadata recheck"
         )
+
+    def _upload_new_content(
+        self,
+        drive_id: str,
+        parent_id: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+    ) -> dict[str, Any]:
+        encoded_name = quote(filename, safe="")
+        url = f"{GRAPH}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content"
+        uploaded = self._request(
+            "PUT",
+            url,
+            headers={"Content-Type": content_type},
+            data=content,
+            timeout=300,
+        ).json()
+        return self._verify_uploaded_size(
+            drive_id,
+            filename,
+            uploaded,
+            len(content),
+            expected_content=content,
+        )
+
+    def _rename_item(
+        self,
+        drive_id: str,
+        item_id: str,
+        new_name: str,
+        etag: str | None = None,
+    ) -> dict[str, Any]:
+        headers = {"Content-Type": "application/json"}
+        if etag:
+            headers["If-Match"] = etag
+        return self._request(
+            "PATCH",
+            self._item_url(drive_id, item_id),
+            headers=headers,
+            json={"name": new_name},
+        ).json()
+
+    def _delete_item(self, drive_id: str, item_id: str) -> None:
+        self._request("DELETE", self._item_url(drive_id, item_id))
+
+    def _verify_exact_item_content(
+        self,
+        drive_id: str,
+        item_id: str,
+        filename: str,
+        expected_content: bytes,
+    ) -> dict[str, Any]:
+        metadata = self._request("GET", self._item_url(drive_id, item_id)).json()
+        actual_content = self._download_item_content(drive_id, item_id)
+        if actual_content != expected_content:
+            raise RuntimeError(
+                f"SharePoint promoted file content mismatch for {filename}: "
+                f"local={len(expected_content)}, downloaded={len(actual_content)}"
+            )
+        metadata["size"] = len(expected_content)
+        return metadata
+
+    def _staged_replace_content(
+        self,
+        drive_id: str,
+        remote_folder: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        existing: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Replace a file through create/verify/rename with rollback instead of in-place PUT."""
+        existing_id = str(existing.get("id", "")).strip()
+        if not existing_id:
+            raise RuntimeError(f"Existing SharePoint file {filename!r} has no driveItem id")
+
+        parent_id = str(existing.get("parentReference", {}).get("id", "")).strip()
+        if not parent_id:
+            parent_id = self.ensure_folder_path(drive_id, remote_folder)
+
+        token = uuid4().hex[:12]
+        temp_name = f"__sync_tmp_{token}__{filename}"
+        backup_name = f"__sync_backup_{token}__{filename}"
+        failed_name = f"__sync_failed_{token}__{filename}"
+
+        LOG.info("Staging SharePoint replacement: %s -> %s", filename, temp_name)
+        temp = self._upload_new_content(
+            drive_id,
+            parent_id,
+            temp_name,
+            content,
+            content_type,
+        )
+        temp_id = str(temp.get("id", "")).strip()
+        if not temp_id:
+            raise RuntimeError(f"Staged SharePoint file {temp_name!r} has no driveItem id")
+
+        backup_renamed = False
+        promoted = False
+        try:
+            self._rename_item(
+                drive_id,
+                existing_id,
+                backup_name,
+                str(existing.get("eTag", "")).strip() or None,
+            )
+            backup_renamed = True
+            LOG.info("Renamed old SharePoint file to backup: %s", backup_name)
+
+            promoted_metadata = self._rename_item(drive_id, temp_id, filename)
+            promoted = True
+            LOG.info("Promoted staged SharePoint file to canonical name: %s", filename)
+
+            verified = self._verify_exact_item_content(
+                drive_id,
+                temp_id,
+                filename,
+                content,
+            )
+            result = {**temp, **promoted_metadata, **verified}
+
+            try:
+                self._delete_item(drive_id, existing_id)
+                LOG.info("Removed SharePoint backup after verified promotion: %s", backup_name)
+            except Exception:
+                # Canonical content is already verified. Keep the backup rather than mark
+                # a successful business-data update as failed because cleanup was blocked.
+                LOG.exception("Unable to remove SharePoint backup %s", backup_name)
+            return result
+        except Exception:
+            LOG.exception("SharePoint staged replacement failed for %s; attempting rollback", filename)
+            if promoted:
+                try:
+                    self._rename_item(drive_id, temp_id, failed_name)
+                except Exception:
+                    LOG.exception("Unable to move failed promoted item away from %s", filename)
+            if backup_renamed:
+                try:
+                    self._rename_item(drive_id, existing_id, filename)
+                    LOG.info("Restored previous SharePoint file after failed replacement: %s", filename)
+                except Exception:
+                    LOG.exception("CRITICAL: unable to restore SharePoint backup for %s", filename)
+            if not promoted:
+                try:
+                    self._delete_item(drive_id, temp_id)
+                except Exception:
+                    LOG.exception("Unable to remove staged SharePoint temp file %s", temp_name)
+            raise
 
     def _put_content(
         self,
@@ -304,39 +461,28 @@ class SharePointClient:
             part for part in (remote_folder.strip("/"), filename) if part
         )
         existing = self.get_item_by_path(drive_id, remote_path)
-
         if existing:
             if "folder" in existing:
                 raise RuntimeError(
                     f"SharePoint target {remote_path!r} exists but is a folder"
                 )
-            item_id = str(existing.get("id", "")).strip()
-            if not item_id:
-                raise RuntimeError(
-                    f"SharePoint target {remote_path!r} has no driveItem id"
-                )
-            url = f"{GRAPH}/drives/{drive_id}/items/{quote(item_id, safe='')}/content"
-            LOG.info("Replacing existing SharePoint file by item id: %s", remote_path)
-        else:
-            parent_id = self.ensure_folder_path(drive_id, remote_folder)
-            encoded_name = quote(filename, safe="")
-            url = f"{GRAPH}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content"
-            LOG.info("Creating new SharePoint file: %s", remote_path)
+            return self._staged_replace_content(
+                drive_id,
+                remote_folder,
+                filename,
+                content,
+                content_type,
+                existing,
+            )
 
-        uploaded = self._request(
-            "PUT",
-            url,
-            headers={"Content-Type": content_type},
-            data=content,
-            timeout=300,
-        ).json()
-
-        return self._verify_uploaded_size(
+        parent_id = self.ensure_folder_path(drive_id, remote_folder)
+        LOG.info("Creating new SharePoint file: %s", remote_path)
+        return self._upload_new_content(
             drive_id,
+            parent_id,
             filename,
-            uploaded,
-            len(content),
-            expected_content=content,
+            content,
+            content_type,
         )
 
     def upload_file(self, drive_id: str, local_file: Path, remote_folder: str) -> dict[str, Any]:
