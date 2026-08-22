@@ -239,7 +239,7 @@ class SharePointClientTests(unittest.TestCase):
 
         self.assertEqual(uploaded["size"], 3)
         self.assertEqual(uploaded["webUrl"], "https://example/new")
-        sleep_mock.assert_not_called()
+        sleep_mock.assert_called_once_with(1.0)
 
     def test_upload_accepts_exact_download_when_metadata_remains_stale(self):
         client = self.make_client()
