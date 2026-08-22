@@ -141,15 +141,17 @@ class SharePointClientTests(unittest.TestCase):
             session=session,
         )
 
-        with patch("src.sharepoint.time.sleep"):
-            with self.assertRaisesRegex(RuntimeError, "after metadata recheck"):
-                client._verify_uploaded_size(
-                    "drive-1",
-                    "BaoCaoViengTham_2026-08-21.xlsx",
-                    {"id": "item-1", "size": 99},
-                    expected_size=3,
-                    verification_attempts=2,
-                )
+        with (
+            patch("src.sharepoint.time.sleep"),
+            self.assertRaisesRegex(RuntimeError, "after metadata recheck"),
+        ):
+            client._verify_uploaded_size(
+                "drive-1",
+                "BaoCaoViengTham_2026-08-21.xlsx",
+                {"id": "item-1", "size": 99},
+                expected_size=3,
+                verification_attempts=2,
+            )
 
 
 if __name__ == "__main__":
