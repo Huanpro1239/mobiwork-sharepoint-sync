@@ -22,6 +22,11 @@ COPY_FILES = (
     "requirements-dev.txt",
 )
 COPY_DIRS = ("src", "tests")
+PUBLIC_TEXT_REPLACEMENTS = {
+    "vikodacomvn.sharepoint.com": "example.sharepoint.com",
+    "/sites/Planning": "/sites/Example",
+    "MobiWorkDMS": "ExampleLibrary",
+}
 FORBIDDEN_PUBLIC_MARKERS = (
     "vikodacomvn",
     "/sites/planning",
@@ -106,6 +111,21 @@ def _sanitize_sharepoint_source(path: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _sanitize_public_text_files(output_dir: Path) -> None:
+    for path in sorted(output_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        updated = text
+        for private_value, public_value in PUBLIC_TEXT_REPLACEMENTS.items():
+            updated = updated.replace(private_value, public_value)
+        if updated != text:
+            path.write_text(updated, encoding="utf-8")
+
+
 def _scan_forbidden_markers(output_dir: Path) -> None:
     hits: list[str] = []
     for path in sorted(output_dir.rglob("*")):
@@ -152,6 +172,7 @@ def build_public_mirror(output_dir: Path, public_repo: str = DEFAULT_PUBLIC_REPO
     if builder_test.exists():
         builder_test.unlink()
 
+    _sanitize_public_text_files(output_dir)
     _scan_forbidden_markers(output_dir)
     return output_dir
 
