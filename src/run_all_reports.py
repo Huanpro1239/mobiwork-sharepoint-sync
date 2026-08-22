@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import main as core
@@ -21,6 +21,25 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
+def incremental_target_dates(sync_scope: str, lookback_days: int) -> list[date]:
+    """Resolve incremental dates in Vietnam local time.
+
+    today: current business day, used by the hourly near-real-time refresh.
+    yesterday: previous business day, used by the 09:00 daily finalization.
+    lookback: previous N days, retained for manual recovery/backfill.
+    """
+    scope = sync_scope.strip().casefold()
+    today_vn = datetime.now(core.VN_TZ).date()
+
+    if scope == "today":
+        return [today_vn]
+    if scope == "yesterday":
+        return [today_vn - timedelta(days=1)]
+    if scope == "lookback":
+        return core.target_dates(lookback_days)
+    raise ValueError("SYNC_SCOPE must be today, yesterday, or lookback")
+
+
 def build_clients(
     dry_run: bool,
 ) -> tuple[MobiWorkClient, SemanticSharePointClient | None, str | None]:
@@ -36,7 +55,7 @@ def build_clients(
     return mobiwork, sharepoint, drive_id
 
 
-def _result_entry(cfg: ReportConfig, target_date) -> dict[str, Any]:
+def _result_entry(cfg: ReportConfig, target_date: date) -> dict[str, Any]:
     return {
         "report": cfg.key,
         "report_name": cfg.name,
@@ -53,12 +72,13 @@ def run_incremental_all_reports(
     lookback_days: int,
     dry_run: bool,
     manifest: dict[str, Any],
+    sync_scope: str = "lookback",
 ) -> list[dict[str, Any]]:
     """Run every report independently; one failure must not block the others."""
     results: list[dict[str, Any]] = []
 
-    for target_date in core.target_dates(lookback_days):
-        LOG.info("Incremental sync date: %s", target_date)
+    for target_date in incremental_target_dates(sync_scope, lookback_days):
+        LOG.info("Incremental sync date: %s scope=%s", target_date, sync_scope)
         for cfg in reports:
             result = _result_entry(cfg, target_date)
             results.append(result)
@@ -146,9 +166,11 @@ def _finalize_manifest(
 def run_incremental() -> dict[str, Any]:
     dry_run = _env_bool("DRY_RUN", False)
     lookback_days = int(os.environ.get("LOOKBACK_DAYS", "1"))
+    sync_scope = os.environ.get("SYNC_SCOPE", "yesterday").strip().casefold()
     reports = core.enabled_reports()
     manifest = core._new_manifest("incremental", dry_run)
     manifest["reports"] = [cfg.key for cfg in reports]
+    manifest["sync_scope"] = sync_scope
     manifest["execution_policy"] = "continue_on_report_error"
     manifest["xlsx_verification"] = "semantic_cell_content"
 
@@ -165,6 +187,7 @@ def run_incremental() -> dict[str, Any]:
             lookback_days,
             dry_run,
             manifest,
+            sync_scope=sync_scope,
         )
         _finalize_manifest(manifest, results)
         core._write_manifest(manifest)

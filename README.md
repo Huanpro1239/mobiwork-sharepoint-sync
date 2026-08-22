@@ -4,7 +4,7 @@ Production ETL pipeline for exporting MobiWork DMS reports to Excel and publishi
 
 ```text
 GitHub Actions
-    -> quality gate
+    -> production preflight
     -> MobiWork Open API
     -> normalized Excel workbooks
     -> semantic workbook verification
@@ -14,18 +14,33 @@ GitHub Actions
 
 ## Production schedule
 
-The production workflow is `.github/workflows/mobiwork-sync.yml`.
+The production workflow is `.github/workflows/mobiwork-sync.yml` and uses Vietnam local time (`Asia/Ho_Chi_Minh`).
 
-- Schedule: **09:00 every day**
-- Timezone: `Asia/Ho_Chi_Minh`
-- Scheduled mode: `incremental`
-- Scheduled lookback: **1 day (D-1)**
-- Scheduled dry run: `false`
-- Concurrency: only one production sync may write at a time
+Two schedules work together:
 
-Example: the run on `2026-08-22` refreshes the files for `2026-08-21`.
+| Schedule | Scope | Purpose |
+|---|---|---|
+| `HH:05` every hour | `today` | Refresh the current day so SharePoint stays near-real-time |
+| `09:00` every day | `yesterday` | Finalize D-1 after the previous business day is complete |
 
-If MobiWork data for older dates is corrected later, use a manual workflow run and increase `lookback_days` only for the required recovery window.
+Examples on 22/08/2026:
+
+- 12:05, 13:05, 14:05... repeatedly replace the four `*_2026-08-22.xlsx` files with the latest data available for 22/08.
+- 09:00 refreshes the four `*_2026-08-21.xlsx` files as the D-1 finalization.
+
+Hourly refresh is intentionally scheduled at minute `05` instead of minute `00` to reduce top-of-hour GitHub queue pressure and to avoid colliding with the 09:00 D-1 finalization. GitHub-hosted runners can still start a few minutes after the configured trigger when the service is busy.
+
+The concurrency lock allows only one production sync to write SharePoint at a time. If 09:00 takes longer, the 09:05 current-day run waits rather than writing concurrently.
+
+## Incremental scopes
+
+`src/run_all_reports.py` supports three incremental scopes:
+
+- `today`: current Vietnam calendar day; used automatically every hour.
+- `yesterday`: previous Vietnam calendar day; used automatically at 09:00.
+- `lookback`: previous N days; retained for manual recovery/backfill.
+
+Manual workflow dispatch defaults to `today`. Use `lookback` only when older MobiWork data is known to have been corrected.
 
 ## Production target
 
@@ -44,11 +59,11 @@ Configuration lives in `config/reports.json`.
 | `order` | `/OpenAPI/V1/Order` | `03_DonDatHang` | header + line items |
 | `bill` | `/OpenAPI/V1/Bill` | `04_DonBanHang` | header + line items |
 
-Daily incremental execution uses `src/run_all_reports.py`. Every report is isolated: a failure in one report is recorded but does not prevent the remaining reports from being attempted. The workflow still finishes as failed/partial-failure when any report fails, so incomplete runs are visible.
+Every report is isolated: a failure in one report is recorded but does not prevent the remaining reports from being attempted. The workflow still finishes as failed/partial-failure when any report fails, so incomplete runs remain visible.
 
 ## Excel integrity model
 
-SharePoint/Office can repack an `.xlsx` OOXML ZIP package after upload, changing its physical byte size or SHA-256 without changing worksheet data. Therefore production does **not** require byte-for-byte equality for Excel files.
+SharePoint/Office can repack an `.xlsx` OOXML ZIP package after upload, changing its physical byte size or SHA-256 without changing worksheet data. Production therefore verifies business content rather than requiring byte-for-byte equality for Excel files.
 
 `SemanticSharePointClient` downloads the uploaded workbook and verifies:
 
@@ -89,9 +104,11 @@ The pipeline is designed to fail visibly rather than silently publish incomplete
 - Microsoft Graph requests refresh rejected/expiring tokens and retry transient network, `429`, and `5xx` failures.
 - Existing Excel files are replaced through staged upload/promotion with rollback protection.
 - Excel uploads are semantically verified after SharePoint processing.
-- Daily reports run independently so one report does not block the remaining reports.
+- Reports run independently so one report does not block the remaining reports.
 - Every run writes `output/sync_manifest.json` and uploads a production audit manifest to SharePoint `_sync_runs`.
 - GitHub Actions keeps a short-lived copy of the manifest as an artifact.
+
+Hourly production uses a lightweight compile/config preflight for low latency. Full compilation, Ruff, unit tests and coverage run in the separate CI workflow on pull requests and pushes to `main`.
 
 ## SharePoint layout
 
@@ -105,15 +122,21 @@ MobiWorkDMS/
 └── _sync_state/bootstrap.json
 ```
 
-`_sync_runs` is the audit trail. `_sync_state/bootstrap.json` is used only by resumable historical bootstrap runs.
+Hourly current-day sync repeatedly replaces deterministic dated files; it does not create a new Excel file every hour. `_sync_runs` intentionally keeps one JSON audit record per execution.
 
 ## Run modes
 
 ### Incremental
 
-Normal production mode. The scheduled workflow refreshes D-1 only.
+Normal production mode. Automatic runs use `today` hourly and `yesterday` at 09:00.
 
-Manual workflow runs may set a larger `lookback_days` when a known older date must be refreshed.
+Manual dispatch can select:
+
+```text
+sync_scope=today
+sync_scope=yesterday
+sync_scope=lookback + lookback_days=N
+```
 
 ### Bootstrap
 
@@ -151,8 +174,8 @@ Pull requests and pushes to `main` run:
 3. Unit tests
 4. Branch-aware coverage with a minimum threshold
 
-Tests include MobiWork pagination/data-integrity checks, Excel normalization, independent all-report execution, Graph authentication behavior, staged replacement/rollback, and semantic Excel verification.
+Tests include MobiWork pagination/data-integrity checks, Excel normalization, incremental date scopes, independent all-report execution, Graph authentication behavior, staged replacement/rollback, and semantic Excel verification.
 
 ## Operations
 
-See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the daily operating model, failure recovery, manual refresh procedures, and bootstrap guidance.
+See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the hourly operating model, failure recovery, manual refresh procedures, and bootstrap guidance.
