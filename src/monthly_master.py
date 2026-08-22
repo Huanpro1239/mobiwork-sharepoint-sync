@@ -161,6 +161,4 @@ def is_legacy_report_file(name: str, report_name: str, canonical_name: str) -> b
     escaped = re.escape(report_name)
     if re.fullmatch(rf"{escaped}_\d{{4}}-\d{{2}}-\d{{2}}\.xlsx", name):
         return True
-    if re.fullmatch(rf"{escaped}_History_.*\.xlsx", name, flags=re.IGNORECASE):
-        return True
-    return False
+    return bool(re.fullmatch(rf"{escaped}_History_.*\.xlsx", name, flags=re.IGNORECASE))
