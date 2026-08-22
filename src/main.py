@@ -133,43 +133,6 @@ def _upload_manifest(
     LOG.info("Uploaded audit manifest -> %s", remote_path)
 
 
-def run_incremental(
-    reports: list[ReportConfig],
-    mobiwork: MobiWorkClient,
-    sharepoint: SharePointClient | None,
-    drive_id: str | None,
-    lookback_days: int,
-    dry_run: bool,
-    manifest: dict[str, Any],
-) -> None:
-    """Daily mode: refresh deterministic daily files so reruns are idempotent."""
-    for target_date in target_dates(lookback_days):
-        LOG.info("Incremental sync date: %s", target_date)
-        for cfg in reports:
-            LOG.info("Fetching report=%s", cfg.key)
-            records = mobiwork.fetch_report(cfg, target_date)
-            path = export_excel(records, cfg.name, target_date, cfg.export_mode)
-            LOG.info("Exported %s source rows -> %s", len(records), path)
-
-            remote_folder: str | None = None
-            uploaded: dict[str, Any] | None = None
-            if not dry_run:
-                if not sharepoint or not drive_id:
-                    raise RuntimeError("SharePoint client is unavailable in production mode")
-                remote_folder = f"{cfg.folder}/{target_date:%Y}/{target_date:%m}"
-                uploaded = sharepoint.upload_file(drive_id, path, remote_folder)
-                LOG.info("Uploaded -> %s", uploaded.get("webUrl", remote_folder))
-
-            _record_export(
-                manifest,
-                cfg,
-                path,
-                len(records),
-                remote_folder,
-                uploaded,
-            )
-
-
 def _bootstrap_signature(
     reports: list[ReportConfig], floor_date: date, empty_month_stop: int
 ) -> dict[str, Any]:
@@ -228,7 +191,7 @@ def run_bootstrap(
     reset_state: bool,
     manifest: dict[str, Any],
 ) -> None:
-    """One-time history load, resumable month-by-month using a SharePoint checkpoint."""
+    """Manual history load, resumable month-by-month using a SharePoint checkpoint."""
     if empty_month_stop < 1 or empty_month_stop > 120:
         raise ValueError("BOOTSTRAP_EMPTY_MONTHS must be between 1 and 120")
 
@@ -360,11 +323,14 @@ def run(
     bootstrap_floor_date: str,
     reset_bootstrap_state: bool,
 ) -> dict[str, Any]:
-    mode = sync_mode.strip().lower()
-    if mode not in {"incremental", "bootstrap"}:
-        raise ValueError("SYNC_MODE must be incremental or bootstrap")
+    del lookback_days  # Incremental production lives exclusively in run_all_reports.py.
+    mode = sync_mode.strip().casefold()
+    if mode != "bootstrap":
+        raise ValueError(
+            "src/main.py supports bootstrap only; use src/run_all_reports.py for incremental sync"
+        )
 
-    manifest = _new_manifest(mode, dry_run)
+    manifest = _new_manifest("bootstrap", dry_run)
     sharepoint: SharePointClient | None = None
     drive_id: str | None = None
 
@@ -372,30 +338,18 @@ def run(
         reports = enabled_reports()
         manifest["reports"] = [cfg.key for cfg in reports]
         mobiwork, sharepoint, drive_id = build_clients(dry_run)
-
-        if mode == "incremental":
-            run_incremental(
-                reports,
-                mobiwork,
-                sharepoint,
-                drive_id,
-                lookback_days,
-                dry_run,
-                manifest,
-            )
-        else:
-            floor_date = parse_iso_date(bootstrap_floor_date, "BOOTSTRAP_FLOOR_DATE")
-            run_bootstrap(
-                reports,
-                mobiwork,
-                sharepoint,
-                drive_id,
-                dry_run,
-                bootstrap_empty_months,
-                floor_date,
-                reset_bootstrap_state,
-                manifest,
-            )
+        floor_date = parse_iso_date(bootstrap_floor_date, "BOOTSTRAP_FLOOR_DATE")
+        run_bootstrap(
+            reports,
+            mobiwork,
+            sharepoint,
+            drive_id,
+            dry_run,
+            bootstrap_empty_months,
+            floor_date,
+            reset_bootstrap_state,
+            manifest,
+        )
 
         manifest["status"] = "success"
         manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -419,17 +373,7 @@ def run(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--sync-mode",
-        default=os.environ.get("SYNC_MODE", "incremental"),
-        choices=("incremental", "bootstrap"),
-    )
-    parser.add_argument(
-        "--lookback-days",
-        type=int,
-        default=int(os.environ.get("LOOKBACK_DAYS", "3")),
-    )
+    parser = argparse.ArgumentParser(description="Manual historical bootstrap helper")
     parser.add_argument(
         "--bootstrap-empty-months",
         type=int,
@@ -459,8 +403,8 @@ if __name__ == "__main__":
     )
     args = parse_args()
     run(
-        args.sync_mode,
-        args.lookback_days,
+        "bootstrap",
+        1,
         args.dry_run,
         args.bootstrap_empty_months,
         args.bootstrap_floor_date,
