@@ -76,11 +76,19 @@
       "page_size_param": "page_size",
       "page_size": 100,
       "data_path": "data",
+      "total_path": "total",
       "explode_field": null,
       "fixed_params": {
         "kieu_ngay": "cdate"
       },
-      "export_mode": "order"
+      "export_mode": "order",
+      "primary_key": [
+        "ma_phieu"
+      ],
+      "required_fields": [
+        "ma_phieu",
+        "san_pham"
+      ]
     }
   ]
 }

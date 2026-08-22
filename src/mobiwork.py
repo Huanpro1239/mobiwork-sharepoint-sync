@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -30,9 +31,12 @@ class ReportConfig:
     page_size_param: str | None = None
     page_size: int = 500
     data_path: str | None = "data"
+    total_path: str | None = None
     explode_field: str | None = None
     fixed_params: dict[str, Any] = field(default_factory=dict)
     export_mode: str = "flat"
+    primary_key: list[str] = field(default_factory=list)
+    required_fields: list[str] = field(default_factory=list)
 
 
 def get_by_path(payload: Any, path: str | None) -> Any:
@@ -67,10 +71,46 @@ def expand_records(
         parent_fields = {key: value for key, value in parent.items() if key != explode_field}
         for child in children:
             if not isinstance(child, dict):
-                continue
+                raise TypeError(
+                    f"explode_field={explode_field!r} contains a non-object item: "
+                    f"{type(child).__name__}"
+                )
             expanded.append({**parent_fields, **child})
 
     return expanded
+
+
+def validate_records(records: list[dict[str, Any]], cfg: ReportConfig) -> None:
+    """Fail fast when a report violates configured business-key expectations."""
+    if cfg.required_fields:
+        for row_number, row in enumerate(records, start=1):
+            missing = [
+                field_name
+                for field_name in cfg.required_fields
+                if field_name not in row or row.get(field_name) in (None, "")
+            ]
+            if missing:
+                raise ValueError(
+                    f"Report {cfg.key}: row {row_number} is missing required fields: "
+                    f"{', '.join(missing)}"
+                )
+
+    if not cfg.primary_key:
+        return
+
+    seen: set[tuple[Any, ...]] = set()
+    for row_number, row in enumerate(records, start=1):
+        key = tuple(row.get(field_name) for field_name in cfg.primary_key)
+        if any(value in (None, "") for value in key):
+            raise ValueError(
+                f"Report {cfg.key}: row {row_number} has an empty primary key "
+                f"{cfg.primary_key}"
+            )
+        if key in seen:
+            raise ValueError(
+                f"Report {cfg.key}: duplicate primary key {cfg.primary_key}={key}"
+            )
+        seen.add(key)
 
 
 class MobiWorkClient:
@@ -81,9 +121,12 @@ class MobiWorkClient:
         timeout: int = 120,
         min_interval_seconds: float = 1.5,
         max_retries: int = 8,
+        session: requests.Session | None = None,
     ) -> None:
         if not user or not token:
             raise ValueError("Missing MOBIWORK_USER or MOBIWORK_TOKEN")
+        if timeout < 1:
+            raise ValueError("timeout must be >= 1")
         if min_interval_seconds < 0:
             raise ValueError("min_interval_seconds must be >= 0")
         if max_retries < 0 or max_retries > 20:
@@ -93,7 +136,7 @@ class MobiWorkClient:
         self.min_interval_seconds = min_interval_seconds
         self.max_retries = max_retries
         self._last_request_at = 0.0
-        self.session = requests.Session()
+        self.session = session or requests.Session()
         self.session.auth = HTTPBasicAuth(user, token)
         self.session.headers.update({"Accept": "application/json"})
 
@@ -102,6 +145,7 @@ class MobiWorkClient:
         return cls(
             user=os.environ.get("MOBIWORK_USER", ""),
             token=os.environ.get("MOBIWORK_TOKEN", ""),
+            timeout=int(os.environ.get("MOBIWORK_TIMEOUT_SECONDS", "120")),
             min_interval_seconds=float(
                 os.environ.get("MOBIWORK_MIN_INTERVAL_SECONDS", "1.5")
             ),
@@ -117,16 +161,18 @@ class MobiWorkClient:
             time.sleep(remaining)
 
     @staticmethod
-    def _retry_delay(response: requests.Response, attempt: int) -> float:
-        retry_after = str(response.headers.get("Retry-After", "")).strip()
-        if retry_after:
-            try:
-                return min(max(float(retry_after), 1.0), 180.0)
-            except ValueError:
-                pass
+    def _retry_delay(response: requests.Response | None, attempt: int) -> float:
+        if response is not None:
+            retry_after = str(response.headers.get("Retry-After", "")).strip()
+            if retry_after:
+                try:
+                    return min(max(float(retry_after), 1.0), 180.0)
+                except ValueError:
+                    pass
 
-        # 5, 10, 20, 40, 60, 60... seconds.
-        return min(5.0 * (2**attempt), 60.0)
+        # Exponential backoff with small jitter to avoid synchronized retries.
+        base = min(5.0 * (2**attempt), 60.0)
+        return base + random.uniform(0.0, min(base * 0.1, 3.0))
 
     def _get_with_retry(
         self, url: str, params: dict[str, Any], report_key: str, page: int
@@ -135,20 +181,39 @@ class MobiWorkClient:
 
         for attempt in range(self.max_retries + 1):
             self._throttle()
-            response = self.session.get(url, params=params, timeout=self.timeout)
-            self._last_request_at = time.monotonic()
+            response: requests.Response | None = None
+            try:
+                response = self.session.get(url, params=params, timeout=self.timeout)
+                self._last_request_at = time.monotonic()
 
-            if response.status_code not in retryable_statuses:
-                response.raise_for_status()
-                return response
+                if response.status_code not in retryable_statuses:
+                    response.raise_for_status()
+                    return response
 
-            if attempt >= self.max_retries:
-                response.raise_for_status()
+                if attempt >= self.max_retries:
+                    response.raise_for_status()
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                self._last_request_at = time.monotonic()
+                if attempt >= self.max_retries:
+                    raise
+                delay = self._retry_delay(None, attempt)
+                LOG.warning(
+                    "MobiWork network error report=%s page=%s: %s. "
+                    "Retry %s/%s in %.1fs",
+                    report_key,
+                    page,
+                    type(exc).__name__,
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
 
             delay = self._retry_delay(response, attempt)
             LOG.warning(
-                "MobiWork HTTP %s report=%s page=%s. Retry %s/%s in %.0fs",
-                response.status_code,
+                "MobiWork HTTP %s report=%s page=%s. Retry %s/%s in %.1fs",
+                response.status_code if response is not None else "?",
                 report_key,
                 page,
                 attempt + 1,
@@ -183,6 +248,8 @@ class MobiWorkClient:
             base_params[cfg.to_param] = to_date.strftime(cfg.date_format)
 
         all_records: list[dict[str, Any]] = []
+        raw_record_count = 0
+        expected_total: int | None = None
         page = 1
 
         while True:
@@ -204,6 +271,17 @@ class MobiWorkClient:
                     f"{payload.get('message', '')}"
                 )
 
+            if cfg.total_path and expected_total is None:
+                total_value = get_by_path(payload, cfg.total_path)
+                if total_value not in (None, ""):
+                    try:
+                        expected_total = int(total_value)
+                    except (TypeError, ValueError) as exc:
+                        raise TypeError(
+                            f"Report {cfg.key}: total_path={cfg.total_path!r} "
+                            f"is not an integer: {total_value!r}"
+                        ) from exc
+
             records = get_by_path(payload, cfg.data_path)
             if records is None:
                 raise ValueError(
@@ -216,10 +294,20 @@ class MobiWorkClient:
                     f"Report {cfg.key}: expected list, got {type(records).__name__}"
                 )
 
-            clean_records = [row for row in records if isinstance(row, dict)]
+            invalid_types = [type(row).__name__ for row in records if not isinstance(row, dict)]
+            if invalid_types:
+                raise TypeError(
+                    f"Report {cfg.key}: response data contains non-object rows: "
+                    f"{', '.join(sorted(set(invalid_types)))}"
+                )
+
+            clean_records: list[dict[str, Any]] = records
+            raw_record_count += len(clean_records)
             all_records.extend(expand_records(clean_records, cfg.explode_field))
 
             if not cfg.page_param:
+                break
+            if expected_total is not None and raw_record_count >= expected_total:
                 break
             if len(records) < cfg.page_size:
                 break
@@ -228,4 +316,11 @@ class MobiWorkClient:
             if page > 10_000:
                 raise RuntimeError(f"Report {cfg.key}: pagination safety limit exceeded")
 
+        if expected_total is not None and raw_record_count != expected_total:
+            raise RuntimeError(
+                f"Report {cfg.key}: API total={expected_total}, fetched={raw_record_count}. "
+                "Refusing to export an incomplete dataset."
+            )
+
+        validate_records(all_records, cfg)
         return all_records
