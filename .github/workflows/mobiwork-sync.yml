@@ -26,8 +26,7 @@ on:
         type: boolean
         default: false
   schedule:
-    # Avoid the top of the hour, when GitHub scheduled runners are more congested.
-    - cron: "7 9 * * *"
+    - cron: "0 9 * * *"
       timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
