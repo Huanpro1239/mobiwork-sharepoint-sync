@@ -79,7 +79,7 @@ jobs:
         run: python -m unittest tests.test_grade_visit_images -v
 
       - name: Grade visit images locally
-        run: python src/grade_visit_images_local.py
+        run: python -m src.grade_visit_images_local
 
       - name: Commit grading checkpoint
         if: ${{ always() && github.event_name != 'pull_request' }}
