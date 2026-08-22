@@ -1,0 +1,4 @@
+torch>=2.7,<3
+transformers>=4.50,<5
+pillow>=10,<13
+pytesseract>=0.3.13,<1
