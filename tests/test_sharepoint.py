@@ -101,6 +101,41 @@ class SharePointClientTests(unittest.TestCase):
 
         self.assertEqual(credential.calls, 1)
 
+    def test_upload_new_content_uses_full_root_path_and_materialized_item(self):
+        session = FakeJsonSession(
+            [
+                {"id": "new-1", "name": "Report.xlsx", "size": 3},
+                {"id": "new-1", "name": "Report.xlsx", "size": 3},
+            ]
+        )
+        client = SharePointClient(
+            "example.sharepoint.com",
+            "/sites/Planning",
+            "MobiWorkDMS",
+            max_retries=0,
+            credential=FakeCredential(),
+            session=session,
+        )
+
+        result = client._upload_new_content(
+            "drive-1",
+            "folder/subfolder",
+            "Report.xlsx",
+            b"abc",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        self.assertEqual(result["id"], "new-1")
+        self.assertEqual([method for method, _ in session.requests], ["PUT", "GET"])
+        self.assertIn(
+            "/drives/drive-1/root:/folder/subfolder/Report.xlsx:/content",
+            session.requests[0][1],
+        )
+        self.assertIn(
+            "/drives/drive-1/root:/folder/subfolder/Report.xlsx",
+            session.requests[1][1],
+        )
+
     def test_new_target_is_uploaded_directly(self):
         client = self.make_client()
         client.get_item_by_path = Mock(return_value=None)
@@ -122,7 +157,14 @@ class SharePointClientTests(unittest.TestCase):
             "drive-1", "01_BaoCaoViengTham/2026/08"
         )
         args = client._upload_new_content.call_args.args
-        self.assertEqual(args[1:4], ("parent-1", "BaoCaoViengTham_2026-08-21.xlsx", b"abc"))
+        self.assertEqual(
+            args[1:4],
+            (
+                "01_BaoCaoViengTham/2026/08",
+                "BaoCaoViengTham_2026-08-21.xlsx",
+                b"abc",
+            ),
+        )
 
     def test_existing_target_uses_staged_swap_and_removes_backup(self):
         client = self.make_client()
@@ -133,6 +175,7 @@ class SharePointClientTests(unittest.TestCase):
             "file": {},
             "parentReference": {"id": "parent-1"},
         }
+        client.ensure_folder_path = Mock(return_value="parent-1")
         client._upload_new_content = Mock(
             return_value={"id": "temp-1", "size": 3, "webUrl": "https://example/temp"}
         )
@@ -159,8 +202,11 @@ class SharePointClientTests(unittest.TestCase):
             )
 
         self.assertEqual(result["size"], 3)
+        client.ensure_folder_path.assert_called_once_with(
+            "drive-1", "01_BaoCaoViengTham/2026/08"
+        )
         upload_args = client._upload_new_content.call_args.args
-        self.assertEqual(upload_args[1], "parent-1")
+        self.assertEqual(upload_args[1], "01_BaoCaoViengTham/2026/08")
         self.assertTrue(upload_args[2].startswith("__sync_tmp_abcdef123456__"))
         rename_calls = client._rename_item.call_args_list
         self.assertEqual(rename_calls[0].args[1], "old-1")
@@ -182,6 +228,7 @@ class SharePointClientTests(unittest.TestCase):
             "file": {},
             "parentReference": {"id": "parent-1"},
         }
+        client.ensure_folder_path = Mock(return_value="parent-1")
         client._upload_new_content = Mock(return_value={"id": "temp-1", "size": 3})
         client._rename_item = Mock(
             side_effect=[
