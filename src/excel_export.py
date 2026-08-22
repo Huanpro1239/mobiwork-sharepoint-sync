@@ -166,8 +166,18 @@ def build_order_frames(
         }
         header_rows.append(header)
 
+        parent_ma_phieu = header.get("ma_phieu")
         for item in _normalize_order_items(order):
-            detail_rows.append({**header, **item})
+            detail = {**header, **item}
+            # Some MobiWork child objects contain ma_phieu=null/"".  The document
+            # number belongs to the parent order/bill, so an empty child value must
+            # never erase the valid parent business key.
+            child_ma_phieu = detail.get("ma_phieu")
+            if child_ma_phieu is None or (
+                isinstance(child_ma_phieu, str) and not child_ma_phieu.strip()
+            ):
+                detail["ma_phieu"] = parent_ma_phieu
+            detail_rows.append(detail)
 
     header_frame = (
         pd.json_normalize(header_rows, sep="_") if header_rows else pd.DataFrame()
