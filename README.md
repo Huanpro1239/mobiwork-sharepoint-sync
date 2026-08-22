@@ -1,57 +1,37 @@
 # MobiWork SharePoint Sync
 
-Production-oriented ETL pipeline for exporting MobiWork DMS reports to Excel and publishing them to SharePoint automatically.
+Production ETL pipeline for exporting MobiWork DMS reports to Excel and publishing them to SharePoint through Microsoft Graph.
 
 ```text
 GitHub Actions
-    -> Python validation / retry layer
+    -> quality gate
     -> MobiWork Open API
     -> normalized Excel workbooks
+    -> semantic workbook verification
     -> Microsoft Graph
     -> SharePoint MobiWorkDMS
 ```
+
+## Production schedule
+
+The production workflow is `.github/workflows/mobiwork-sync.yml`.
+
+- Schedule: **09:00 every day**
+- Timezone: `Asia/Ho_Chi_Minh`
+- Scheduled mode: `incremental`
+- Scheduled lookback: **1 day (D-1)**
+- Scheduled dry run: `false`
+- Concurrency: only one production sync may write at a time
+
+Example: the run on `2026-08-22` refreshes the files for `2026-08-21`.
+
+If MobiWork data for older dates is corrected later, use a manual workflow run and increase `lookback_days` only for the required recovery window.
 
 ## Production target
 
 - SharePoint host: `vikodacomvn.sharepoint.com`
 - Site: `/sites/Planning`
 - Document library: `MobiWorkDMS`
-- Daily schedule: `09:00` in `Asia/Ho_Chi_Minh`
-- Scheduled incremental lookback: 3 previous days
-
-Refreshing several previous days intentionally replaces deterministic dated files, so late edits in MobiWork are captured without creating duplicate files.
-
-## Reliability model
-
-The pipeline is designed to fail safely instead of silently publishing incomplete data.
-
-- MobiWork requests use throttling, timeout handling, exponential backoff with jitter, `Retry-After`, and retries for `429`/temporary `5xx` failures.
-- Microsoft Graph requests refresh expired/rejected tokens and retry network, `429`, and temporary `5xx` failures.
-- GitHub Actions uses a production concurrency lock so manual and scheduled syncs cannot write the same SharePoint targets simultaneously.
-- Bootstrap history is checkpointed in SharePoint and resumes from the last completed month after an interruption.
-- Configured business keys and required fields are validated before export.
-- Reports that expose an API `total` can verify that pagination retrieved the complete dataset before any Excel file is written.
-- Uploaded file size is checked against the local payload.
-- Every run creates an audit manifest containing report row counts, SHA-256 file hashes, file sizes, target folders, and SharePoint URLs.
-
-## Security model
-
-- MobiWork credentials are stored only as GitHub Actions secrets.
-- Microsoft authentication uses GitHub OIDC -> Microsoft Entra -> Azure CLI credential; no Microsoft client secret is stored in the repository.
-- Access tokens are refreshed by the client instead of being cached for the entire long-running job.
-- Production should use least privilege for Microsoft Graph, preferably `Sites.Selected` with access granted only to the Planning site.
-- Never commit `.env`, tokens, passwords, Authorization headers, exported business data, or generated Excel files.
-
-Required GitHub Actions secrets:
-
-```text
-MOBIWORK_USER
-MOBIWORK_TOKEN
-AZURE_CLIENT_ID
-AZURE_TENANT_ID
-```
-
-`MOBIWORK_USER_ID` is accepted as a backward-compatible alternative to `MOBIWORK_USER` in the workflow.
 
 ## Enabled reports
 
@@ -64,26 +44,54 @@ Configuration lives in `config/reports.json`.
 | `order` | `/OpenAPI/V1/Order` | `03_DonDatHang` | header + line items |
 | `bill` | `/OpenAPI/V1/Bill` | `04_DonBanHang` | header + line items |
 
-### Sales-order / bill model
+Daily incremental execution uses `src/run_all_reports.py`. Every report is isolated: a failure in one report is recorded but does not prevent the remaining reports from being attempted. The workflow still finishes as failed/partial-failure when any report fails, so incomplete runs are visible.
 
-MobiWork returns order lines in `san_pham`. Sold and promotional items stay in the same analytical table and are distinguished by `is_km`.
+## Excel integrity model
 
-Each order workbook contains:
+SharePoint/Office can repack an `.xlsx` OOXML ZIP package after upload, changing its physical byte size or SHA-256 without changing worksheet data. Therefore production does **not** require byte-for-byte equality for Excel files.
+
+`SemanticSharePointClient` downloads the uploaded workbook and verifies:
+
+- worksheet order and names;
+- every non-empty cell coordinate;
+- cell data type;
+- cell value.
+
+If any business cell differs, the upload fails closed. JSON/audit files continue to use normal byte/size integrity behavior.
+
+The production validation on 2026-08-22 successfully updated all four reports with semantic verification.
+
+## Sales-order / bill model
+
+MobiWork returns order lines in `san_pham`. Sold and promotional items remain in one analytical detail table and are distinguished by `is_km`.
+
+Each order/bill workbook contains:
 
 ```text
 DonHang
 ChiTietSP
 ```
 
-`DonHang` uses `ma_phieu` as the business key. `ChiTietSP` uses `ma_phieu + stt` as the line key.
+- `DonHang` business key: `ma_phieu`
+- `ChiTietSP` business key: `ma_phieu + stt`
+- `is_km=false` -> `Bán hàng`
+- `is_km=true` -> `Khuyến mãi`
 
-The exporter also:
+The exporter preserves business codes such as `ma_sp = "00008"` as text, normalizes numeric fields, converts UTC timestamps to `Asia/Ho_Chi_Minh`, and rejects duplicate business keys.
 
-- preserves business codes such as `ma_sp = "00008"` as text;
-- converts quantities and money fields from API strings to numeric Excel values;
-- converts UTC API timestamps to `Asia/Ho_Chi_Minh` before writing Excel;
-- adds `loai_hang` (`Bán hàng` / `Khuyến mãi`) while preserving the source `is_km` flag;
-- rejects duplicate header or line keys instead of silently exporting ambiguous data.
+## Reliability model
+
+The pipeline is designed to fail visibly rather than silently publish incomplete data.
+
+- MobiWork requests use throttling, timeouts, retry/backoff, jitter, and `Retry-After` handling.
+- Configured required fields and business keys are validated before export.
+- API totals are verified where configured.
+- Microsoft Graph requests refresh rejected/expiring tokens and retry transient network, `429`, and `5xx` failures.
+- Existing Excel files are replaced through staged upload/promotion with rollback protection.
+- Excel uploads are semantically verified after SharePoint processing.
+- Daily reports run independently so one report does not block the remaining reports.
+- Every run writes `output/sync_manifest.json` and uploads a production audit manifest to SharePoint `_sync_runs`.
+- GitHub Actions keeps a short-lived copy of the manifest as an artifact.
 
 ## SharePoint layout
 
@@ -97,80 +105,54 @@ MobiWorkDMS/
 └── _sync_state/bootstrap.json
 ```
 
-`_sync_runs` is the permanent audit trail. `_sync_state/bootstrap.json` is the resumable history checkpoint.
+`_sync_runs` is the audit trail. `_sync_state/bootstrap.json` is used only by resumable historical bootstrap runs.
 
 ## Run modes
 
 ### Incremental
 
-Normal production mode. Scheduled runs refresh the previous 3 days.
+Normal production mode. The scheduled workflow refreshes D-1 only.
 
-```bash
-python src/main.py --sync-mode incremental --lookback-days 3
-```
+Manual workflow runs may set a larger `lookback_days` when a known older date must be refreshed.
 
 ### Bootstrap
 
-Historical mode walks backward month by month from yesterday. After every fully completed month, the next cursor is saved to SharePoint. If the job fails, rerunning bootstrap continues from that checkpoint.
+Bootstrap is a manual historical mode. It walks backward month by month and checkpoints progress to `_sync_state/bootstrap.json`, allowing an interrupted history load to resume.
 
-```bash
-python src/main.py --sync-mode bootstrap
-```
-
-To intentionally discard a completed/current checkpoint and rescan from yesterday:
-
-```bash
-python src/main.py --sync-mode bootstrap --reset-bootstrap-state
-```
+Use `reset_bootstrap_state=true` only when intentionally restarting the historical scan.
 
 ### Dry run
 
-Dry run fetches MobiWork and generates Excel without Microsoft authentication or SharePoint writes.
+A manual dry run fetches MobiWork data and generates Excel files without Microsoft authentication or SharePoint writes. GitHub Actions publishes those workbooks as short-lived artifacts.
 
-```bash
-python src/main.py --sync-mode incremental --lookback-days 1 --dry-run
+## Security
+
+Required GitHub Actions secrets:
+
+```text
+MOBIWORK_USER
+MOBIWORK_TOKEN
+AZURE_CLIENT_ID
+AZURE_TENANT_ID
 ```
 
-The GitHub workflow uploads dry-run workbooks as short-lived Actions artifacts.
+`MOBIWORK_USER_ID` is accepted as a backward-compatible alternative to `MOBIWORK_USER`.
 
-## CI quality gates
+Microsoft authentication uses GitHub OIDC -> Microsoft Entra -> Azure CLI/AzureCliCredential. No Microsoft client secret is stored in the repository. Use least-privilege Graph access, preferably `Sites.Selected` limited to the Planning site.
+
+Never commit `.env`, access tokens, passwords, Authorization headers, generated Excel files, or exported business data.
+
+## CI quality gate
 
 Pull requests and pushes to `main` run:
 
-1. Python byte-code compilation
+1. Python compilation
 2. Ruff static analysis
 3. Unit tests
-4. Branch-aware coverage reporting with a minimum threshold
+4. Branch-aware coverage with a minimum threshold
 
-Tests cover nested MobiWork expansion, pagination totals, required/business-key validation, sales-order normalization, Excel code preservation, timezone conversion, duplicate detail keys, and Microsoft Graph token refresh behavior.
+Tests include MobiWork pagination/data-integrity checks, Excel normalization, independent all-report execution, Graph authentication behavior, staged replacement/rollback, and semantic Excel verification.
 
-## Production run audit
+## Operations
 
-Each execution writes `output/sync_manifest.json`. Production runs also upload the same information to `_sync_runs` in SharePoint.
-
-Example fields:
-
-```json
-{
-  "run_id": "20260822T090000_123456_1",
-  "mode": "incremental",
-  "status": "success",
-  "file_count": 12,
-  "source_row_count": 45231,
-  "files": [
-    {
-      "report": "bill",
-      "source_rows": 2100,
-      "filename": "DonBanHang_2026-08-21.xlsx",
-      "sha256": "...",
-      "remote_size_bytes": 123456
-    }
-  ]
-}
-```
-
-The workflow publishes a concise version of this manifest to the GitHub Actions Job Summary after every run.
-
-## Operating guidance
-
-See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for deployment checks, failure recovery, bootstrap procedures, and troubleshooting.
+See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the daily operating model, failure recovery, manual refresh procedures, and bootstrap guidance.
