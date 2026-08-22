@@ -1,133 +1,203 @@
 # MobiWork SharePoint Sync
 
-Production ETL pipeline for exporting MobiWork DMS reports to Excel and publishing them to SharePoint through Microsoft Graph.
+Python ETL pipeline for exporting **MobiWork DMS Open API** reports to analytics-friendly **Excel** monthly masters and publishing them to **Microsoft SharePoint** through **Microsoft Graph**. It is designed for unattended operation in **GitHub Actions**, with retries, data-quality checks, audit manifests, staged SharePoint replacement, and semantic workbook verification.
+
+> Keywords: MobiWork DMS, SharePoint, Microsoft Graph, Excel ETL, GitHub Actions, Python, data pipeline.
+
+## Why this project exists
+
+A direct “API -> Excel -> overwrite SharePoint” script is easy to start but difficult to operate safely. This repository adds the controls needed for a long-running reporting pipeline:
+
+- bounded API throttling, retries, jitter, and `Retry-After` handling;
+- pagination and configured API-total integrity checks;
+- required-field and business-key validation;
+- preservation of text business codes such as `00008`;
+- deterministic normalization of order headers and line items;
+- one canonical workbook per report/month instead of daily-file sprawl;
+- staged replacement and rollback for existing SharePoint files;
+- semantic `.xlsx` verification after SharePoint/Office repackaging;
+- independent report execution with an overall failed status on partial failure;
+- JSON audit manifests for every production run;
+- CI with compilation, Ruff, unit tests, and branch coverage.
+
+## Architecture
 
 ```text
-GitHub Actions
-    -> production preflight
-    -> MobiWork Open API
-    -> monthly Excel master
-    -> semantic workbook verification
-    -> Microsoft Graph
-    -> SharePoint MobiWorkDMS
+GitHub Actions / local runner
+        |
+        v
+MobiWork Open API
+        |
+        v
+validation + normalization
+        |
+        v
+monthly Excel master
+        |
+        v
+Microsoft Graph
+        |
+        v
+SharePoint document library
+        |
+        +--> semantic workbook verification
+        +--> _sync_runs audit JSON
 ```
 
-## Production schedule
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module map, trust boundaries, storage contract, and failure model.
 
-The production workflow is `.github/workflows/mobiwork-sync.yml` and uses `Asia/Ho_Chi_Minh`.
+## Requirements
 
-| Schedule | Scope | Purpose |
+- Python 3.12
+- MobiWork Open API credentials
+- a Microsoft 365 / SharePoint document library
+- Microsoft Graph access for the target SharePoint site
+- Azure CLI authentication locally, or GitHub OIDC + Microsoft Entra in Actions
+
+## Quick start
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/Huanpro1239/mobiwork-sharepoint-sync.git
+cd mobiwork-sharepoint-sync
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Create your environment from the template:
+
+```bash
+cp .env.example .env
+```
+
+Do **not** commit `.env`. Export the variables into your shell or use your preferred local secret loader.
+
+For a reusable report configuration, start from [`config/reports.example.json`](config/reports.example.json). The checked-in [`config/reports.json`](config/reports.json) is the active deployment profile for this repository.
+
+Run a local no-write export:
+
+```bash
+export MOBIWORK_USER="..."
+export MOBIWORK_TOKEN="..."
+export SYNC_SCOPE=today
+export LOOKBACK_DAYS=1
+export DRY_RUN=true
+python src/run_all_reports.py
+```
+
+Generated workbooks and manifests are written under `output/`, which is intentionally ignored by Git.
+
+## Configuration
+
+### MobiWork
+
+Required runtime values:
+
+| Variable | Purpose |
+|---|---|
+| `MOBIWORK_USER` | MobiWork API user identifier |
+| `MOBIWORK_TOKEN` | MobiWork API token/password |
+| `MOBIWORK_MIN_INTERVAL_SECONDS` | Minimum spacing between MobiWork requests |
+| `MOBIWORK_MAX_RETRIES` | Retry limit for transient MobiWork failures |
+| `MOBIWORK_TIMEOUT_SECONDS` | HTTP timeout |
+
+Report mappings live in `config/reports.json`. Each report can define its endpoint, date parameters, pagination fields, response path, optional nested-list expansion, export mode, required fields, and primary key.
+
+### SharePoint / Microsoft Graph
+
+| Variable | Purpose |
+|---|---|
+| `SHAREPOINT_HOST` | SharePoint hostname |
+| `SHAREPOINT_SITE_PATH` | Site path, for example `/sites/YourSite` |
+| `SHAREPOINT_LIBRARY` | Target document-library name |
+| `SHAREPOINT_DRIVE_ID` | Optional resolved Graph drive ID |
+| `SHAREPOINT_MAX_RETRIES` | Retry limit for transient Graph failures |
+| `SHAREPOINT_TIMEOUT_SECONDS` | HTTP timeout |
+
+The production workflow in this repository contains deployment-specific SharePoint target values. **Before publishing a fork or using this workflow in another tenant, replace those values and review the Microsoft Entra permissions.**
+
+## Enabled report model
+
+The current deployment uses four report types:
+
+| Key | MobiWork API | Excel shape |
 |---|---|---|
-| `HH:05` every hour | `today` | Refresh current-day data so SharePoint stays near-real-time |
-| `09:00` every day | `yesterday` | Finalize D-1 after the previous day is complete |
+| `visit` | `/OpenAPI/V1/VisitData` | flat `Data` sheet |
+| `new_customer` | `/OpenAPI/V1/Customer` | flat `Data` sheet |
+| `order` | `/OpenAPI/V1/Order` | `DonHang` + `ChiTietSP` |
+| `bill` | `/OpenAPI/V1/Bill` | `DonHang` + `ChiTietSP` |
 
-Both schedules use the same concurrency lock, so only one production job can write SharePoint at a time. GitHub-hosted runners may start a few minutes after the configured trigger.
-
-## Storage model: one workbook per report/month
-
-Each report/month has one canonical workbook:
-
-```text
-MobiWorkDMS/
-├── 01_BaoCaoViengTham/YYYY/MM/BaoCaoViengTham_YYYY-MM.xlsx
-├── 02_MoMoiKhachHang/YYYY/MM/MoMoiKhachHang_YYYY-MM.xlsx
-├── 03_DonDatHang/YYYY/MM/DonDatHang_YYYY-MM.xlsx
-├── 04_DonBanHang/YYYY/MM/DonBanHang_YYYY-MM.xlsx
-└── _sync_runs/YYYY/MM/*.json
-```
-
-The hidden `_sync_date` column identifies the daily partition inside a monthly workbook. An hourly `today` run replaces only today's partition. The 09:00 run replaces only yesterday's partition. The canonical monthly filename does not change, so hourly execution does not create duplicate business workbooks.
-
-When a monthly master does not yet exist, production rebuilds that report from the first day of the month through the target date. Only after the new master uploads and passes semantic verification does cleanup remove legacy files for that report/month:
-
-- `Report_YYYY-MM-DD.xlsx`
-- `Report_History_*.xlsx`
-- orphan `__sync_tmp_*`, `__sync_backup_*`, and `__sync_failed_*` files
-
-Unrelated files are never removed by this cleanup matcher.
-
-## Incremental scopes
-
-`src/run_all_reports.py` is the only runtime sync entry point and supports:
-
-- `today`: current Vietnam calendar day; automatic hourly scope.
-- `yesterday`: previous Vietnam calendar day; automatic 09:00 scope.
-- `lookback`: previous N days; manual recovery/backfill, limited to 31 days.
-
-Manual workflow dispatch defaults to `today`. There is no legacy bootstrap/history-file runtime path, so normal or manual execution cannot intentionally generate `History_*.xlsx` again.
-
-## Enabled reports
-
-Configuration lives in `config/reports.json`.
-
-| Key | MobiWork API | SharePoint folder | Export |
-|---|---|---|---|
-| `visit` | `/OpenAPI/V1/VisitData` | `01_BaoCaoViengTham` | flat rows |
-| `new_customer` | `/OpenAPI/V1/Customer` | `02_MoMoiKhachHang` | flat rows |
-| `order` | `/OpenAPI/V1/Order` | `03_DonDatHang` | `DonHang` + `ChiTietSP` |
-| `bill` | `/OpenAPI/V1/Bill` | `04_DonBanHang` | `DonHang` + `ChiTietSP` |
-
-Reports execute independently. If one report fails, the remaining reports are still attempted. The overall workflow finishes as `partial_failure`/failed when any report fails, so incomplete data is visible rather than silently accepted.
-
-## Order / bill data contract
-
-MobiWork line items are normalized into one `ChiTietSP` table. Sold and promotional products are distinguished by `is_km` and `loai_hang`.
-
-Business keys:
+Order-style business keys are:
 
 ```text
 DonHang   -> ma_phieu
 ChiTietSP -> ma_phieu + stt
 ```
 
-Historical MobiWork data does not always provide `stt`. The exporter preserves every valid source `stt` and assigns only missing/invalid line numbers to the first unused positive integer in source order. Duplicate valid `stt` values from MobiWork are still rejected; the fallback never hides a real duplicate-key defect.
+Historical MobiWork line items may omit `stt`. Valid source values are preserved. Only missing/invalid line numbers receive the first unused positive integer in source order. Duplicate valid source keys still fail closed.
 
-Business codes such as `ma_sp = "00008"` remain text. Numeric values are normalized and UTC timestamps are converted to `Asia/Ho_Chi_Minh` before Excel export.
+## Storage model: one workbook per report/month
 
-## Excel integrity model
+Each report/month has one canonical workbook:
 
-SharePoint/Office may repack an `.xlsx` OOXML ZIP package after upload, changing physical byte size or SHA-256 while worksheet data remains unchanged. Excel integrity is therefore verified semantically.
+```text
+<SharePoint library>/
+├── <report-folder>/YYYY/MM/<Report>_YYYY-MM.xlsx
+└── _sync_runs/YYYY/MM/<run_id>.json
+```
 
-`SemanticSharePointClient` downloads the uploaded workbook and compares:
+A hidden `_sync_date` column identifies each daily partition. A current-day run replaces only today’s partition; a previous-day run replaces only D-1. If a monthly master is missing, the pipeline rebuilds that report from day 01 of the month through the target date.
+
+After a successful upload and verification, conservative cleanup can remove only recognized legacy files for that report/month:
+
+- `<Report>_YYYY-MM-DD.xlsx`
+- `<Report>_History_*.xlsx`
+- orphan `__sync_tmp_*`, `__sync_backup_*`, and `__sync_failed_*` files
+
+Unrelated files are not matched by this cleanup rule.
+
+## Excel integrity
+
+SharePoint/Office may rewrite OOXML package metadata, so an uploaded `.xlsx` can legitimately have different physical bytes or ZIP metadata while preserving worksheet data.
+
+`SemanticSharePointClient` therefore downloads the uploaded workbook and compares:
 
 - worksheet order and names;
 - every non-empty cell coordinate;
 - cell data type;
 - cell value.
 
-Any business-cell difference fails closed. JSON/audit files continue to use normal byte/size integrity behavior.
+A business-cell mismatch fails closed. JSON audit files continue to use normal content/size integrity behavior.
 
-## Reliability model
+## Sync scopes
 
-- MobiWork requests use throttling, timeout, retry/backoff, jitter, and `Retry-After` handling.
-- Required fields, API totals where configured, and business keys are validated.
-- Microsoft Graph authentication refreshes rejected/expiring tokens.
-- Graph retries transient network errors, `429`, and `5xx` responses.
-- Existing Excel files use staged replacement with rollback protection.
-- Excel uploads are semantically verified before legacy cleanup.
-- Every production run writes `output/sync_manifest.json` and uploads an audit JSON to `_sync_runs`.
-- `source_row_count` means rows fetched for the target date(s) in the current run; `master_row_count` means total rows stored across the monthly masters written by that run.
+`src/run_all_reports.py` is the production entry point.
 
-## CI quality gate
+```text
+today      current Vietnam calendar day
+yesterday  previous Vietnam calendar day
+lookback   previous N days, maximum 31
+```
 
-Pull requests and pushes to `main` run:
+Manual dry runs use the same normalization and monthly-master code path but skip SharePoint writes.
 
-1. Python compilation
-2. Ruff static analysis
-3. Unit tests
-4. branch-aware coverage with the configured minimum threshold
+## GitHub Actions
 
-Production hourly runs use a lighter compile/config preflight to keep latency low; full tests remain a change-control gate in CI.
+The production workflow is `.github/workflows/mobiwork-sync.yml`.
 
-## Manual recovery
+Current deployment schedule in `Asia/Ho_Chi_Minh`:
 
-Manual runs use the same monthly-master implementation as automatic production. Select `today`, `yesterday`, or `lookback`; use `dry_run=true` to inspect generated Excel without SharePoint writes.
+| Schedule | Scope | Purpose |
+|---|---|---|
+| `HH:05` every hour | `today` | Refresh current-day data |
+| `09:00` every day | `yesterday` | Finalize D-1 |
 
-For corrections older than 31 days, extend the monthly-master backfill capability through reviewed code rather than reintroducing legacy history-file exports.
+Both schedules share one concurrency group so only one production writer changes SharePoint at a time.
 
-## Security
-
-Required GitHub Actions secrets:
+Required GitHub Actions secrets for the current OIDC deployment:
 
 ```text
 MOBIWORK_USER
@@ -136,10 +206,55 @@ AZURE_CLIENT_ID
 AZURE_TENANT_ID
 ```
 
-`MOBIWORK_USER_ID` remains accepted as a backward-compatible alternative to `MOBIWORK_USER`.
+`MOBIWORK_USER_ID` is accepted as a backward-compatible alternative to `MOBIWORK_USER`.
 
-Microsoft authentication uses GitHub OIDC -> Microsoft Entra -> Azure CLI/AzureCliCredential. Do not commit `.env`, access tokens, passwords, Authorization headers, generated business Excel files, or exported business data.
+## Development and testing
 
-## Operations
+Install development dependencies:
 
-See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the production runbook and failure-recovery procedure.
+```bash
+pip install -r requirements-dev.txt
+```
+
+Run the quality gate locally:
+
+```bash
+python -m compileall -q src tests
+ruff check .
+coverage run -m unittest discover -s tests -v
+coverage report
+```
+
+CI runs the same categories of checks on pull requests and pushes to `main`.
+
+## Operational behavior
+
+Reports run independently. One report failure does not block attempts for the others, but the overall run exits non-zero when any report fails. The manifest distinguishes current-run source rows from rows stored in the monthly master.
+
+For production recovery, failure modes, audit interpretation, and change-control checks, see [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
+## Project layout
+
+```text
+.github/                 CI, production workflow, review template
+config/                  active and reusable report mappings
+docs/                    architecture and operations runbooks
+src/                     API, Excel, monthly-master and SharePoint logic
+tests/                   regression/unit tests
+.env.example             local configuration template
+requirements*.txt        pinned runtime/development dependencies
+```
+
+## Security
+
+Never commit `.env`, MobiWork credentials, Microsoft tokens, Authorization headers, customer exports, or generated business Excel files. Use least-privilege Microsoft Graph / SharePoint permissions for the target site/library.
+
+See [`SECURITY.md`](SECURITY.md) before publishing a deployment fork.
+
+## Contributing
+
+Pull requests are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and include regression coverage for changes to data contracts, business keys, pagination, authentication, Excel generation, or SharePoint replacement semantics.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
