@@ -100,7 +100,7 @@ def _record_monthly_export(
     remote_folder: str,
     uploaded: dict[str, Any] | None,
 ) -> None:
-    """Record per-run source rows separately from the total rows stored in the master."""
+    """Record current-source rows separately from rows stored in the monthly master."""
     core._record_export(
         manifest,
         cfg,
@@ -351,20 +351,7 @@ def run_incremental() -> dict[str, Any]:
 
 
 def run() -> dict[str, Any]:
-    mode = os.environ.get("SYNC_MODE", "incremental").strip().casefold()
-    if mode == "incremental":
-        return run_incremental()
-    if mode == "bootstrap":
-        core.SharePointClient = SemanticSharePointClient
-        return core.run(
-            "bootstrap",
-            int(os.environ.get("LOOKBACK_DAYS", "1")),
-            _env_bool("DRY_RUN", False),
-            int(os.environ.get("BOOTSTRAP_EMPTY_MONTHS", "24")),
-            os.environ.get("BOOTSTRAP_FLOOR_DATE", "2000-01-01"),
-            _env_bool("RESET_BOOTSTRAP_STATE", False),
-        )
-    raise ValueError("SYNC_MODE must be incremental or bootstrap")
+    return run_incremental()
 
 
 if __name__ == "__main__":
