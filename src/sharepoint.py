@@ -228,8 +228,9 @@ class SharePointClient:
         uploaded: dict[str, Any],
         expected_size: int,
         verification_attempts: int = 5,
+        expected_content: bytes | None = None,
     ) -> dict[str, Any]:
-        """Verify upload size while tolerating transient stale Graph metadata after overwrite."""
+        """Verify upload metadata, then verify actual bytes if metadata remains stale."""
         remote_size = uploaded.get("size")
         if remote_size is not None and int(remote_size) == expected_size:
             return uploaded
@@ -242,12 +243,13 @@ class SharePointClient:
             )
 
         last_size = remote_size
-        metadata_url = f"{GRAPH}/drives/{drive_id}/items/{item_id}"
+        last_metadata: dict[str, Any] = uploaded
+        metadata_url = f"{GRAPH}/drives/{drive_id}/items/{quote(item_id, safe='')}"
         for attempt in range(verification_attempts):
             metadata = self._request("GET", metadata_url).json()
+            last_metadata = metadata
             last_size = metadata.get("size")
             if last_size is not None and int(last_size) == expected_size:
-                # Prefer the fresh metadata but retain fields that may only exist on the PUT response.
                 return {**uploaded, **metadata}
 
             if attempt < verification_attempts - 1:
@@ -264,6 +266,27 @@ class SharePointClient:
                 )
                 time.sleep(delay)
 
+        if expected_content is not None:
+            content_url = (
+                f"{GRAPH}/drives/{drive_id}/items/{quote(item_id, safe='')}/content"
+            )
+            actual_content = self._request("GET", content_url, timeout=300).content
+            if actual_content == expected_content:
+                LOG.warning(
+                    "SharePoint size metadata remained stale for %s, but downloaded "
+                    "content matched the uploaded bytes exactly",
+                    filename,
+                )
+                verified = {**uploaded, **last_metadata}
+                verified["size"] = expected_size
+                return verified
+
+            raise RuntimeError(
+                f"SharePoint upload content mismatch for {filename}: "
+                f"local={expected_size}, downloaded={len(actual_content)}, "
+                f"metadata={last_size}"
+            )
+
         raise RuntimeError(
             f"SharePoint upload size mismatch for {filename}: "
             f"local={expected_size}, remote={last_size} after metadata recheck"
@@ -277,9 +300,29 @@ class SharePointClient:
         content: bytes,
         content_type: str,
     ) -> dict[str, Any]:
-        parent_id = self.ensure_folder_path(drive_id, remote_folder)
-        encoded_name = quote(filename, safe="")
-        url = f"{GRAPH}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content"
+        remote_path = "/".join(
+            part for part in (remote_folder.strip("/"), filename) if part
+        )
+        existing = self.get_item_by_path(drive_id, remote_path)
+
+        if existing:
+            if "folder" in existing:
+                raise RuntimeError(
+                    f"SharePoint target {remote_path!r} exists but is a folder"
+                )
+            item_id = str(existing.get("id", "")).strip()
+            if not item_id:
+                raise RuntimeError(
+                    f"SharePoint target {remote_path!r} has no driveItem id"
+                )
+            url = f"{GRAPH}/drives/{drive_id}/items/{quote(item_id, safe='')}/content"
+            LOG.info("Replacing existing SharePoint file by item id: %s", remote_path)
+        else:
+            parent_id = self.ensure_folder_path(drive_id, remote_folder)
+            encoded_name = quote(filename, safe="")
+            url = f"{GRAPH}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content"
+            LOG.info("Creating new SharePoint file: %s", remote_path)
+
         uploaded = self._request(
             "PUT",
             url,
@@ -293,6 +336,7 @@ class SharePointClient:
             filename,
             uploaded,
             len(content),
+            expected_content=content,
         )
 
     def upload_file(self, drive_id: str, local_file: Path, remote_folder: str) -> dict[str, Any]:
