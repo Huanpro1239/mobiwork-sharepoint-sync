@@ -221,6 +221,54 @@ class SharePointClient:
             parent_id = created["id"]
         return parent_id
 
+    def _verify_uploaded_size(
+        self,
+        drive_id: str,
+        filename: str,
+        uploaded: dict[str, Any],
+        expected_size: int,
+        verification_attempts: int = 5,
+    ) -> dict[str, Any]:
+        """Verify upload size while tolerating transient stale Graph metadata after overwrite."""
+        remote_size = uploaded.get("size")
+        if remote_size is not None and int(remote_size) == expected_size:
+            return uploaded
+
+        item_id = str(uploaded.get("id", "")).strip()
+        if not item_id:
+            raise RuntimeError(
+                f"SharePoint upload size mismatch for {filename}: "
+                f"local={expected_size}, remote={remote_size}, item_id=missing"
+            )
+
+        last_size = remote_size
+        metadata_url = f"{GRAPH}/drives/{drive_id}/items/{item_id}"
+        for attempt in range(verification_attempts):
+            metadata = self._request("GET", metadata_url).json()
+            last_size = metadata.get("size")
+            if last_size is not None and int(last_size) == expected_size:
+                # Prefer the fresh metadata but retain fields that may only exist on the PUT response.
+                return {**uploaded, **metadata}
+
+            if attempt < verification_attempts - 1:
+                delay = min(1.0 * (2**attempt), 5.0)
+                LOG.warning(
+                    "SharePoint metadata size not settled for %s: local=%s, remote=%s. "
+                    "Recheck %s/%s in %.1fs",
+                    filename,
+                    expected_size,
+                    last_size,
+                    attempt + 1,
+                    verification_attempts,
+                    delay,
+                )
+                time.sleep(delay)
+
+        raise RuntimeError(
+            f"SharePoint upload size mismatch for {filename}: "
+            f"local={expected_size}, remote={last_size} after metadata recheck"
+        )
+
     def _put_content(
         self,
         drive_id: str,
@@ -240,13 +288,12 @@ class SharePointClient:
             timeout=300,
         ).json()
 
-        remote_size = uploaded.get("size")
-        if remote_size is not None and int(remote_size) != len(content):
-            raise RuntimeError(
-                f"SharePoint upload size mismatch for {filename}: "
-                f"local={len(content)}, remote={remote_size}"
-            )
-        return uploaded
+        return self._verify_uploaded_size(
+            drive_id,
+            filename,
+            uploaded,
+            len(content),
+        )
 
     def upload_file(self, drive_id: str, local_file: Path, remote_folder: str) -> dict[str, Any]:
         local_file = Path(local_file)

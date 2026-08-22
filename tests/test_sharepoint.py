@@ -1,4 +1,6 @@
+import json
 import unittest
+from unittest.mock import patch
 
 import requests
 
@@ -31,6 +33,21 @@ class FakeSession:
         response.status_code = self.statuses.pop(0)
         response.url = url
         response._content = b"{}"
+        response.headers = {"Content-Type": "application/json"}
+        return response
+
+
+class FakeJsonSession:
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+        self.requests = []
+
+    def request(self, method, url, headers=None, timeout=None, **kwargs):
+        self.requests.append((method, url))
+        response = requests.Response()
+        response.status_code = 200
+        response.url = url
+        response._content = json.dumps(self.payloads.pop(0)).encode("utf-8")
         response.headers = {"Content-Type": "application/json"}
         return response
 
@@ -73,6 +90,68 @@ class SharePointClientTests(unittest.TestCase):
         client._request("GET", "https://graph.microsoft.com/v1.0/two")
 
         self.assertEqual(credential.calls, 1)
+
+    def test_upload_rechecks_stale_size_metadata_after_overwrite(self):
+        credential = FakeCredential()
+        session = FakeJsonSession(
+            [
+                {"id": "item-1", "size": 99, "webUrl": "https://example/old"},
+                {"id": "item-1", "size": 3, "webUrl": "https://example/new"},
+            ]
+        )
+        client = SharePointClient(
+            "example.sharepoint.com",
+            "/sites/Planning",
+            "MobiWorkDMS",
+            max_retries=0,
+            credential=credential,
+            session=session,
+        )
+        client.ensure_folder_path = lambda drive_id, folder_path: "folder-1"
+
+        with patch("src.sharepoint.time.sleep") as sleep_mock:
+            uploaded = client._put_content(
+                "drive-1",
+                "01_BaoCaoViengTham/2026/08",
+                "BaoCaoViengTham_2026-08-21.xlsx",
+                b"abc",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        self.assertEqual(uploaded["size"], 3)
+        self.assertEqual(uploaded["webUrl"], "https://example/new")
+        self.assertEqual([method for method, _ in session.requests], ["PUT", "GET"])
+        sleep_mock.assert_not_called()
+
+    def test_upload_still_fails_when_rechecked_size_never_matches(self):
+        credential = FakeCredential()
+        session = FakeJsonSession(
+            [
+                {"id": "item-1", "size": 99},
+                {"id": "item-1", "size": 98},
+                {"id": "item-1", "size": 97},
+            ]
+        )
+        client = SharePointClient(
+            "example.sharepoint.com",
+            "/sites/Planning",
+            "MobiWorkDMS",
+            max_retries=0,
+            credential=credential,
+            session=session,
+        )
+
+        with (
+            patch("src.sharepoint.time.sleep"),
+            self.assertRaisesRegex(RuntimeError, "after metadata recheck"),
+        ):
+            client._verify_uploaded_size(
+                "drive-1",
+                "BaoCaoViengTham_2026-08-21.xlsx",
+                {"id": "item-1", "size": 99},
+                expected_size=3,
+                verification_attempts=2,
+            )
 
 
 if __name__ == "__main__":
