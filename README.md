@@ -16,7 +16,7 @@ GitHub Actions
 - SharePoint host: `vikodacomvn.sharepoint.com`
 - Site: `/sites/Planning`
 - Document library: `MobiWorkDMS`
-- Daily schedule: `09:07` in `Asia/Ho_Chi_Minh`
+- Daily schedule: `09:00` in `Asia/Ho_Chi_Minh`
 - Scheduled incremental lookback: 3 previous days
 
 Refreshing several previous days intentionally replaces deterministic dated files, so late edits in MobiWork are captured without creating duplicate files.
@@ -152,7 +152,7 @@ Example fields:
 
 ```json
 {
-  "run_id": "20260822T090700_123456_1",
+  "run_id": "20260822T090000_123456_1",
   "mode": "incremental",
   "status": "success",
   "file_count": 12,
