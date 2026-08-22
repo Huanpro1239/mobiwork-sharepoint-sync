@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  statuses: write
 
 concurrency:
   group: mobiwork-sharepoint-production
@@ -91,7 +92,7 @@ jobs:
 
           echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
 
-      - name: Sync 2026-08-21 production data
+      - name: Sync previous day production data
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -147,3 +148,43 @@ jobs:
           path: output/sync_manifest.json
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Publish production validation commit status
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          eval "$(python - <<'PY'
+          import json
+          import shlex
+          from pathlib import Path
+
+          path = Path('output/sync_manifest.json')
+          if not path.exists():
+              state = 'failure'
+              description = 'validation failed: sync manifest missing'
+          else:
+              data = json.loads(path.read_text(encoding='utf-8'))
+              status = str(data.get('status', 'failed'))
+              files = int(data.get('file_count', len(data.get('files', []))))
+              rows = int(data.get('source_row_count', 0))
+              if status == 'success':
+                  state = 'success'
+                  description = f'success files={files} rows={rows}'
+              else:
+                  state = 'failure'
+                  error = str(data.get('error', 'sync failed')).replace('\n', ' ')[:90]
+                  description = f'failure {error}'[:140]
+          print(f'STATE={shlex.quote(state)}')
+          print(f'DESCRIPTION={shlex.quote(description[:140])}')
+          PY
+          )"
+
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="$STATE" \
+            -f context="production-validation" \
+            -f description="$DESCRIPTION" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
