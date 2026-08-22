@@ -213,7 +213,6 @@ class SharePointClient:
             try:
                 created = self._request("POST", url, json=payload).json()
             except requests.HTTPError as exc:
-                # Another concurrent process may have created the folder after our GET.
                 if exc.response is None or exc.response.status_code != 409:
                     raise
                 created = self.get_item_by_path(drive_id, current_path)
@@ -233,6 +232,20 @@ class SharePointClient:
             timeout=300,
         ).content
 
+    def _wait_for_item_by_path(
+        self,
+        drive_id: str,
+        remote_path: str,
+        attempts: int = 4,
+    ) -> dict[str, Any] | None:
+        for attempt in range(attempts):
+            item = self.get_item_by_path(drive_id, remote_path)
+            if item:
+                return item
+            if attempt < attempts - 1:
+                time.sleep(min(1.0 * (2**attempt), 3.0))
+        return None
+
     def _verify_uploaded_size(
         self,
         drive_id: str,
@@ -242,7 +255,6 @@ class SharePointClient:
         verification_attempts: int = 3,
         expected_content: bytes | None = None,
     ) -> dict[str, Any]:
-        """Verify metadata first, then exact bytes when SharePoint metadata is stale."""
         remote_size = uploaded.get("size")
         if remote_size is not None and int(remote_size) == expected_size:
             return uploaded
@@ -303,24 +315,62 @@ class SharePointClient:
     def _upload_new_content(
         self,
         drive_id: str,
-        parent_id: str,
+        remote_folder: str,
         filename: str,
         content: bytes,
         content_type: str,
     ) -> dict[str, Any]:
-        encoded_name = quote(filename, safe="")
-        url = f"{GRAPH}/drives/{drive_id}/items/{parent_id}:/{encoded_name}:/content"
-        uploaded = self._request(
+        remote_path = "/".join(
+            part for part in (remote_folder.strip("/"), filename) if part
+        )
+        encoded_path = quote(remote_path, safe="/")
+        url = f"{GRAPH}/drives/{drive_id}/root:/{encoded_path}:/content"
+        response = self._request(
             "PUT",
             url,
-            headers={"Content-Type": content_type},
+            headers={
+                "Content-Type": content_type,
+                "Content-Length": str(len(content)),
+            },
             data=content,
             timeout=300,
-        ).json()
+        )
+        uploaded = response.json()
+        LOG.info(
+            "Graph PUT result status=%s requested=%s returned_name=%s returned_id=%s returned_size=%s",
+            response.status_code,
+            remote_path,
+            uploaded.get("name"),
+            uploaded.get("id"),
+            uploaded.get("size"),
+        )
+
+        returned_name = str(uploaded.get("name", "")).strip()
+        if returned_name and returned_name != filename:
+            raise RuntimeError(
+                f"SharePoint created unexpected item for {remote_path!r}: "
+                f"returned_name={returned_name!r}"
+            )
+
+        materialized = self._wait_for_item_by_path(drive_id, remote_path)
+        if not materialized:
+            raise RuntimeError(
+                f"SharePoint upload response succeeded but path {remote_path!r} was not materialized"
+            )
+
+        response_id = str(uploaded.get("id", "")).strip()
+        materialized_id = str(materialized.get("id", "")).strip()
+        if response_id and materialized_id and response_id != materialized_id:
+            raise RuntimeError(
+                f"SharePoint upload item mismatch for {remote_path!r}: "
+                f"response_id={response_id}, path_id={materialized_id}"
+            )
+
+        verified_source = {**uploaded, **materialized}
         return self._verify_uploaded_size(
             drive_id,
             filename,
-            uploaded,
+            verified_source,
             len(content),
             expected_content=content,
         )
@@ -371,15 +421,11 @@ class SharePointClient:
         content_type: str,
         existing: dict[str, Any],
     ) -> dict[str, Any]:
-        """Replace a file through create/verify/rename with rollback instead of in-place PUT."""
         existing_id = str(existing.get("id", "")).strip()
         if not existing_id:
             raise RuntimeError(f"Existing SharePoint file {filename!r} has no driveItem id")
 
-        parent_id = str(existing.get("parentReference", {}).get("id", "")).strip()
-        if not parent_id:
-            parent_id = self.ensure_folder_path(drive_id, remote_folder)
-
+        self.ensure_folder_path(drive_id, remote_folder)
         token = uuid4().hex[:12]
         temp_name = f"__sync_tmp_{token}__{filename}"
         backup_name = f"__sync_backup_{token}__{filename}"
@@ -388,7 +434,7 @@ class SharePointClient:
         LOG.info("Staging SharePoint replacement: %s -> %s", filename, temp_name)
         temp = self._upload_new_content(
             drive_id,
-            parent_id,
+            remote_folder,
             temp_name,
             content,
             content_type,
@@ -425,8 +471,6 @@ class SharePointClient:
                 self._delete_item(drive_id, existing_id)
                 LOG.info("Removed SharePoint backup after verified promotion: %s", backup_name)
             except Exception:
-                # Canonical content is already verified. Keep the backup rather than mark
-                # a successful business-data update as failed because cleanup was blocked.
                 LOG.exception("Unable to remove SharePoint backup %s", backup_name)
             return result
         except Exception:
@@ -475,11 +519,11 @@ class SharePointClient:
                 existing,
             )
 
-        parent_id = self.ensure_folder_path(drive_id, remote_folder)
+        self.ensure_folder_path(drive_id, remote_folder)
         LOG.info("Creating new SharePoint file: %s", remote_path)
         return self._upload_new_content(
             drive_id,
-            parent_id,
+            remote_folder,
             filename,
             content,
             content_type,
@@ -490,7 +534,6 @@ class SharePointClient:
         if not local_file.is_file():
             raise FileNotFoundError(local_file)
 
-        # Graph simple upload supports files up to 250 MB. Reading bytes also makes retries safe.
         content = local_file.read_bytes()
         if len(content) > 250 * 1024 * 1024:
             raise ValueError(
