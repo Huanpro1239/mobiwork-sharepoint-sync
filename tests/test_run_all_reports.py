@@ -1,7 +1,7 @@
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,6 +41,33 @@ class FakeSharePoint:
         }
 
 
+class IncrementalScopeTests(unittest.TestCase):
+    def test_today_scope_targets_current_vietnam_date(self):
+        fixed_now = datetime(2026, 8, 22, 12, 30, tzinfo=runner.core.VN_TZ)
+        with patch.object(runner, "datetime") as datetime_mock:
+            datetime_mock.now.return_value = fixed_now
+            values = runner.incremental_target_dates("today", 1)
+        self.assertEqual(values, [date(2026, 8, 22)])
+
+    def test_yesterday_scope_targets_previous_vietnam_date(self):
+        fixed_now = datetime(2026, 8, 22, 0, 5, tzinfo=runner.core.VN_TZ)
+        with patch.object(runner, "datetime") as datetime_mock:
+            datetime_mock.now.return_value = fixed_now
+            values = runner.incremental_target_dates("yesterday", 1)
+        self.assertEqual(values, [date(2026, 8, 21)])
+
+    def test_lookback_scope_reuses_core_date_logic(self):
+        expected = [date(2026, 8, 21), date(2026, 8, 20)]
+        with patch.object(runner.core, "target_dates", return_value=expected) as target_mock:
+            values = runner.incremental_target_dates("lookback", 2)
+        self.assertEqual(values, expected)
+        target_mock.assert_called_once_with(2)
+
+    def test_invalid_scope_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "SYNC_SCOPE"):
+            runner.incremental_target_dates("invalid", 1)
+
+
 class AllReportsRunnerTests(unittest.TestCase):
     def test_one_report_failure_does_not_block_remaining_reports(self):
         reports = [
@@ -73,6 +100,7 @@ class AllReportsRunnerTests(unittest.TestCase):
                     1,
                     False,
                     manifest,
+                    sync_scope="lookback",
                 )
 
         self.assertEqual(mobiwork.calls, ["visit", "new_customer", "order", "bill"])
