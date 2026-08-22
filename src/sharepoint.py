@@ -5,7 +5,6 @@ import logging
 import os
 import random
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -15,10 +14,8 @@ import requests
 from azure.identity import AzureCliCredential
 
 
-LOG = logging.getLogger("mobiwork_sync")
 GRAPH = "https://graph.microsoft.com/v1.0"
-GRAPH_SCOPE = "https://graph.microsoft.com/.default"
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+LOG = logging.getLogger("mobiwork_sync")
 
 
 class SharePointClient:
@@ -27,228 +24,226 @@ class SharePointClient:
         host: str,
         site_path: str,
         library_name: str,
-        credential: Any,
-        timeout_seconds: float = 120.0,
+        timeout: int = 120,
         max_retries: int = 6,
+        credential: Any | None = None,
         session: requests.Session | None = None,
     ) -> None:
-        self.host = host
-        self.site_path = site_path
-        self.library_name = library_name
-        self.credential = credential
-        self.timeout_seconds = timeout_seconds
+        self.host = host.strip()
+        self.site_path = "/" + site_path.strip("/")
+        self.library_name = library_name.strip()
+        self.timeout = timeout
         self.max_retries = max_retries
+        if not all([self.host, self.site_path, self.library_name]):
+            raise ValueError("SharePoint host/site/library configuration is incomplete")
+        if timeout < 1:
+            raise ValueError("timeout must be >= 1")
+        if max_retries < 0 or max_retries > 20:
+            raise ValueError("max_retries must be between 0 and 20")
+
+        self.credential = credential or AzureCliCredential()
         self.session = session or requests.Session()
-        self._access_token: str | None = None
-        self._token_expires_on: datetime | None = None
+        self._token: str | None = None
+        self._token_expires_on = 0.0
 
     @classmethod
     def from_env(cls) -> "SharePointClient":
-        host = os.environ.get("SHAREPOINT_HOST", "").strip()
-        site_path = os.environ.get("SHAREPOINT_SITE_PATH", "").strip()
-        library_name = os.environ.get("SHAREPOINT_LIBRARY", "").strip()
-        if not host:
-            raise ValueError("SHAREPOINT_HOST is required")
-        if not site_path:
-            raise ValueError("SHAREPOINT_SITE_PATH is required")
-        if not library_name:
-            raise ValueError("SHAREPOINT_LIBRARY is required")
         return cls(
-            host=host,
-            site_path=site_path,
-            library_name=library_name,
-            credential=AzureCliCredential(),
-            timeout_seconds=float(os.environ.get("SHAREPOINT_TIMEOUT_SECONDS", "120")),
+            host=os.environ.get("SHAREPOINT_HOST", "vikodacomvn.sharepoint.com"),
+            site_path=os.environ.get("SHAREPOINT_SITE_PATH", "/sites/Planning"),
+            library_name=os.environ.get("SHAREPOINT_LIBRARY", "MobiWorkDMS"),
+            timeout=int(os.environ.get("SHAREPOINT_TIMEOUT_SECONDS", "120")),
             max_retries=int(os.environ.get("SHAREPOINT_MAX_RETRIES", "6")),
         )
 
-    def _get_token(self, force_refresh: bool = False) -> str:
-        now = datetime.now(timezone.utc)
+    def _access_token(self, force_refresh: bool = False) -> str:
+        now = time.time()
         if (
             not force_refresh
-            and self._access_token
-            and self._token_expires_on
-            and self._token_expires_on - now > timedelta(minutes=5)
+            and self._token
+            and self._token_expires_on > now + 300
         ):
-            return self._access_token
+            return self._token
 
-        token = self.credential.get_token(GRAPH_SCOPE)
-        self._access_token = token.token
-        self._token_expires_on = datetime.fromtimestamp(token.expires_on, timezone.utc)
-        return self._access_token
+        access_token = self.credential.get_token("https://graph.microsoft.com/.default")
+        self._token = access_token.token
+        self._token_expires_on = float(getattr(access_token, "expires_on", now + 300))
+        return self._token
+
+    def _headers(
+        self,
+        extra: dict[str, str] | None = None,
+        force_refresh: bool = False,
+    ) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self._access_token(force_refresh)}",
+            "Accept": "application/json",
+        }
+        if extra:
+            headers.update(extra)
+        return headers
 
     @staticmethod
-    def _retry_after_seconds(response: requests.Response) -> float | None:
-        value = response.headers.get("Retry-After")
-        if not value:
-            return None
-        try:
-            return min(max(float(value), 0.0), 180.0)
-        except ValueError:
-            return None
-
-    def _sleep_before_retry(self, attempt: int, response: requests.Response | None = None) -> None:
+    def _retry_delay(response: requests.Response | None, attempt: int) -> float:
         if response is not None:
-            retry_after = self._retry_after_seconds(response)
-            if retry_after is not None:
-                time.sleep(retry_after)
-                return
-        base = min(2**attempt, 30)
-        time.sleep(base + random.uniform(0.0, 1.0))
+            retry_after = str(response.headers.get("Retry-After", "")).strip()
+            if retry_after:
+                try:
+                    return min(max(float(retry_after), 1.0), 180.0)
+                except ValueError:
+                    pass
+        base = min(2.0 * (2**attempt), 60.0)
+        return base + random.uniform(0.0, min(base * 0.15, 3.0))
 
     def _request(
         self,
         method: str,
         url: str,
         *,
+        headers: dict[str, str] | None = None,
+        timeout: int | None = None,
         allow_404: bool = False,
-        timeout: float | None = None,
         **kwargs: Any,
     ) -> requests.Response:
-        token_refreshed = False
+        retryable_statuses = {429, 500, 502, 503, 504}
+        force_refresh = False
+
         for attempt in range(self.max_retries + 1):
-            headers = dict(kwargs.pop("headers", {}) or {})
-            headers["Authorization"] = f"Bearer {self._get_token(force_refresh=token_refreshed)}"
-            token_refreshed = False
+            response: requests.Response | None = None
             try:
                 response = self.session.request(
                     method,
                     url,
-                    headers=headers,
-                    timeout=timeout or self.timeout_seconds,
+                    headers=self._headers(headers, force_refresh=force_refresh),
+                    timeout=timeout or self.timeout,
                     **kwargs,
                 )
-            except (requests.Timeout, requests.ConnectionError):
+            except (requests.Timeout, requests.ConnectionError) as exc:
                 if attempt >= self.max_retries:
                     raise
-                self._sleep_before_retry(attempt)
+                delay = self._retry_delay(None, attempt)
+                LOG.warning(
+                    "Microsoft Graph network error: %s. Retry %s/%s in %.1fs",
+                    type(exc).__name__,
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                )
+                time.sleep(delay)
                 continue
+
+            if allow_404 and response.status_code == 404:
+                return response
 
             if response.status_code == 401 and attempt < self.max_retries:
                 LOG.warning("Microsoft Graph token rejected; refreshing credentials and retrying")
-                token_refreshed = True
-                self._access_token = None
-                self._token_expires_on = None
+                force_refresh = True
+                self._token = None
+                self._token_expires_on = 0.0
                 continue
 
-            if response.status_code == 404 and allow_404:
+            force_refresh = False
+            if response.status_code not in retryable_statuses:
+                response.raise_for_status()
                 return response
 
-            if response.status_code in RETRYABLE_STATUS and attempt < self.max_retries:
-                LOG.warning(
-                    "Microsoft Graph retryable response: status=%s method=%s url=%s attempt=%s/%s",
-                    response.status_code,
-                    method,
-                    url,
-                    attempt + 1,
-                    self.max_retries,
-                )
-                self._sleep_before_retry(attempt, response)
-                continue
+            if attempt >= self.max_retries:
+                response.raise_for_status()
 
-            response.raise_for_status()
-            return response
+            delay = self._retry_delay(response, attempt)
+            LOG.warning(
+                "Microsoft Graph HTTP %s. Retry %s/%s in %.1fs",
+                response.status_code,
+                attempt + 1,
+                self.max_retries,
+                delay,
+            )
+            time.sleep(delay)
 
-        raise RuntimeError("Microsoft Graph retry loop exhausted")
+        raise RuntimeError("Unreachable retry loop")
 
     def get_site_id(self) -> str:
-        encoded_path = quote(self.site_path, safe="/")
-        response = self._request(
-            "GET",
-            f"{GRAPH}/sites/{self.host}:{encoded_path}?$select=id",
-        )
-        site_id = str(response.json().get("id", "")).strip()
-        if not site_id:
-            raise RuntimeError("Microsoft Graph returned no SharePoint site id")
-        return site_id
+        url = f"{GRAPH}/sites/{self.host}:{self.site_path}"
+        return self._request("GET", url).json()["id"]
 
     def get_drive_id(self, site_id: str) -> str:
-        response = self._request("GET", f"{GRAPH}/sites/{site_id}/drives")
-        drives = response.json().get("value", [])
+        url = f"{GRAPH}/sites/{site_id}/drives"
+        drives = self._request("GET", url).json().get("value", [])
         for drive in drives:
             if str(drive.get("name", "")).casefold() == self.library_name.casefold():
-                drive_id = str(drive.get("id", "")).strip()
-                if drive_id:
-                    return drive_id
+                return drive["id"]
+        available = ", ".join(str(d.get("name", "?")) for d in drives)
         raise RuntimeError(
-            f"Microsoft Graph did not return document library {self.library_name!r}"
+            f"SharePoint library {self.library_name!r} not found. Available drives: {available}"
         )
-
-    def _item_url(self, drive_id: str, item_id: str) -> str:
-        return f"{GRAPH}/drives/{drive_id}/items/{item_id}"
 
     def get_item_by_path(self, drive_id: str, remote_path: str) -> dict[str, Any] | None:
-        path = remote_path.strip("/")
-        if not path:
-            response = self._request("GET", f"{GRAPH}/drives/{drive_id}/root")
-            return response.json()
-        encoded = quote(path, safe="/")
-        response = self._request(
-            "GET",
-            f"{GRAPH}/drives/{drive_id}/root:/{encoded}",
-            allow_404=True,
-        )
+        encoded = quote(remote_path.strip("/"), safe="/")
+        url = f"{GRAPH}/drives/{drive_id}/root:/{encoded}"
+        response = self._request("GET", url, allow_404=True)
         if response.status_code == 404:
             return None
         return response.json()
 
-    def ensure_folder_path(self, drive_id: str, remote_folder: str) -> dict[str, Any]:
-        parent = self._request("GET", f"{GRAPH}/drives/{drive_id}/root").json()
-        parent_id = str(parent.get("id", "")).strip()
-        if not parent_id:
-            raise RuntimeError("SharePoint drive root has no item id")
-
+    def ensure_folder_path(self, drive_id: str, folder_path: str) -> str:
+        parent_id = "root"
         built: list[str] = []
-        for segment in [part for part in remote_folder.strip("/").split("/") if part]:
+        for segment in [part for part in folder_path.strip("/").split("/") if part]:
             built.append(segment)
             current_path = "/".join(built)
             existing = self.get_item_by_path(drive_id, current_path)
             if existing:
                 if "folder" not in existing:
-                    raise RuntimeError(f"SharePoint path {current_path!r} exists but is not a folder")
-                parent_id = str(existing.get("id", "")).strip()
+                    raise RuntimeError(
+                        f"SharePoint path {current_path!r} exists but is not a folder"
+                    )
+                parent_id = existing["id"]
                 continue
 
-            response = self._request(
-                "POST",
-                f"{GRAPH}/drives/{drive_id}/items/{parent_id}/children",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "name": segment,
-                    "folder": {},
-                    "@microsoft.graph.conflictBehavior": "fail",
-                },
-                allow_404=False,
+            url = (
+                f"{GRAPH}/drives/{drive_id}/root/children"
+                if parent_id == "root"
+                else f"{GRAPH}/drives/{drive_id}/items/{parent_id}/children"
             )
-            created = response.json()
-            parent_id = str(created.get("id", "")).strip()
-            if not parent_id:
-                raced = self.get_item_by_path(drive_id, current_path)
-                if not raced:
-                    raise RuntimeError(f"Unable to create SharePoint folder {current_path!r}")
-                parent_id = str(raced.get("id", "")).strip()
-        return self.get_item_by_path(drive_id, remote_folder) or parent
+            payload = {
+                "name": segment,
+                "folder": {},
+                "@microsoft.graph.conflictBehavior": "fail",
+            }
+            try:
+                created = self._request("POST", url, json=payload).json()
+            except requests.HTTPError as exc:
+                if exc.response is None or exc.response.status_code != 409:
+                    raise
+                created = self.get_item_by_path(drive_id, current_path)
+                if not created:
+                    raise
+            parent_id = created["id"]
+        return parent_id
+
+    @staticmethod
+    def _item_url(drive_id: str, item_id: str) -> str:
+        return f"{GRAPH}/drives/{drive_id}/items/{quote(item_id, safe='')}"
 
     def _download_item_content(self, drive_id: str, item_id: str) -> bytes:
-        response = self._request(
+        return self._request(
             "GET",
             f"{self._item_url(drive_id, item_id)}/content",
             timeout=300,
-        )
-        return response.content
+        ).content
 
     def _wait_for_item_by_path(
         self,
         drive_id: str,
         remote_path: str,
-        attempts: int = 5,
+        attempts: int = 4,
     ) -> dict[str, Any] | None:
         for attempt in range(attempts):
             item = self.get_item_by_path(drive_id, remote_path)
             if item:
                 return item
             if attempt < attempts - 1:
-                time.sleep(min(0.5 * (2**attempt), 3.0))
+                time.sleep(min(1.0 * (2**attempt), 3.0))
         return None
 
     def _verify_uploaded_size(
@@ -260,19 +255,27 @@ class SharePointClient:
         verification_attempts: int = 3,
         expected_content: bytes | None = None,
     ) -> dict[str, Any]:
-        last_metadata = dict(uploaded)
-        last_size = last_metadata.get("size")
-        item_id = str(last_metadata.get("id", "")).strip()
+        remote_size = uploaded.get("size")
+        if remote_size is not None and int(remote_size) == expected_size:
+            return uploaded
 
+        item_id = str(uploaded.get("id", "")).strip()
+        if not item_id:
+            raise RuntimeError(
+                f"SharePoint upload size mismatch for {filename}: "
+                f"local={expected_size}, remote={remote_size}, item_id=missing"
+            )
+
+        last_size = remote_size
+        last_metadata: dict[str, Any] = uploaded
+        metadata_url = self._item_url(drive_id, item_id)
         for attempt in range(verification_attempts):
-            try:
-                remote_size = int(last_size)
-            except (TypeError, ValueError):
-                remote_size = -1
-            if remote_size == expected_size:
-                return last_metadata
-            if not item_id:
-                break
+            metadata = self._request("GET", metadata_url).json()
+            last_metadata = metadata
+            last_size = metadata.get("size")
+            if last_size is not None and int(last_size) == expected_size:
+                return {**uploaded, **metadata}
+
             if attempt < verification_attempts - 1:
                 delay = min(1.0 * (2**attempt), 3.0)
                 LOG.warning(
@@ -282,19 +285,17 @@ class SharePointClient:
                     expected_size,
                     last_size,
                     attempt + 1,
-                    verification_attempts - 1,
+                    verification_attempts,
                     delay,
                 )
                 time.sleep(delay)
-                last_metadata = self._request("GET", self._item_url(drive_id, item_id)).json()
-                last_size = last_metadata.get("size")
 
-        if item_id and expected_content is not None:
+        if expected_content is not None:
             actual_content = self._download_item_content(drive_id, item_id)
             if actual_content == expected_content:
                 LOG.warning(
-                    "SharePoint size metadata remained stale for %s, but downloaded content "
-                    "matched the uploaded bytes exactly",
+                    "SharePoint size metadata remained stale for %s, but downloaded "
+                    "content matched the uploaded bytes exactly",
                     filename,
                 )
                 verified = {**uploaded, **last_metadata}
@@ -566,7 +567,6 @@ class SharePointClient:
         )
 
     def download_file_bytes(self, drive_id: str, remote_path: str) -> bytes | None:
-        """Download an arbitrary file by path, returning None when it does not exist."""
         item = self.get_item_by_path(drive_id, remote_path)
         if not item:
             return None
@@ -578,7 +578,6 @@ class SharePointClient:
         return self._download_item_content(drive_id, item_id)
 
     def list_folder_children(self, drive_id: str, remote_folder: str) -> list[dict[str, Any]]:
-        """List every direct child of a SharePoint folder, following Graph pagination."""
         folder = self.get_item_by_path(drive_id, remote_folder)
         if not folder:
             return []
@@ -601,7 +600,6 @@ class SharePointClient:
         return items
 
     def delete_path(self, drive_id: str, remote_path: str) -> bool:
-        """Delete a file/folder by path. Returns False when the path is already absent."""
         item = self.get_item_by_path(drive_id, remote_path)
         if not item:
             return False
