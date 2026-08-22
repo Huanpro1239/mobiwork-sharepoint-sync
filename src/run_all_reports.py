@@ -91,6 +91,31 @@ def _cleanup_legacy_files(
     return deleted
 
 
+def _record_monthly_export(
+    manifest: dict[str, Any],
+    cfg: ReportConfig,
+    path: Any,
+    source_rows: int,
+    master_rows: int,
+    remote_folder: str,
+    uploaded: dict[str, Any] | None,
+) -> None:
+    """Record per-run source rows separately from the total rows stored in the master."""
+    core._record_export(
+        manifest,
+        cfg,
+        path,
+        source_rows,
+        remote_folder,
+        uploaded,
+    )
+    export = manifest["files"][-1]
+    export["master_rows"] = master_rows
+    if uploaded:
+        export["verification_mode"] = uploaded.get("verification_mode")
+        export["semantic_match"] = uploaded.get("semantic_match")
+
+
 def _build_or_update_master(
     cfg: ReportConfig,
     target_date: date,
@@ -221,10 +246,11 @@ def run_incremental_all_reports(
                     if deleted:
                         result["cleanup_deleted_files"] = deleted
 
-                core._record_export(
+                _record_monthly_export(
                     manifest,
                     cfg,
                     path,
+                    target_rows,
                     master_rows,
                     remote_folder,
                     uploaded,
@@ -256,6 +282,9 @@ def _finalize_manifest(
     manifest["file_count"] = len(manifest.get("files", []))
     manifest["source_row_count"] = sum(
         int(item.get("source_rows", 0)) for item in manifest.get("files", [])
+    )
+    manifest["master_row_count"] = sum(
+        int(item.get("master_rows", 0)) for item in manifest.get("files", [])
     )
     manifest["successful_report_count"] = len(successful)
     manifest["failed_report_count"] = len(failed)

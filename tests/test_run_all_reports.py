@@ -109,11 +109,18 @@ class AllReportsRunnerTests(unittest.TestCase):
         self.assertEqual([item["status"] for item in results[1:]], ["success"] * 3)
         self.assertEqual(len(manifest["files"]), 3)
         self.assertTrue(all(item.get("master_rows") == 10 for item in results))
+        self.assertTrue(all(item["source_rows"] == 1 for item in manifest["files"]))
+        self.assertTrue(all(item["master_rows"] == 10 for item in manifest["files"]))
+        self.assertTrue(
+            all(item["verification_mode"] == "xlsx_semantic" for item in manifest["files"])
+        )
 
         runner._finalize_manifest(manifest, results)
         self.assertEqual(manifest["status"], "partial_failure")
         self.assertEqual(manifest["failed_report_count"], 1)
         self.assertEqual(manifest["successful_report_count"], 3)
+        self.assertEqual(manifest["source_row_count"], 3)
+        self.assertEqual(manifest["master_row_count"], 30)
 
     def test_cleanup_deletes_only_legacy_report_files(self):
         class CleanupSharePoint:
@@ -157,6 +164,8 @@ class AllReportsRunnerTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "success")
         self.assertEqual(manifest["failed_report_count"], 0)
         self.assertEqual(manifest["successful_report_count"], 2)
+        self.assertEqual(manifest["source_row_count"], 0)
+        self.assertEqual(manifest["master_row_count"], 0)
 
 
 if __name__ == "__main__":

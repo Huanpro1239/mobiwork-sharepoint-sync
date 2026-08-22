@@ -76,6 +76,15 @@ def read_master(content: bytes, export_mode: str) -> dict[str, pd.DataFrame]:
     return frames
 
 
+def _combine_partition_frames(old: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
+    """Combine two partitions without passing empty frames through pandas concat."""
+    if old.empty:
+        return new.reset_index(drop=True).copy()
+    if new.empty:
+        return old.reset_index(drop=True).copy()
+    return pd.concat([old, new], ignore_index=True, sort=False)
+
+
 def merge_partition(
     existing: dict[str, pd.DataFrame],
     incoming: dict[str, pd.DataFrame],
@@ -95,7 +104,7 @@ def merge_partition(
                     f"Monthly master sheet {sheet_name!r} is missing {SYNC_DATE_COLUMN}"
                 )
             old = old.loc[old[SYNC_DATE_COLUMN].astype("string") != partition]
-        combined = pd.concat([old, new], ignore_index=True, sort=False)
+        combined = _combine_partition_frames(old, new)
         if SYNC_DATE_COLUMN in combined.columns:
             combined[SYNC_DATE_COLUMN] = combined[SYNC_DATE_COLUMN].astype("string")
             combined = combined.sort_values(SYNC_DATE_COLUMN, kind="stable").reset_index(drop=True)

@@ -78,6 +78,46 @@ class MonthlyMasterTests(unittest.TestCase):
         self.assertEqual(merged["DonHang"]["ma_phieu"].tolist(), ["P20", "P21X"])
         self.assertEqual(merged["ChiTietSP"]["ma_phieu"].tolist(), ["P20", "P21X"])
 
+    def test_order_month_rebuild_accepts_historical_lines_missing_stt(self):
+        partitions = [
+            (
+                date(2026, 8, 1),
+                [
+                    {
+                        "ma_phieu": "P01",
+                        "san_pham": [
+                            {"stt": None, "ma_sp": "A"},
+                            {"stt": 2, "ma_sp": "B"},
+                        ],
+                    }
+                ],
+            ),
+            (
+                date(2026, 8, 2),
+                [
+                    {
+                        "ma_phieu": "P02",
+                        "san_pham": [
+                            {"ma_sp": "C"},
+                            {"stt": "", "ma_sp": "D"},
+                        ],
+                    }
+                ],
+            ),
+        ]
+
+        master = build_month_from_partitions(partitions, "order")
+        detail = master["ChiTietSP"]
+
+        self.assertEqual(len(master["DonHang"]), 2)
+        self.assertEqual(len(detail), 4)
+        self.assertFalse(detail[["ma_phieu", "stt"]].isna().any().any())
+        self.assertFalse(detail[["ma_phieu", "stt"]].duplicated().any())
+        self.assertEqual(
+            detail.loc[detail["ma_phieu"] == "P02", "stt"].astype(int).tolist(),
+            [1, 2],
+        )
+
     def test_master_round_trip_preserves_sync_partition(self):
         frames = build_month_from_partitions(
             [(date(2026, 8, 21), [{"ma_kh": "00001", "ten_kh": "A"}])],
