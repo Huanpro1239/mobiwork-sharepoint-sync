@@ -1,13 +1,8 @@
-import os
-import tempfile
 import unittest
-from datetime import date
-from pathlib import Path
 
 import pandas as pd
-from openpyxl import load_workbook
 
-from src.excel_export import build_order_frames, export_excel
+from src.excel_export import build_order_frames
 
 
 SAMPLE_BILLS = [
@@ -134,34 +129,6 @@ class BuildOrderFramesTests(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "duplicate key"):
             build_order_frames(duplicate)
-
-
-class ExportExcelTests(unittest.TestCase):
-    def test_order_workbook_has_two_analytics_friendly_sheets(self):
-        previous_cwd = Path.cwd()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            try:
-                os.chdir(temp_dir)
-                path = export_excel(SAMPLE_BILLS, "DonBanHang", date(2022, 11, 17), "order")
-                workbook = load_workbook(path, data_only=True)
-                self.assertEqual(workbook.sheetnames, ["DonHang", "ChiTietSP"])
-
-                sheet = workbook["ChiTietSP"]
-                headers = [cell.value for cell in sheet[1]]
-                ma_sp_column = headers.index("ma_sp") + 1
-                values = [
-                    sheet.cell(row=row, column=ma_sp_column).value
-                    for row in range(2, sheet.max_row + 1)
-                ]
-                self.assertIn("00008", values)
-                self.assertTrue(
-                    all(
-                        sheet.cell(row=row, column=ma_sp_column).number_format == "@"
-                        for row in range(2, sheet.max_row + 1)
-                    )
-                )
-            finally:
-                os.chdir(previous_cwd)
 
 
 if __name__ == "__main__":

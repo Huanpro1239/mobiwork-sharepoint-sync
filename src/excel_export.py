@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import math
-from datetime import date
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -169,7 +167,7 @@ def build_order_frames(
         parent_ma_phieu = header.get("ma_phieu")
         for item in _normalize_order_items(order):
             detail = {**header, **item}
-            # Some MobiWork child objects contain ma_phieu=null/"".  The document
+            # Some MobiWork child objects contain ma_phieu=null/"". The document
             # number belongs to the parent order/bill, so an empty child value must
             # never erase the valid parent business key.
             child_ma_phieu = detail.get("ma_phieu")
@@ -255,31 +253,3 @@ def _format_sheet(writer: pd.ExcelWriter, sheet_name: str) -> None:
             if value is not None:
                 max_length = max(max_length, len(str(value)))
         worksheet.column_dimensions[get_column_letter(column)].width = min(max(max_length + 2, 10), 40)
-
-
-def export_excel(
-    records: list[dict[str, Any]],
-    report_name: str,
-    target_date: date,
-    export_mode: str = "flat",
-    file_suffix: str | None = None,
-) -> Path:
-    output_dir = Path("output")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    suffix = file_suffix or f"{target_date:%Y-%m-%d}"
-    path = output_dir / f"{report_name}_{suffix}.xlsx"
-
-    with pd.ExcelWriter(path, engine="openpyxl") as writer:
-        if export_mode == "order":
-            header, detail = build_order_frames(records)
-            header.to_excel(writer, sheet_name="DonHang", index=False)
-            detail.to_excel(writer, sheet_name="ChiTietSP", index=False)
-            for sheet_name in ("DonHang", "ChiTietSP"):
-                _format_sheet(writer, sheet_name)
-        else:
-            frame = pd.json_normalize(records, sep="_") if records else pd.DataFrame()
-            _validate_excel_size(frame, "Data")
-            frame.to_excel(writer, sheet_name="Data", index=False)
-            _format_sheet(writer, "Data")
-
-    return path

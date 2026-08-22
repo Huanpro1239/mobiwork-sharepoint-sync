@@ -86,6 +86,8 @@ __pypackages__/
 
 # Environments and secrets
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 env/
