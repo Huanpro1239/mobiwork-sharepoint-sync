@@ -1,11 +1,9 @@
 import json
-import os
 import sys
 import tempfile
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
@@ -15,54 +13,21 @@ import main as sync_main  # noqa: E402
 from mobiwork import ReportConfig  # noqa: E402
 
 
-class FakeMobiWork:
-    def __init__(self, range_records=None):
-        self.range_records = list(range_records or [])
-        self.range_calls = []
-
-    def fetch_report_range(self, cfg, from_date, to_date):
-        self.range_calls.append((cfg.key, from_date, to_date))
-        return list(self.range_records)
-
-
 class FakeSharePoint:
-    def __init__(self, state=None):
-        self.state = state
-        self.uploaded_files = []
+    def __init__(self):
         self.uploaded_json = []
-
-    def upload_file(self, drive_id, path, remote_folder):
-        self.uploaded_files.append((drive_id, Path(path), remote_folder))
-        return {
-            "size": Path(path).stat().st_size,
-            "webUrl": f"https://sharepoint.example/{remote_folder}/{Path(path).name}",
-        }
-
-    def download_json(self, drive_id, remote_path):
-        return self.state
 
     def upload_json(self, drive_id, remote_path, payload):
         self.uploaded_json.append((drive_id, remote_path, dict(payload)))
-        self.state = dict(payload)
         return {"size": len(json.dumps(payload))}
 
 
 class MainHelperTests(unittest.TestCase):
-    def test_load_reports_and_enabled_filter(self):
+    def test_load_reports(self):
         payload = {
             "reports": [
-                {
-                    "key": "a",
-                    "enabled": True,
-                    "name": "A",
-                    "folder": "A",
-                },
-                {
-                    "key": "b",
-                    "enabled": False,
-                    "name": "B",
-                    "folder": "B",
-                },
+                {"key": "a", "enabled": True, "name": "A", "folder": "A"},
+                {"key": "b", "enabled": False, "name": "B", "folder": "B"},
             ]
         }
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -80,173 +45,35 @@ class MainHelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sync_main.target_dates(32)
 
-    def test_parse_iso_date(self):
-        self.assertEqual(sync_main.parse_iso_date("2026-08-22", "x"), date(2026, 8, 22))
-        with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
-            sync_main.parse_iso_date("22/08/2026", "x")
-
-    def test_manifest_helpers_write_hash_and_totals(self):
+    def test_manifest_helpers_write_hash_and_upload_audit(self):
         cfg = ReportConfig(key="bill", enabled=True, name="Bill", folder="04")
-        manifest = sync_main._new_manifest("bootstrap", True)
+        manifest = sync_main._new_manifest("incremental", False)
+        sharepoint = FakeSharePoint()
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "Bill.xlsx"
             path.write_bytes(b"excel-bytes")
-            sync_main._record_export(manifest, cfg, path, 7, None, None)
-            self.assertEqual(manifest["files"][0]["source_rows"], 7)
-            self.assertEqual(len(manifest["files"][0]["sha256"]), 64)
+            sync_main._record_export(manifest, cfg, path, 7, "04/2026/08", None)
+            sync_main._upload_manifest(manifest, sharepoint, "drive")
 
-    def test_bootstrap_signature_and_state_round_trip(self):
-        reports = [ReportConfig(key="bill", enabled=True, name="Bill", folder="04")]
-        signature = sync_main._bootstrap_signature(reports, date(2020, 1, 1), 24)
-        sharepoint = FakeSharePoint()
+        self.assertEqual(manifest["files"][0]["source_rows"], 7)
+        self.assertEqual(len(manifest["files"][0]["sha256"]), 64)
+        self.assertEqual(len(sharepoint.uploaded_json), 1)
+        self.assertIn("_sync_runs/", sharepoint.uploaded_json[0][1])
 
-        self.assertIsNone(
-            sync_main._load_bootstrap_state(sharepoint, "drive", signature, False)
-        )
-        sync_main._save_bootstrap_state(
-            sharepoint,
-            "drive",
-            signature,
-            date(2019, 12, 31),
-            2,
-            False,
-        )
-        state = sync_main._load_bootstrap_state(
-            sharepoint,
-            "drive",
-            signature,
-            False,
-        )
-        self.assertEqual(state["next_cursor_end"], "2019-12-31")
-        self.assertIsNone(
-            sync_main._load_bootstrap_state(sharepoint, "drive", signature, True)
-        )
-
-    def test_changed_bootstrap_signature_is_ignored(self):
-        sharepoint = FakeSharePoint(
-            state={"signature": {"report_keys": ["old"]}, "completed": False}
-        )
-        state = sync_main._load_bootstrap_state(
-            sharepoint,
-            "drive",
-            {"report_keys": ["new"]},
-            False,
-        )
-        self.assertIsNone(state)
-
-
-class BootstrapTests(unittest.TestCase):
-    def test_empty_bootstrap_partition_stops_and_records_progress(self):
-        cfg = ReportConfig(key="visit", enabled=True, name="Visit", folder="01")
-        mobiwork = FakeMobiWork(range_records=[])
-        manifest = sync_main._new_manifest("bootstrap", True)
-        yesterday = datetime.now(sync_main.VN_TZ).date() - timedelta(days=1)
-
-        sync_main.run_bootstrap(
-            [cfg],
-            mobiwork,
-            None,
-            None,
-            True,
-            1,
-            yesterday,
-            False,
-            manifest,
-        )
-
-        self.assertEqual(manifest["bootstrap"]["partitions_processed"], 1)
-        self.assertEqual(len(mobiwork.range_calls), 1)
-
-    def test_completed_checkpoint_skips_rescan(self):
-        cfg = ReportConfig(key="visit", enabled=True, name="Visit", folder="01")
-        signature = sync_main._bootstrap_signature([cfg], date(2020, 1, 1), 24)
-        sharepoint = FakeSharePoint(
-            state={
-                "signature": signature,
-                "completed": True,
-                "next_cursor_end": "2019-12-31",
-                "consecutive_empty_months": 24,
-            }
-        )
-        manifest = sync_main._new_manifest("bootstrap", False)
-
-        sync_main.run_bootstrap(
-            [cfg],
-            FakeMobiWork(),
-            sharepoint,
-            "drive",
-            False,
-            24,
-            date(2020, 1, 1),
-            False,
-            manifest,
-        )
-
-        self.assertEqual(manifest["bootstrap"]["checkpoint"], "already_complete")
-
-
-class RunOrchestrationTests(unittest.TestCase):
-    def test_run_bootstrap_success_writes_and_uploads_manifest(self):
-        cfg = ReportConfig(key="visit", enabled=True, name="Visit", folder="01")
-        sharepoint = FakeSharePoint()
-        previous_cwd = Path.cwd()
+    def test_write_manifest_round_trip(self):
+        manifest = sync_main._new_manifest("incremental", True)
+        previous = Path.cwd()
         with tempfile.TemporaryDirectory() as temp_dir:
             try:
+                import os
+
                 os.chdir(temp_dir)
-                with (
-                    patch.object(sync_main, "enabled_reports", return_value=[cfg]),
-                    patch.object(
-                        sync_main,
-                        "build_clients",
-                        return_value=(FakeMobiWork(), sharepoint, "drive"),
-                    ),
-                    patch.object(sync_main, "run_bootstrap"),
-                ):
-                    result = sync_main.run(
-                        "bootstrap", 1, False, 24, "2000-01-01", False
-                    )
-                saved = json.loads(
-                    Path("output/sync_manifest.json").read_text(encoding="utf-8")
-                )
+                path = sync_main._write_manifest(manifest)
+                saved = json.loads(path.read_text(encoding="utf-8"))
             finally:
-                os.chdir(previous_cwd)
-
-        self.assertEqual(result["status"], "success")
-        self.assertEqual(saved["file_count"], 0)
-        self.assertTrue(any("_sync_runs/" in item[1] for item in sharepoint.uploaded_json))
-
-    def test_run_failure_writes_failure_manifest(self):
-        previous_cwd = Path.cwd()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            try:
-                os.chdir(temp_dir)
-                with (
-                    patch.object(
-                        sync_main,
-                        "enabled_reports",
-                        side_effect=RuntimeError("broken config"),
-                    ),
-                    self.assertRaisesRegex(RuntimeError, "broken config"),
-                ):
-                    sync_main.run(
-                        "bootstrap", 1, True, 24, "2000-01-01", False
-                    )
-                saved = json.loads(
-                    Path("output/sync_manifest.json").read_text(encoding="utf-8")
-                )
-            finally:
-                os.chdir(previous_cwd)
-
-        self.assertEqual(saved["status"], "failed")
-        self.assertIn("broken config", saved["error"])
-
-    def test_incremental_is_rejected_by_core_module(self):
-        with self.assertRaisesRegex(ValueError, "run_all_reports.py"):
-            sync_main.run("incremental", 1, True, 24, "2000-01-01", False)
-
-    def test_invalid_mode_is_rejected(self):
-        with self.assertRaises(ValueError):
-            sync_main.run("invalid", 1, True, 24, "2000-01-01", False)
+                os.chdir(previous)
+        self.assertEqual(saved["run_id"], manifest["run_id"])
+        self.assertEqual(saved["mode"], "incremental")
 
 
 if __name__ == "__main__":

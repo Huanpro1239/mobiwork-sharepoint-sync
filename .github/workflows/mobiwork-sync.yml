@@ -3,16 +3,8 @@ name: MobiWork DMS Sync
 on:
   workflow_dispatch:
     inputs:
-      sync_mode:
-        description: "incremental = refresh selected dates; bootstrap = resumable history load"
-        required: true
-        type: choice
-        options:
-          - incremental
-          - bootstrap
-        default: incremental
       sync_scope:
-        description: "Incremental target: today, yesterday, or previous N days"
+        description: "Target: today, yesterday, or previous N days"
         required: true
         type: choice
         options:
@@ -29,11 +21,6 @@ on:
         required: true
         type: boolean
         default: true
-      reset_bootstrap_state:
-        description: "Bootstrap only: intentionally restart history from yesterday"
-        required: true
-        type: boolean
-        default: false
   schedule:
     - cron: "5 * * * *"
       timezone: "Asia/Ho_Chi_Minh"
@@ -194,12 +181,8 @@ jobs:
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
-          SYNC_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_mode || 'incremental' }}
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-          BOOTSTRAP_EMPTY_MONTHS: "24"
-          BOOTSTRAP_FLOOR_DATE: "2000-01-01"
-          RESET_BOOTSTRAP_STATE: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_bootstrap_state || false }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_all_reports.py
 
@@ -221,13 +204,13 @@ jobs:
               "## MobiWork DMS Sync",
               "",
               f"- Status: **{data.get('status', 'unknown')}**",
-              f"- Mode: `{data.get('mode', '')}`",
               f"- Sync scope: `{data.get('sync_scope', '')}`",
               f"- Run ID: `{data.get('run_id', '')}`",
               f"- Successful report executions: **{data.get('successful_report_count', 0)}**",
               f"- Failed report executions: **{data.get('failed_report_count', 0)}**",
               f"- Uploaded files: **{data.get('file_count', len(data.get('files', [])))}**",
-              f"- Uploaded source rows: **{data.get('source_row_count', 0):,}**",
+              f"- Current-run source rows: **{data.get('source_row_count', 0):,}**",
+              f"- Rows stored in written monthly masters: **{data.get('master_row_count', 0):,}**",
           ]
           if data.get("error"):
               lines.append(f"- Error summary: `{data['error']}`")
@@ -238,8 +221,8 @@ jobs:
           if results:
               lines.extend([
                   "",
-                  "| Date | Report | Status | Rows | Verification | File |",
-                  "|---|---|---|---:|---|---|",
+                  "| Date | Report | Status | Source rows | Master rows | Verification | File |",
+                  "|---|---|---|---:|---:|---|---|",
               ])
               for item in results:
                   filename = item.get("filename", "")
@@ -248,10 +231,11 @@ jobs:
                   lines.append(
                       f"| {item.get('target_date', '')} | {item.get('report', '')} | "
                       f"{item.get('status', '')} | {int(item.get('source_rows', 0)):,} | "
+                      f"{int(item.get('master_rows', 0)):,} | "
                       f"{item.get('verification_mode', '')} | {file_cell} |"
                   )
                   if item.get("error"):
-                      lines.append(f"|  | ↳ error |  |  |  | `{item['error']}` |")
+                      lines.append(f"|  | ↳ error |  |  |  |  | `{item['error']}` |")
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")

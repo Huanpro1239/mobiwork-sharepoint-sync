@@ -33,8 +33,7 @@ MobiWorkDMS/
 ├── 02_MoMoiKhachHang/YYYY/MM/MoMoiKhachHang_YYYY-MM.xlsx
 ├── 03_DonDatHang/YYYY/MM/DonDatHang_YYYY-MM.xlsx
 ├── 04_DonBanHang/YYYY/MM/DonBanHang_YYYY-MM.xlsx
-├── _sync_runs/YYYY/MM/*.json
-└── _sync_state/bootstrap.json
+└── _sync_runs/YYYY/MM/*.json
 ```
 
 The hidden `_sync_date` column identifies the daily partition inside a monthly workbook. An hourly `today` run replaces only today's partition. The 09:00 run replaces only yesterday's partition. The canonical monthly filename does not change, so hourly execution does not create duplicate business workbooks.
@@ -49,13 +48,13 @@ Unrelated files are never removed by this cleanup matcher.
 
 ## Incremental scopes
 
-`src/run_all_reports.py` supports:
+`src/run_all_reports.py` is the only runtime sync entry point and supports:
 
 - `today`: current Vietnam calendar day; automatic hourly scope.
 - `yesterday`: previous Vietnam calendar day; automatic 09:00 scope.
-- `lookback`: previous N days; manual recovery/backfill.
+- `lookback`: previous N days; manual recovery/backfill, limited to 31 days.
 
-Manual workflow dispatch defaults to `today`.
+Manual workflow dispatch defaults to `today`. There is no legacy bootstrap/history-file runtime path, so normal or manual execution cannot intentionally generate `History_*.xlsx` again.
 
 ## Enabled reports
 
@@ -81,7 +80,7 @@ DonHang   -> ma_phieu
 ChiTietSP -> ma_phieu + stt
 ```
 
-Historical MobiWork data does not always provide `stt`. The exporter therefore preserves every valid source `stt` and assigns only missing/invalid line numbers to the first unused positive integer in source order. Duplicate valid `stt` values from MobiWork are still rejected; the fallback never hides a real duplicate-key defect.
+Historical MobiWork data does not always provide `stt`. The exporter preserves every valid source `stt` and assigns only missing/invalid line numbers to the first unused positive integer in source order. Duplicate valid `stt` values from MobiWork are still rejected; the fallback never hides a real duplicate-key defect.
 
 Business codes such as `ma_sp = "00008"` remain text. Numeric values are normalized and UTC timestamps are converted to `Asia/Ho_Chi_Minh` before Excel export.
 
@@ -120,13 +119,11 @@ Pull requests and pushes to `main` run:
 
 Production hourly runs use a lighter compile/config preflight to keep latency low; full tests remain a change-control gate in CI.
 
-## Manual and historical modes
+## Manual recovery
 
-Normal production uses `incremental`. Manual incremental runs can select `today`, `yesterday`, or `lookback`.
+Manual runs use the same monthly-master implementation as automatic production. Select `today`, `yesterday`, or `lookback`; use `dry_run=true` to inspect generated Excel without SharePoint writes.
 
-A separate manual `bootstrap` mode remains available for resumable historical loading and uses `_sync_state/bootstrap.json`. It is not used by either automatic schedule.
-
-A manual dry run fetches/exports without SharePoint writes and stores short-lived GitHub artifacts.
+For corrections older than 31 days, extend the monthly-master backfill capability through reviewed code rather than reintroducing legacy history-file exports.
 
 ## Security
 
