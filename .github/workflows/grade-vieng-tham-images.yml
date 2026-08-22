@@ -8,6 +8,13 @@ on:
       - src/grade_visit_images.py
       - tests/test_grade_visit_images.py
       - .github/workflows/grade-vieng-tham-images.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - src/grade_visit_images.py
+      - tests/test_grade_visit_images.py
+      - .github/workflows/grade-vieng-tham-images.yml
   workflow_dispatch:
     inputs:
       max_rows:
@@ -35,7 +42,7 @@ jobs:
       PYTHONUNBUFFERED: "1"
       GRADE_MODEL: openai/gpt-4o-mini
       GRADE_BATCH_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_size || '20' }}
-      # Push is a safety smoke-test. Manual dispatch can grade all remaining rows.
+      # Push/PR is a safety smoke-test. Manual dispatch can grade all remaining rows.
       GRADE_MAX_ROWS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_rows || '20' }}
       GRADE_OUTPUT_PATH: results/vieng_tham_grading.csv
       GRADE_STOP_ON_RATE_LIMIT: "true"
@@ -44,7 +51,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
 
       - name: Setup Python
@@ -66,7 +73,7 @@ jobs:
         run: python src/grade_visit_images.py
 
       - name: Commit grading checkpoint
-        if: ${{ always() }}
+        if: ${{ always() && github.event_name != 'pull_request' }}
         shell: bash
         run: |
           set -euo pipefail
