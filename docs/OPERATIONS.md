@@ -9,15 +9,7 @@ HH:05 every hour -> SYNC_SCOPE=today
 09:00 every day  -> SYNC_SCOPE=yesterday
 ```
 
-Both scheduled runs use:
-
-```text
-SYNC_MODE=incremental
-LOOKBACK_DAYS=1
-DRY_RUN=false
-```
-
-Minute `05` reduces top-of-hour queue pressure. The shared concurrency group allows only one production writer at a time, so the 09:05 current-day run waits if the 09:00 D-1 finalization is still active.
+Scheduled runs use `LOOKBACK_DAYS=1` and `DRY_RUN=false`. Minute `05` reduces top-of-hour queue pressure. The shared concurrency group allows only one production writer at a time, so the 09:05 current-day run waits if the 09:00 D-1 finalization is still active.
 
 ## Monthly master behavior
 
@@ -34,23 +26,23 @@ A hidden `_sync_date` column identifies the daily partition. Normal hourly execu
 
 If the canonical master is missing, that report is rebuilt from day 01 of the month through the target date. This first rebuild can take substantially longer than a normal hourly update, especially for paginated Customer data.
 
-After a successful upload and semantic verification, cleanup removes only legacy files that match the same report/month:
+After successful upload and semantic verification, cleanup removes only legacy files that match the same report/month:
 
-- deterministic daily files `Report_YYYY-MM-DD.xlsx`;
-- old `Report_History_*.xlsx` files;
+- `Report_YYYY-MM-DD.xlsx`;
+- `Report_History_*.xlsx`;
 - orphan `__sync_tmp_*`, `__sync_backup_*`, and `__sync_failed_*` staging files.
 
-Cleanup never runs before the canonical master has been verified.
+Cleanup never runs before the canonical master has been verified. The runtime no longer contains a bootstrap/history-file mode, so cleanup cannot be undone later by an old code path.
 
 ## Incremental scopes
 
 ```text
 today      -> current Vietnam date
 yesterday  -> previous Vietnam date
-lookback   -> previous N days
+lookback   -> previous N days, maximum 31
 ```
 
-Automatic hourly runs use `today`; automatic 09:00 runs use `yesterday`. Use `lookback` only for controlled correction/backfill.
+Automatic hourly runs use `today`; automatic 09:00 runs use `yesterday`. Use `lookback` only for controlled correction/backfill. All scopes use the same monthly-master implementation.
 
 ## Execution policy
 
@@ -88,21 +80,18 @@ SharePoint/Office may rewrite OOXML package metadata, so `.xlsx` byte size and S
 
 For Excel, production verifies the downloaded workbook semantically using:
 
-- worksheet order and names;
+- worksheet names/order;
 - every non-empty cell coordinate;
 - cell data type;
 - cell value.
 
-Semantic mismatch fails closed. JSON/audit files continue to use ordinary byte/size integrity checks.
-
-Existing canonical Excel files are replaced through staged upload/promotion with rollback protection.
+Semantic mismatch fails closed. JSON/audit files continue to use ordinary byte/size integrity checks. Existing canonical Excel files are replaced through staged upload/promotion with rollback protection.
 
 ## Manual refresh
 
 Latest current-day data:
 
 ```text
-sync_mode=incremental
 sync_scope=today
 lookback_days=1
 dry_run=false
@@ -111,22 +100,20 @@ dry_run=false
 Retry/finalize previous day:
 
 ```text
-sync_mode=incremental
 sync_scope=yesterday
 lookback_days=1
 dry_run=false
 ```
 
-Older correction:
+Older correction, up to 31 days:
 
 ```text
-sync_mode=incremental
 sync_scope=lookback
 lookback_days=N
 dry_run=false
 ```
 
-For inspection without SharePoint writes, set `dry_run=true`.
+For inspection without SharePoint writes, set `dry_run=true`. Do not reintroduce `History_*.xlsx` exports for older recovery; add a reviewed monthly-master backfill capability instead if a longer horizon becomes necessary.
 
 ## Production preflight vs CI
 
@@ -192,16 +179,6 @@ When a production run fails:
 
 A report that failed before upload keeps its existing SharePoint master unchanged. Other reports can still complete successfully.
 
-## Historical bootstrap
-
-`bootstrap` remains a manual, resumable historical mode and is not used by automatic hourly/09:00 production schedules. Its checkpoint is:
-
-```text
-_sync_state/bootstrap.json
-```
-
-Use `reset_bootstrap_state=true` only when intentionally restarting a historical scan.
-
 ## Authentication
 
 ```text
@@ -228,9 +205,10 @@ Before merging a production change:
 1. CI must be green.
 2. Confirm hourly schedule is `5 * * * *` with `Asia/Ho_Chi_Minh`.
 3. Confirm D-1 finalization is `0 9 * * *` with `Asia/Ho_Chi_Minh`.
-4. Confirm scheduled runs remain incremental and `dry_run=false`.
+4. Confirm scheduled runs remain non-dry-run.
 5. Confirm all four expected reports remain enabled.
 6. Confirm monthly-master partition replacement tests pass.
 7. Confirm semantic verification tests pass.
 8. Confirm report-isolation tests pass.
-9. For data-contract changes, run a production validation before considering the issue closed.
+9. Confirm no workflow or runtime path can generate legacy daily/history business workbooks.
+10. For data-contract changes, run production validation before considering the issue closed.
