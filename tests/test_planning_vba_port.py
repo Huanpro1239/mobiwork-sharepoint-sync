@@ -26,7 +26,9 @@ class TestPlanningVbaPort(unittest.TestCase):
 
     def test_sales_actual_filters_and_ka_mt_merge(self):
         totals = aggregate_sales_actual(
-            [{"A": "KA", "O": "1301", "Q": 24}],
+            # BCBANHANG source 1 uses 2xxxxxxxx codes and converts them to
+            # the 1xxxxxxxx destination code before aggregation.
+            [{"A": "KA", "O": "2301", "Q": 24}],
             [
                 {"A": "MT", "O": "1301", "Q": 12, "K": "C001", "LoaiHoaDon": "Hóa đơn bán"},
                 {"A": "KA", "O": "1301", "Q": 999, "K": "VKD3", "LoaiHoaDon": "Hoa don ban"},
@@ -35,6 +37,7 @@ class TestPlanningVbaPort(unittest.TestCase):
         )
         converted = sales_channels_in_cases("1301", ["KA/MT"], totals, 12)
         self.assertEqual(converted["KA/MT"], 3)
+        self.assertNotIn(("2301", "KA"), totals)
 
     def test_material_stock_numeric_code_last_duplicate_wins(self):
         result = material_stock_last(
