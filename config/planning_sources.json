@@ -2,12 +2,12 @@
   "planning_master_path": "Tinh san xuat Mua hang 2027/File tính kế hoạch - BẢN CẢI TIẾN_V2.xlsm",
   "shadow_output_folder": "Tinh san xuat Mua hang 2027/_PlanningEngine/shadow",
   "sources": {
-    "ton_thuc_te_hien_tai": {"path": "Chạy chương trình/Cập Nhập Tồn Công Ty/Ton Kho Thuc te hien tai.xlsx"},
-    "ton_vikoda": {"path": "Chạy chương trình/Cập Nhập Tồn Công Ty/Ton Vikoda.xlsm", "sheet": "Sheet1", "start_row": 11},
+    "ton_thuc_te_hien_tai": {"path": "Chạy chương trình/Cập Nhật Tồn Công Ty/Ton Kho Thuc te hien tai.xlsx"},
+    "ton_vikoda": {"path": "Chạy chương trình/Cập Nhật Tồn Công Ty/Ton Vikoda.xlsm", "sheet": "Sheet1", "start_row": 11},
     "hang_nhap_truoc": {"path": "Chạy chương trình/Tổng hợp demand/Hàng nhập trước.xlsx", "sheet": "SUM", "start_row": 5},
-    "ton_vkd": {"path": "Chạy chương trình/Cập Nhập Tồn Công Ty/Ton VKD.xlsm", "sheet": "Sheet1", "start_row": 11},
-    "ton_ban_duoc_vikoda": {"path": "Chạy chương trình/Cập Nhập Tồn Công Ty/Ton kho ban duoc Vikoda.xlsm", "sheet": "Sheet1", "start_row": 11},
-    "ton_ban_duoc_vkd": {"path": "Chạy chương trình/Cập Nhập Tồn Công Ty/Ton kho ban duoc VKD.xlsm", "sheet": "Sheet1", "start_row": 11},
+    "ton_vkd": {"path": "Chạy chương trình/Cập Nhật Tồn Công Ty/Ton VKD.xlsm", "sheet": "Sheet1", "start_row": 11},
+    "ton_ban_duoc_vikoda": {"path": "Chạy chương trình/Cập Nhật Tồn Công Ty/Ton kho ban duoc Vikoda.xlsm", "sheet": "Sheet1", "start_row": 11},
+    "ton_ban_duoc_vkd": {"path": "Chạy chương trình/Cập Nhật Tồn Công Ty/Ton kho ban duoc VKD.xlsm", "sheet": "Sheet1", "start_row": 11},
     "ton_nvl": {"path": "Chạy chương trình/Tổng hợp demand/Ton VT.xlsx"},
     "xnt_vikoda": {"path": "Chạy chương trình/Tổng hợp demand/XNT ke toan Vikoda.xlsm", "sheet": "Sheet1", "start_row": 11},
     "xnt_vkd": {"path": "Chạy chương trình/Tổng hợp demand/XNT ke toan VKD.xlsm", "sheet": "Sheet1", "start_row": 11},
@@ -17,7 +17,7 @@
     "ban_hang": {"path": "Chạy chương trình/Tổng hợp demand/Bao cao ban hang.xlsm", "sheet": "Sheet1", "start_row": 10},
     "xuat_kho": {"path": "Chạy chương trình/Tổng hợp demand/Xuat kho ERP.xlsm", "sheet": "REPORT_XUATBANHANG", "start_row": 6},
     "ban_hang_vikoda": {"path": "Chạy chương trình/Tổng hợp demand/Bao cao ban hang Vikoda.xlsm", "sheet": "Sheet1", "start_row": 10},
-    "po_mua_hang": {"path": "Chạy chương trình/Data Mua Hang/BCTheodoiDMHANG.xlsm", "sheet": "REPORT_DONMUAHANG", "start_row": 6},
+    "po_mua_hang": {"path": "Chạy chương trình/Data mua hang/BCTheodoiDMHANG.xlsm", "sheet": "REPORT_DONMUAHANG", "start_row": 6},
     "xuat_kho_vikoda": {"path": "Chạy chương trình/Tổng hợp demand/Xuat kho ERP Vikoda.xlsm", "sheet": "REPORT_XUATBANHANG", "start_row": 6}
   }
 }
