@@ -8,6 +8,15 @@ on:
         required: true
         type: boolean
         default: true
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/planning-engine.yml"
+      - "config/planning_sources.json"
+      - "src/planning/**"
+      - "src/run_planning_engine.py"
+      - "src/sharepoint.py"
   schedule:
     # Vietnam local time: 07:10, 11:10, 14:10, 17:10 Monday-Saturday.
     - cron: "10 7,11,14,17 * * 1-6"
