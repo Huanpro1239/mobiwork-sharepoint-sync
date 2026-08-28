@@ -3,16 +3,44 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import main as core
 from image_sync import ImageSyncConfig, run_image_sync
-from mobiwork import MobiWorkClient
+from mobiwork import MobiWorkClient, ReportConfig
 from sharepoint_semantic import SemanticSharePointClient
 
 
 LOG = logging.getLogger("mobiwork_sync")
+
+
+class DailyRangeMobiWorkClient(MobiWorkClient):
+    """Fetch image-source ranges as daily partitions.
+
+    The normal report pipeline already queries MobiWork one day at a time. Image sync
+    can backfill almost two calendar months on its first run, so sending that whole
+    range in one VisitData request is unnecessarily large and can be rejected or time
+    out. Split it into deterministic daily calls, while later incremental runs still
+    require only the one-day overlap plus today.
+    """
+
+    def fetch_report_range(
+        self,
+        cfg: ReportConfig,
+        from_date: date,
+        to_date: date,
+    ) -> list[dict]:
+        if to_date < from_date:
+            raise ValueError("to_date must be on or after from_date")
+
+        records: list[dict] = []
+        current = from_date
+        while current <= to_date:
+            LOG.info("Image metadata fetch date: %s", current.isoformat())
+            records.extend(super().fetch_report_range(cfg, current, current))
+            current += timedelta(days=1)
+        return records
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -53,10 +81,11 @@ def run() -> dict:
             "customer_field": config.customer_field,
             "sequence_field": config.sequence_field,
             "require_ghi_ton": config.require_ghi_ton,
+            "metadata_fetch_mode": "daily_partitions",
         },
     }
 
-    mobiwork = MobiWorkClient.from_env()
+    mobiwork = DailyRangeMobiWorkClient.from_env()
     sharepoint = None
     drive_id = None
 
