@@ -7,7 +7,7 @@ from pathlib import Path
 
 from planning.config import PlanningConfig
 from planning.engine import run_shadow
-from sharepoint import SharePointClient
+from sharepoint_semantic import SemanticSharePointClient
 
 
 def main() -> int:
@@ -17,7 +17,7 @@ def main() -> int:
     dry_run = os.environ.get("DRY_RUN", "false").strip().lower() in {"1", "true", "yes"}
 
     config = PlanningConfig.load(config_path)
-    client = SharePointClient.from_env()
+    client = SemanticSharePointClient.from_env()
     site_id = client.get_site_id()
     drive_id = os.environ.get("SHAREPOINT_DRIVE_ID") or client.get_drive_id(site_id)
 
