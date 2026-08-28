@@ -87,6 +87,8 @@ def build_rgb_daily_schedule(
 
         scheduled = sum(day_quantities.values())
         remaining = max(0.0, planned - scheduled)
+        if remaining < 1e-6:
+            remaining = 0.0
         auto_start_day = int(start_shift // shifts_per_day)
         output.append(
             {
@@ -100,6 +102,7 @@ def build_rgb_daily_schedule(
                 "Ngay bat dau auto": date.fromordinal(
                     first.toordinal() + auto_start_day
                 ),
+                "SL da xep": scheduled,
                 "SL chua xep": remaining,
                 **day_quantities,
             }
