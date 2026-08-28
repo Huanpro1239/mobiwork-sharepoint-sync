@@ -430,6 +430,11 @@ def run_shadow(
         plan_year=plan_year,
         plan_month=plan_month,
     )
+    daily_auto_rows = [
+        row
+        for row in daily_auto_rows
+        if clean_text(row.get("Chuyen")) in {"KHS", "PET 9000", "Galon"}
+    ]
     rgb_daily_rows = build_rgb_daily_schedule(
         weekly_rows,
         plan_year=plan_year,
