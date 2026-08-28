@@ -30,6 +30,7 @@ from .formula_port import (
     standardize_flat_bom,
 )
 from .normalize import clean_text, normalize_code, to_number
+from .rgb_scheduler import build_rgb_daily_schedule
 from .source_refresh import (
     find_column_by_header,
     first_sheet_name,
@@ -429,12 +430,18 @@ def run_shadow(
         plan_year=plan_year,
         plan_month=plan_month,
     )
+    rgb_daily_rows = build_rgb_daily_schedule(
+        weekly_rows,
+        plan_year=plan_year,
+        plan_month=plan_month,
+    )
+    daily_auto_rows.extend(rgb_daily_rows)
     unsupported_weekly_rows = [
         row
         for row in weekly_rows
         if to_number(row.get("SL SX tron me/ca")) > 0
         and clean_text(row.get("Chuyen"))
-        not in {"KHS", "PET 9000", "Galon"}
+        not in {"KHS", "PET 9000", "Galon", "RGB"}
     ]
 
     allocation_start = max(
@@ -485,15 +492,16 @@ def run_shadow(
         "purchase_rows": len(purchase_rows),
         "weekly_production_rows": len(weekly_rows),
         "auto_daily_rows": len(daily_auto_rows),
+        "rgb_auto_rows": len(rgb_daily_rows),
         "daily_material_rows": len(daily_material_rows),
         "unsupported_weekly_rows": len(unsupported_weekly_rows),
         "plan_month": plan_month,
         "plan_year": plan_year,
         "output_file": output_file.name,
         "scope": (
-            "V2 ports MRP/ABC/purchasing and formula-driven KHS/PET/Galon "
-            "production scheduling. Existing manually curated daily/RGB "
-            "schedule remains comparison-only and is not overwritten."
+            "V2 ports MRP/ABC/purchasing and formula-driven KHS/PET/Galon/RGB "
+            "production scheduling. Existing manually curated daily schedule "
+            "remains comparison-only and is not overwritten."
         ),
     }
     (output_dir / "planning_manifest.json").write_text(
