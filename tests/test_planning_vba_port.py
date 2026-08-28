@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import unittest
 
+from src.planning.source_refresh import material_stock_last
 from src.planning.vba_port import (
     aggregate_gui_kho,
+    aggregate_sales_actual,
     aggregate_xuat_kho,
     build_divisor_map,
     explode_bom,
@@ -12,6 +14,7 @@ from src.planning.vba_port import (
     nokho_col_d,
     nokho_col_e,
     purchase_suggestions,
+    sales_channels_in_cases,
     sum_two_divided_stocks,
 )
 
@@ -20,6 +23,30 @@ class TestPlanningVbaPort(unittest.TestCase):
     def test_divisor_first_duplicate_wins(self):
         rows = [{"C": "1301", "F": 24}, {"C": "1301", "F": 12}]
         self.assertEqual(build_divisor_map(rows)["1301"], 24)
+
+    def test_sales_actual_filters_and_ka_mt_merge(self):
+        totals = aggregate_sales_actual(
+            [{"A": "KA", "O": "1301", "Q": 24}],
+            [
+                {"A": "MT", "O": "1301", "Q": 12, "K": "C001", "LoaiHoaDon": "Hóa đơn bán"},
+                {"A": "KA", "O": "1301", "Q": 999, "K": "VKD3", "LoaiHoaDon": "Hoa don ban"},
+                {"A": "KA", "O": "1301", "Q": 999, "K": "C002", "LoaiHoaDon": "Tra hang"},
+            ],
+        )
+        converted = sales_channels_in_cases("1301", ["KA/MT"], totals, 12)
+        self.assertEqual(converted["KA/MT"], 3)
+
+    def test_material_stock_numeric_code_last_duplicate_wins(self):
+        result = material_stock_last(
+            [
+                {"B": "00123", "H": 10},
+                {"B": 123.0, "H": 15},
+                {"B": "ABC", "H": 99},
+            ],
+            [123, 456],
+        )
+        self.assertEqual(result["123"], 15)
+        self.assertIsNone(result["456"])
 
     def test_gui_kho_sum_and_code_map(self):
         source = aggregate_gui_kho([{"J": "2301", "AG": 10}, {"J": "2301", "AG": 5}])
