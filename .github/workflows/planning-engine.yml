@@ -53,12 +53,44 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
 
+      - name: Resolve Planning Shared Documents library
+        shell: bash
+        run: |
+          set -euo pipefail
+          SITE_ID=$(az rest \
+            --method get \
+            --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' \
+            --query id -o tsv)
+
+          DRIVES=$(az rest \
+            --method get \
+            --url "https://graph.microsoft.com/v1.0/sites/$SITE_ID/drives" \
+            --output json)
+
+          DRIVE_ID=$(echo "$DRIVES" | jq -r '
+            .value[]
+            | select(
+                (.webUrl | ascii_downcase | contains("/shared%20documents"))
+                or (.webUrl | ascii_downcase | contains("/shared documents"))
+              )
+            | .id
+          ' | head -n 1)
+
+          if [ -z "$DRIVE_ID" ] || [ "$DRIVE_ID" = "null" ]; then
+            echo "::error::Could not resolve the Planning /Shared Documents library."
+            exit 1
+          fi
+
+          echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
+          echo "Planning Shared Documents drive resolved"
+
       - name: Run planning shadow engine
         env:
           PYTHONPATH: src
           SHAREPOINT_HOST: vikodacomvn.sharepoint.com
           SHAREPOINT_SITE_PATH: /sites/Planning
-          SHAREPOINT_LIBRARY: Documents
+          SHAREPOINT_LIBRARY: "Tài liệu"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SHAREPOINT_TIMEOUT_SECONDS: "120"
           SHAREPOINT_MAX_RETRIES: "6"
           PLANNING_CONFIG: config/planning_sources.json
