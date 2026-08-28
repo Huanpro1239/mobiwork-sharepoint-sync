@@ -107,6 +107,37 @@ def _sales_total_map(sales_rows: list[dict[str, Any]]) -> dict[str, float]:
     return output
 
 
+def _unique_codes(
+    rows: list[dict[str, Any]], column: str = "A"
+) -> list[str]:
+    """Return destination keys in workbook order with duplicates removed."""
+    output: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        code = normalize_code(row.get(column))
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        output.append(code)
+    return output
+
+
+def _validate_destination_codes(
+    reference: list[str], **destinations: list[str]
+) -> None:
+    reference_set = set(reference)
+    if not reference_set:
+        raise RuntimeError("FC thang nay destination product list is empty")
+    for name, codes in destinations.items():
+        if set(codes) != reference_set:
+            missing = sorted(reference_set - set(codes))
+            extra = sorted(set(codes) - reference_set)
+            raise RuntimeError(
+                f"Planning destination code list {name!r} diverged from FC thang nay; "
+                f"missing={missing}, extra={extra}"
+            )
+
+
 def run_shadow(
     config: PlanningConfig,
     client: SharePointClient,
@@ -130,11 +161,22 @@ def run_shadow(
     master = download(config.planning_master_path)
     dmsp = _sheet_rows(master, "DMSP", 2, 14)
     divisors = build_divisor_map(dmsp)
-    product_codes = [
-        normalize_code(row.get("C"))
-        for row in dmsp
-        if normalize_code(row.get("C"))
-    ]
+
+    # VBA refresh procedures iterate the code list already present on each
+    # destination sheet. DMSP!C is a production/mapping key and contains grouped
+    # duplicates, so it must never be used as the universal destination list.
+    product_codes = _unique_codes(
+        _sheet_rows(master, "FC thang nay", 4, 1)
+    )
+    nokho_codes = _unique_codes(_sheet_rows(master, "Nokho", 2, 1))
+    tinh_codes = _unique_codes(_sheet_rows(master, "Tinh ung hang", 2, 1))
+    weekly_config = _sheet_rows(master, "Ke hoach SX tuan", 4, 10)
+    weekly_codes = _unique_codes(weekly_config)
+    _validate_destination_codes(
+        product_codes,
+        Nokho=nokho_codes,
+        Tinh_ung_hang=tinh_codes,
+    )
 
     cache: dict[str, bytes] = {}
     for key, source in config.sources.items():
@@ -199,7 +241,7 @@ def run_shadow(
     # Call_All step 3: No kho D/E/F/G.
     no_d = nokho_col_d(
         _sheet_rows(cache["hang_nhap_truoc"], "SUM", 5, 21),
-        product_codes,
+        nokho_codes,
     )
     no_e = nokho_col_e(
         _sheet_rows(
@@ -208,7 +250,7 @@ def run_shadow(
             5,
             15,
         ),
-        product_codes,
+        nokho_codes,
     )
     ton_vikoda_rows = _sheet_rows(
         cache["ton_vikoda"], "Sheet1", 11, 13
@@ -220,7 +262,7 @@ def run_shadow(
             if to_number(divisors.get(code))
             else 0.0
         )
-        for code in product_codes
+        for code in nokho_codes
     }
     no_g = nokho_balance(no_d, no_e, no_f)
 
@@ -235,21 +277,21 @@ def run_shadow(
 
     # Call_All step 6: Tinh ung hang D/E/F.
     tinh_d = _divided_map(
-        product_codes,
+        tinh_codes,
         _sheet_rows(cache["ton_vikoda"], "Sheet1", 11, 13),
         divisors,
         "M",
         "none",
     )
     tinh_e = _divided_map(
-        product_codes,
+        tinh_codes,
         _sheet_rows(cache["ton_vkd"], "Sheet1", 11, 13),
         divisors,
         "M",
         "2to1",
     )
     tinh_f = sum_two_divided_stocks(
-        product_codes,
+        tinh_codes,
         _sheet_rows(
             cache["ton_ban_duoc_vikoda"], "Sheet1", 11, 13
         ),
@@ -283,7 +325,7 @@ def run_shadow(
             5,
             15,
         ),
-        product_codes,
+        weekly_codes,
     )
 
     stock_rows = [
@@ -322,7 +364,7 @@ def run_shadow(
     actual_sales = _sales_total_map(sales_cases)
 
     projection_rows = build_finished_goods_projection(
-        product_codes,
+        tinh_codes,
         stock_vikoda=tinh_d,
         stock_vkd=tinh_e,
         plant_stock=tinh_f,
@@ -410,9 +452,6 @@ def run_shadow(
             for code in special_group
         )
 
-    weekly_config = _sheet_rows(
-        master, "Ke hoach SX tuan", 4, 10
-    )
     weekly_rows = build_weekly_production_plan(
         weekly_config,
         plan_month=plan_month,
@@ -488,6 +527,9 @@ def run_shadow(
         "generated_at_vietnam": now_vietnam.isoformat(),
         "planning_master_path": config.planning_master_path,
         "product_count": len(product_codes),
+        "product_code_source": "FC thang nay!A4:A",
+        "destination_code_lists_validated": True,
+        "weekly_product_count": len(weekly_codes),
         "sales_product_rows": len(sales_cases),
         "material_stock_rows": len(material_stock_rows),
         "open_po_rows": len(po_rows),
