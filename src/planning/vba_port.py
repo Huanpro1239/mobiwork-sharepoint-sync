@@ -192,11 +192,27 @@ def finished_goods_need(product_codes: Iterable[Any], stock_vikoda: Mapping[str,
     rows: list[dict[str, float | str]] = []
     for raw in product_codes:
         code = normalize_code(raw)
-        d = to_number(stock_vikoda.get(code)); e = to_number(stock_vkd.get(code)); f = to_number(plant_stock.get(code))
-        g = d + e - f
-        h = to_number(actual_sales.get(code)); i = to_number(forecast.get(code)); j = i - h - f
-        k = to_number(warehouse_debt.get(code)); l = j + k if j > 0 else k
-        rows.append({"code": code, "D_stock_vikoda": d, "E_stock_vkd": e, "F_plant_stock": f, "G_other_stock": g, "H_actual_sales": h, "I_forecast": i, "J_remaining": j, "K_warehouse_debt": k, "L_material_projection": l})
+        stock_vikoda_value = to_number(stock_vikoda.get(code))
+        stock_vkd_value = to_number(stock_vkd.get(code))
+        plant_stock_value = to_number(plant_stock.get(code))
+        other_stock = stock_vikoda_value + stock_vkd_value - plant_stock_value
+        actual_sales_value = to_number(actual_sales.get(code))
+        forecast_value = to_number(forecast.get(code))
+        remaining = forecast_value - actual_sales_value - plant_stock_value
+        warehouse_debt_value = to_number(warehouse_debt.get(code))
+        material_projection = remaining + warehouse_debt_value if remaining > 0 else warehouse_debt_value
+        rows.append({
+            "code": code,
+            "D_stock_vikoda": stock_vikoda_value,
+            "E_stock_vkd": stock_vkd_value,
+            "F_plant_stock": plant_stock_value,
+            "G_other_stock": other_stock,
+            "H_actual_sales": actual_sales_value,
+            "I_forecast": forecast_value,
+            "J_remaining": remaining,
+            "K_warehouse_debt": warehouse_debt_value,
+            "L_material_projection": material_projection,
+        })
     return rows
 
 
@@ -204,7 +220,8 @@ def explode_bom(bom_rows: Iterable[Row], finished_product_codes: Iterable[Any] |
     children: dict[str, list[tuple[str, str, float]]] = defaultdict(list)
     parent_names: dict[str, str] = {}
     for row in bom_rows:
-        parent = normalize_code(row.get("parent_code")); child = normalize_code(row.get("child_code"))
+        parent = normalize_code(row.get("parent_code"))
+        child = normalize_code(row.get("child_code"))
         if not parent or not child:
             continue
         parent_names[parent] = clean_text(row.get("parent_name"))
@@ -237,7 +254,8 @@ def explode_bom(bom_rows: Iterable[Row], finished_product_codes: Iterable[Any] |
 def material_requirement(finished_need: Mapping[str, float], flat_bom_rows: Iterable[Row]) -> dict[str, float]:
     result: dict[str, float] = defaultdict(float)
     for row in flat_bom_rows:
-        product = normalize_code(row.get("product_code")); material = normalize_code(row.get("material_code"))
+        product = normalize_code(row.get("product_code"))
+        material = normalize_code(row.get("material_code"))
         if product and material:
             result[material] += to_number(finished_need.get(product)) * to_number(row.get("qty_per_product"))
     return dict(result)
