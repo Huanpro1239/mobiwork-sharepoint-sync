@@ -1,95 +1,167 @@
-# Vikoda Planning Engine — implementation model
+# Vikoda Planning Engine — kiến trúc hiện tại
 
-## Target architecture
+## Trạng thái
+
+Planning Engine hiện chạy **production-shadow V2** trên GitHub Actions và SharePoint thật.
+
+Đã tự động hóa:
+
+- 9/9 bước refresh dữ liệu tương đương `Call_All` VBA;
+- forecast/tồn/nợ kho và `Tinh ung hang`;
+- BOM/MRP;
+- kế hoạch nhập NVL;
+- ABC;
+- kế hoạch mua theo MOQ/lead time/ngày thiếu;
+- kế hoạch sản xuất tuần;
+- lịch sản xuất ngày KHS/PET 9000/Galon/RGB;
+- phân bổ NVL theo lịch sản xuất ngày.
+
+Workbook `.xlsm` production hiện **không bị ghi đè**. Python publish kết quả vào thư mục shadow để đối chiếu và làm rollback an toàn.
+
+## Kiến trúc
 
 ```text
 SharePoint source workbooks
         |
         v
-Microsoft Graph download (existing SharePointClient)
+Microsoft Graph / SharePointClient
         |
         v
-Raw adapters (sheet/range contracts)
+source_refresh.py + vba_port.py
         |
         v
-Normalization layer
-  - product code 1 <-> 2 mapping
-  - pack divisor / unit conversion
-  - Vietnamese number/text normalization
+normalize.py
         |
         v
-Business engines
-  1. sales actual / FC comparison
-  2. finished-goods stock + warehouse debt
-  3. open PO + material stock
-  4. BOM explosion + material requirement
-  5. material shortage + purchase suggestion
-  6. production capacity / lot / calendar scheduler  [cutover phase]
+planning/domain/
+  demand.py
+  materials.py
+  purchasing.py
+  production.py
+        |
+        +--> rgb_scheduler.py
         |
         v
-Validation / parity tests / run manifest
+engine.py (orchestration only)
         |
-        +--> shadow xlsx/json on SharePoint
-        +--> later: canonical planning tables
+        v
+excel_io.py
+        |
+        v
+planning_shadow.xlsx + planning_manifest.json
+        |
+        v
+SemanticSharePointClient staged replacement
+        |
+        v
+SharePoint _PlanningEngine/shadow
 ```
 
-## Why shadow mode first
+## Boundary từng module
 
-The current workbook combines 40 VBA modules with complex dynamic-array formulas. A single-step rewrite has high operational risk. Shadow mode reads the same sources, calculates Python outputs, but writes to `_PlanningEngine/shadow` without changing the production workbook. Every migrated rule should pass parity checks against the existing workbook before cutover.
+| Module | Trách nhiệm |
+|---|---|
+| `config.py` | đọc source contract/đường dẫn |
+| `source_refresh.py` | đọc sheet/header/range theo cấu trúc nguồn |
+| `vba_port.py` | logic refresh tương đương VBA |
+| `normalize.py` | chuẩn hóa mã/số/text/quy đổi |
+| `domain/demand.py` | forecast và projection thành phẩm |
+| `domain/materials.py` | BOM, MRP, PO, phân bổ NVL ngày |
+| `domain/purchasing.py` | ABC, shortage, MOQ, lead time, mua hàng |
+| `domain/production.py` | KHSX tuần, KHS/PET/Galon scheduler |
+| `rgb_scheduler.py` | scheduler dây chuyền RGB |
+| `formula_port.py` | compatibility facade, không chứa logic mới |
+| `engine.py` | orchestration: download -> calculate -> output |
+| `excel_io.py` | Excel input/output |
 
-## Recommended migration sequence
+## Vì sao vẫn giữ shadow mode
 
-### Phase 1 — source/ETL parity
+Mục tiêu không còn là “port code cho chạy được”, mà là **chứng minh parity và độ ổn định vận hành** trước khi Python trở thành nguồn canonical.
 
-Port the 9 `Call_All` steps and BOM explosion. This removes all `Workbooks.Open` and manual update buttons from the critical data acquisition path.
+Shadow mode cho phép:
 
-Exit criteria:
+- dùng dữ liệu production thật;
+- chạy tự động theo lịch;
+- không phụ thuộc Excel Desktop;
+- đối chiếu kết quả Python với workbook hiện tại;
+- rollback tức thì vì file gốc chưa bị thay đổi.
 
-- same product/material row counts;
-- same duplicate-handling semantics;
-- stock/PO/sales figures match workbook values within configured tolerance;
-- no source file is opened by Excel Desktop.
+## Quality gate
 
-### Phase 2 — material planning parity
+Mỗi thay đổi code phải đi qua:
 
-Port stable formulas from:
+```text
+compile Python
+    -> Ruff
+    -> unit/regression tests
+    -> coverage gate
+    -> merge main
+    -> production-shadow run
+    -> manifest + SharePoint verification
+```
 
-- `Tinh ung hang` G:L;
-- `BOM` F:G;
-- `Ke hoach nhap NVL`;
-- `Mua hang` net-requirement / MOQ / lead-time rules;
-- `Phan bo NVL ngay` shortage-date logic;
-- `Phan tich ABC` classification.
+Business rules quan trọng có regression tests cho:
 
-Exit criteria: 10 consecutive production runs with no unexplained material/purchase variance.
-
-### Phase 3 — production scheduler
-
-Port `Ke hoach SX tuan`, `Helper_SX_2Line`, `Ke hoach SX ngay`, and `KHSX` into explicit scheduling rules:
-
-- line eligibility;
-- product groups and special lines;
-- capacity per shift/day;
-- lotsize/minimum batch;
-- current production / already-produced quantity;
-- Sunday and holiday rules;
-- two-line conflicts;
-- earliest required dates;
-- warehouse/finished-goods constraints.
-
-This layer should be implemented as an optimizer/scheduler, not as a direct translation of nested `LET` formulas.
-
-### Phase 4 — cutover
-
-1. Freeze the `.xlsm` as rollback-only.
-2. Publish canonical calculation tables from Python.
-3. Keep Excel Online files for reporting/printing only.
-4. Add failure notification and audit retention.
+- `Tinh ung hang` semantics;
+- demand theo Flat BOM;
+- ngày thiếu;
+- ABC;
+- MOQ/lead time;
+- ngày mua/đặt mua;
+- kế hoạch tuần;
+- Galon;
+- dynamic date columns;
+- RGB capacity/no-overlap.
 
 ## Automation
 
-`planning-engine.yml` runs at four Vietnam-local checkpoints Monday-Saturday and also supports manual dry runs. GitHub OIDC authenticates to Microsoft Entra; no Microsoft client secret is required in the workflow.
+`.github/workflows/planning-engine.yml` chạy giờ Việt Nam, Thứ Hai-Thứ Bảy:
 
-## Security
+- 07:10
+- 11:10
+- 14:10
+- 17:10
 
-Use the same least-privilege Entra application already used by the existing SharePoint sync. Ideally grant site-scoped permission only to `/sites/Planning`. Never commit access tokens, `.env` files, or source business workbooks to GitHub.
+Ngoài ra workflow chạy khi source planning trên `main` thay đổi và hỗ trợ manual `workflow_dispatch` với `dry_run`.
+
+GitHub OIDC xác thực Microsoft Entra; không dùng Microsoft client secret trong workflow.
+
+## Output contract
+
+SharePoint folder:
+
+```text
+Tinh san xuat Mua hang 2027/_PlanningEngine/shadow/
+```
+
+Canonical shadow files:
+
+```text
+planning_shadow.xlsx
+planning_manifest.json
+```
+
+Workbook shadow chứa các bảng từ source reconciliation đến mua hàng, KHSX tuần/ngày và phân bổ NVL.
+
+## Cutover gate
+
+Chỉ chuyển Python thành nguồn canonical sau khi:
+
+1. source refresh ổn định;
+2. MRP/mua hàng đạt parity được nghiệp vụ xác nhận;
+3. scheduler hỗ trợ toàn bộ mã cần sản xuất;
+4. `unsupported_weekly_rows = 0` ổn định;
+5. không có unexplained variance trong chuỗi run production; khuyến nghị 10 run liên tiếp;
+6. alert/audit/rollback đã rõ;
+7. người dùng nghiệp vụ chấp thuận output Python là nguồn chuẩn.
+
+Sau cutover:
+
+```text
+Python/GitHub = calculation brain
+SharePoint    = source + result hub
+Excel         = reporting/configuration UI
+VBA           = historical rollback only
+```
+
+Quy trình vận hành chi tiết xem [`PLANNING_PROCESS.md`](PLANNING_PROCESS.md).
