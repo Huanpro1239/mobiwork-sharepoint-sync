@@ -51,7 +51,10 @@ def aggregate_sales_actual(source1_rows: Iterable[Row], source2_rows: Iterable[R
     totals: dict[tuple[str, str], float] = defaultdict(float)
 
     def add(row: Row, source2: bool) -> None:
-        code = normalize_code(row.get("O"))
+        # VBA BCBANHANG normalizes source 1 product codes from 2xxxxxxxx to
+        # 1xxxxxxxx. Source 2 already uses the destination/Vikoda code and is
+        # left unchanged.
+        code = normalize_code(row.get("O"), "none" if source2 else "2to1")
         channel = clean_text(row.get("A"))
         if not code or not channel:
             return
