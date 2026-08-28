@@ -211,6 +211,11 @@ def build_algorithmic_daily_schedule(
             if raw > 0:
                 day_quantities[current] = raw
 
+        scheduled = sum(day_quantities.values())
+        remaining = max(q - scheduled, 0.0)
+        if remaining < 1e-6:
+            remaining = 0.0
+
         output.append(
             {
                 "Ma SP": code,
@@ -219,6 +224,8 @@ def build_algorithmic_daily_schedule(
                 "Chuyen": line,
                 "SL ke hoach": q,
                 "Ngay bat dau SX": start,
+                "SL da xep": scheduled,
+                "SL chua xep": remaining,
                 **{d.isoformat(): qty for d, qty in day_quantities.items()},
             }
         )
