@@ -1,20 +1,14 @@
 """Backward-compatible planning calculation API.
 
-Historically all migrated Excel formula logic lived in this single module.  The
+Historically all migrated Excel formula logic lived in this single module. The
 implementation is now organized by business responsibility under
-``planning.domain``.  Imports from ``planning.formula_port`` are intentionally
+``planning.domain``. Imports from ``planning.formula_port`` are intentionally
 kept working so the production engine and existing tests do not need a risky
 big-bang migration.
+
+New code should import from ``planning.domain`` directly.
 """
 
-from .domain.common import (
-    Row,
-    add_months as _add_months,
-    ceil_to_moq as _ceil_to_moq,
-    date_value as _date_value,
-    month_end as _month_end,
-    roundup_excel as _roundup_excel,
-)
 from .domain.demand import build_finished_goods_projection, forecast_by_month
 from .domain.materials import (
     aggregate_open_po,
@@ -26,14 +20,11 @@ from .domain.materials import (
     standardize_flat_bom,
 )
 from .domain.production import (
-    _helper_two_line,
     build_algorithmic_daily_schedule,
     build_fc_end_stock,
     build_weekly_production_plan,
 )
 from .domain.purchasing import (
-    _abc_class,
-    _risk_cap,
     abc_cycle,
     abc_feasibility,
     abc_risk,
