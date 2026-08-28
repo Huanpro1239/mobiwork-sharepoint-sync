@@ -2,56 +2,82 @@
 
 ## Workbook profile
 
-- 25 worksheets, including 2 hidden helper sheets.
-- 40 VBA modules/classes extracted from `vbaProject.bin`.
-- The current `Call_All.ChayTuDong_PAD` orchestrates 9 VBA steps.
-- The workbook also contains several thousand formulas. The heaviest sheets are `Mua hang`, `Phan tich ABC`, `Phan bo NVL ngay`, and `Ke hoach SX tuan`.
+- 25 worksheets, including hidden/helper sheets.
+- khoảng 40 VBA modules/classes trong `vbaProject.bin`.
+- `Call_All.ChayTuDong_PAD` điều phối 9 bước VBA chính.
+- Business logic lịch sử bị chia giữa VBA và hàng nghìn formula Excel, đặc biệt ở `Mua hang`, `Phan tich ABC`, `Phan bo NVL ngay`, `Ke hoach SX tuan`.
 
-## Current 9-step VBA pipeline
+## 9 bước VBA chính -> Python
 
-| # | VBA procedure | Main source | Main destination | Python target |
+| # | VBA procedure | Nguồn / đích chính | Python hiện tại | Trạng thái |
 |---|---|---|---|---|
-| 1 | `TongHopDuLieu_SP_FC_ThangNay` | Setting B14/B16, sales reports | `FC thang nay` T:AE | `planning.vba_port.aggregate_sales_actual` |
-| 2 | `GuiKho_ChayCaHai` | Setting B11/B12, `Chi tiet` J/AG | `FC thang nay` O/P | `aggregate_gui_kho` + code map |
-| 3 | `Run_Nokho_Complete` | Setting B3/B1/B2 | `Nokho` D:F, formula G | `nokho_col_d/e` + stock map + `nokho_balance` |
-| 4 | `Lay_PO` | Setting B17, `REPORT_DONMUAHANG` | `PO` | `extract_open_po` |
-| 5 | `CapNhatCotD_KeHoachNhapNVL_TuB8` | Setting B8, source sheet #2 B/H | `Ke hoach nhap NVL` D | V2 material-stock adapter |
-| 6 | `Run_TinhUngHang_AllInOne` | Setting B2/B4/B5/B6 | `Tinh ung hang` D:F | divided-stock functions |
-| 7 | `Run_FCThangNay_ColM_SumAOAP` | Setting B9/B10 | `FC thang nay` M | `sum_two_divided_stocks` |
-| 8 | `LayDuLieuXuatKho` | Setting B15/B18 | `Data xuat kho thang truoc` | `aggregate_xuat_kho` |
-| 9 | `Run_Update_TonTT_To_KHSX_Tuan` | Setting B13 | `Ke hoach SX tuan` I | `map_ton_tt` |
+| 1 | `TongHopDuLieu_SP_FC_ThangNay` | sales -> `FC thang nay` | sales adapters + `vba_port` | Auto |
+| 2 | `GuiKho_ChayCaHai` | gửi kho -> `FC thang nay` | `aggregate_gui_kho` + code map | Auto |
+| 3 | `Run_Nokho_Complete` | tồn/demand -> `Nokho` | `nokho_col_d/e` + `nokho_balance` | Auto |
+| 4 | `Lay_PO` | `REPORT_DONMUAHANG` -> `PO` | `extract_open_po` | Auto |
+| 5 | `CapNhatCotD_KeHoachNhapNVL_TuB8` | `Ton VT.xlsx` -> tồn NVL | `material_stock_last` | Auto |
+| 6 | `Run_TinhUngHang_AllInOne` | tồn Vikoda/VKD/bán được | divided-stock functions | Auto |
+| 7 | `Run_FCThangNay_ColM_SumAOAP` | XNT -> FC tồn đầu tháng | `sum_two_divided_stocks` | Auto |
+| 8 | `LayDuLieuXuatKho` | ERP outbound | `aggregate_xuat_kho` | Auto |
+| 9 | `Run_Update_TonTT_To_KHSX_Tuan` | tồn thực tế -> KHSX tuần | `map_ton_tt` | Auto |
 
-## Non-pipeline VBA that still matters
+## Formula Excel -> Python domain
 
-- `Capnhat_BOM.UpdateFlatBOM`: recursive BOM explosion. Ported as `explode_bom` with explicit cycle failure.
-- `Dashboard_NVL.RefreshDashboardNVL`: presentation only; should be generated from Python result tables, not treated as business logic.
-- `Tong_Hop`, `modTaoINKIMOI`: print/layout/report formatting; keep as downstream presentation until calculation cutover.
-- `modCommon`: SharePoint path handling, number/code normalization, workbook cache. Replace with Microsoft Graph + Python normalization.
+| Workbook logic | Python module | Trạng thái |
+|---|---|---|
+| FC tháng / projection thành phẩm | `domain/demand.py` | Auto shadow |
+| `Tinh ung hang` | `domain/demand.py` + source reconciliation | Auto shadow |
+| Flat BOM / direct BOM | `domain/materials.py` | Auto shadow |
+| `Ke hoach nhap NVL` | `domain/materials.py` | Auto shadow |
+| `Phan tich ABC` | `domain/purchasing.py` | Auto shadow |
+| `Mua hang` | `domain/purchasing.py` | Auto shadow |
+| `Ke hoach SX tuan` | `domain/production.py` | Auto shadow |
+| KHS/PET/Galon daily schedule | `domain/production.py` | Auto shadow |
+| RGB daily schedule | `rgb_scheduler.py` | Auto shadow |
+| `Phan bo NVL ngay` | `domain/materials.py` | Auto shadow |
 
-## Formula engine dependencies
+`formula_port.py` hiện chỉ là compatibility facade để giữ các import cũ. Logic mới không được thêm vào file này.
 
-```text
-Sales/Stock inputs
-  -> FC thang nay / Nokho / Tinh ung hang
-  -> BOM
-  -> Ke hoach nhap NVL
-  -> Mua hang
-  -> Phan bo NVL ngay
-  -> Ke hoach SX tuan / Ke hoach SX ngay / KHSX
-  -> Phan tich ABC / Dashboard NVL / Tong hop
-```
+## VBA/Excel còn giữ vai trò gì
 
-The most dangerous mistake would be to migrate only VBA while leaving `Mua hang`, `Phan bo NVL ngay`, and `Ke hoach SX tuan` as required Excel-calculation steps. GitHub Actions has no Excel Desktop calculation engine, so full unattended operation requires these formulas to be ported to Python or reduced to presentation formulas only.
+- Workbook `.xlsm`: nguồn cấu hình, đối chiếu parity và rollback.
+- Dashboard/print/layout VBA: presentation legacy; chưa cần thiết cho calculation engine.
+- Các ô lịch nhập tay cũ: comparison-only; scheduler Python sinh lịch riêng trong shadow output.
 
-## Important technical risks found
+## Duplicate / mapping semantics phải giữ
 
-1. SharePoint access currently relies on `Workbooks.Open(https://...)` and the desktop user's signed-in Office session. This is not headless-safe.
-2. `Call_All` treats many internally handled failures as successful because several procedures display an error and exit instead of re-raising it. The summary can therefore show `[OK]` for a failed business step.
-3. Source URLs are hard-coded in worksheet cells and mix encoded/unencoded SharePoint paths. Renames and copied sharing links can break the macro.
-4. Duplicate semantics are inconsistent by design and must be preserved in tests: some modules sum duplicates, some take the first occurrence, and `Nokho` D/E take the last occurrence.
-5. Code conversion `1 <-> 2` is business logic, not a formatting detail. It appears in several source-specific paths and must be centralized.
-6. Current planning logic is split between VBA and formula cells, making lineage and regression testing difficult.
+Một số rule lịch sử cố ý khác nhau:
+
+- có nguồn **SUM** duplicate;
+- có nguồn lấy **first occurrence**;
+- có nguồn lấy **last occurrence**;
+- một số luồng cần chuyển mã `1 <-> 2`;
+- quy đổi DMSP divisor là business rule, không chỉ là format.
+
+Các semantics này phải được khóa bằng regression test, không được “dọn cho đẹp” nếu làm thay đổi kết quả.
+
+## Rủi ro kỹ thuật đã loại bỏ
+
+1. Không còn phụ thuộc `Workbooks.Open(https://...)` để engine chạy headless.
+2. GitHub Actions dùng Microsoft Graph/OIDC thay cho Office desktop session.
+3. Upload `.xlsx` dùng semantic verification vì SharePoint có thể repack OOXML.
+4. Business logic đã có unit/regression tests thay vì chỉ dựa vào macro message box.
+5. Đường dẫn nguồn tập trung trong `config/planning_sources.json`.
+
+## Rủi ro còn lại trước cutover canonical
+
+1. Cần tiếp tục parity nghiệp vụ qua nhiều run production.
+2. Một số rule scheduler Python là rule minh bạch mới, không phải copy nguyên lịch nhập tay cũ; cần người nghiệp vụ xác nhận.
+3. Cần alert rõ khi source workbook đổi schema.
+4. Cần chốt owner/phê duyệt trước khi Python được phép ghi canonical result thay workbook hiện tại.
 
 ## Target state
 
-Excel/SharePoint becomes a UI + storage surface. GitHub Actions runs the deterministic calculation engine and publishes versioned/shadow outputs through Microsoft Graph. After parity is demonstrated, the engine may publish the canonical production tables while the original `.xlsm` remains a rollback artifact.
+```text
+Python/GitHub = đầu não tính toán
+SharePoint    = nguồn dữ liệu + nơi publish kết quả
+Excel         = giao diện xem/in/cấu hình có kiểm soát
+VBA           = rollback lịch sử, không còn runtime bắt buộc
+```
+
+Quy trình chi tiết: [`PLANNING_PROCESS.md`](PLANNING_PROCESS.md).

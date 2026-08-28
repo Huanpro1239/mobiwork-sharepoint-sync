@@ -1,8 +1,18 @@
 """Vikoda planning calculation engine.
 
-The package ports business rules out of Excel/VBA into deterministic Python
-functions. Excel becomes an input/output surface instead of the execution
-runtime.
+Business rules are separated into source-refresh adapters, normalized legacy VBA
+ports, domain calculations, production schedulers, and the top-level engine.
+Excel is an input/output surface rather than the execution runtime.
 """
 
-__all__ = ["normalize", "vba_port"]
+__all__ = [
+    "config",
+    "domain",
+    "engine",
+    "excel_io",
+    "formula_port",
+    "normalize",
+    "rgb_scheduler",
+    "source_refresh",
+    "vba_port",
+]
