@@ -91,7 +91,7 @@ def build_finished_goods_projection(
         i = to_number(forecast_current.get(code))
         j = i - h - f
         k = to_number(warehouse_debt.get(code))
-        l = j + k if j > 0 else k
+        material_projection = j + k if j > 0 else k
         output.append(
             {
                 "Ma SP": code,
@@ -103,7 +103,7 @@ def build_finished_goods_projection(
                 "I FC": i,
                 "J Con lai": j,
                 "K No kho": k,
-                "L Du kien vat tu": l,
+                "L Du kien vat tu": material_projection,
                 "M FC M+1": to_number(forecast_m1.get(code)),
                 "N FC M+2": to_number(forecast_m2.get(code)),
                 "O FC M+3": to_number(forecast_m3.get(code)),
