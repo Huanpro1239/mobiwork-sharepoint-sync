@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import Mock
 
-from src.image_storage import ImageSharePointClient
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from image_storage import ImageSharePointClient
 
 
 class ImageSharePointClientTests(unittest.TestCase):
