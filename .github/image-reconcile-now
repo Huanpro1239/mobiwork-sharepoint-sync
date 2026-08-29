@@ -1,2 +1,2 @@
-triggered_at=2026-08-29T17:00:00+07:00
-reason=repair historical July-August image gaps after reconciliation deployment
+triggered_at=2026-08-29T21:47:00+07:00
+reason=initial rolling two-month image backfill before daily 09:00 schedule
