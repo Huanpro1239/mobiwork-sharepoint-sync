@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import main as core
+from image_storage import ImageSharePointClient
 from image_sync import ImageSyncConfig, run_image_sync
 from mobiwork import MobiWorkClient
 from sharepoint_image_source import SharePointMonthlyImageSource
-from sharepoint_semantic import SemanticSharePointClient
 
 
 LOG = logging.getLogger("mobiwork_sync")
@@ -42,6 +42,7 @@ def run() -> dict:
     config = ImageSyncConfig.from_env()
 
     manifest = {
+        "schema_version": 2,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "today_vn": today.isoformat(),
         "timezone": "Asia/Ho_Chi_Minh",
@@ -57,30 +58,36 @@ def run() -> dict:
             "sequence_field": config.sequence_field,
             "require_ghi_ton": config.require_ghi_ton,
             "fail_on_partial": fail_on_partial,
+            "request_timeout_seconds": config.request_timeout,
+            "max_download_retries": config.max_download_retries,
+            "max_image_bytes": config.max_image_bytes,
+            "allowed_hosts": list(config.allowed_hosts),
+            "force_from_date": (
+                config.force_from_date.isoformat() if config.force_from_date else None
+            ),
         },
     }
 
-    # MobiWork credentials are retained only for authenticated image-byte downloads.
-    # Report/image metadata is never fetched from VisitData here; it comes from the
-    # Excel monthly master already persisted by the normal SharePoint sync.
+    # MobiWork credentials are used only for image-byte downloads. Metadata is read
+    # from the monthly visit workbook already persisted to SharePoint.
     mobiwork = MobiWorkClient.from_env()
-    sharepoint = SemanticSharePointClient.from_env()
+    storage = ImageSharePointClient.from_env()
     drive_id = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
     if not drive_id:
-        site_id = sharepoint.get_site_id()
-        drive_id = sharepoint.get_drive_id(site_id)
+        site_id = storage.get_site_id()
+        drive_id = storage.get_drive_id(site_id)
 
     source = SharePointMonthlyImageSource(
         mobiwork=mobiwork,
-        sharepoint=sharepoint,
+        sharepoint=storage,
         drive_id=drive_id,
     )
 
     try:
         result = run_image_sync(
             reports=reports,
-            mobiwork=source,
-            sharepoint=sharepoint,
+            source=source,
+            storage=storage,
             drive_id=drive_id,
             dry_run=dry_run,
             today=today,

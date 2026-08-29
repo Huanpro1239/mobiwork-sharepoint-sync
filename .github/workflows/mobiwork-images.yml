@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: true
+      from_date:
+        description: "Optional repair/backfill start date (YYYY-MM-DD)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -136,6 +141,9 @@ jobs:
           IMAGE_REQUIRE_GHI_TON: "false"
           IMAGE_REQUEST_TIMEOUT_SECONDS: "30"
           IMAGE_MAX_DOWNLOAD_RETRIES: "2"
+          IMAGE_MAX_BYTES: "20971520"
+          IMAGE_ALLOWED_HOSTS: "dmsimages.mobiwork.vn"
+          IMAGE_FORCE_FROM_DATE: ${{ inputs.from_date }}
           IMAGE_FAIL_ON_PARTIAL: "false"
           DRY_RUN: ${{ inputs.dry_run }}
         run: python src/run_images.py
@@ -162,13 +170,16 @@ jobs:
               f"- Source mode: `{data.get('source_mode', '')}`",
               f"- Vietnam date: `{data.get('today_vn', '')}`",
               f"- Scan range: `{image.get('from_date', '')}` → `{image.get('to_date', '')}`",
+              f"- Forced start: `{image.get('forced_from_date') or 'none'}`",
               f"- Source workbooks: **{len(image.get('source_files', []))}**",
               f"- Retained months: `{', '.join(image.get('retained_months', []))}`",
               f"- Records scanned: **{int(image.get('records_scanned', 0)):,}**",
               f"- Image links found: **{int(image.get('candidate_count', 0)):,}**",
               f"- Uploaded: **{int(image.get('uploaded_count', 0)):,}**",
+              f"- Downloaded bytes: **{int(image.get('downloaded_bytes', 0)):,}**",
               f"- Already existed: **{int(image.get('skipped_existing_count', 0)):,}**",
               f"- Failed: **{int(image.get('failed_count', 0)):,}**",
+              f"- Duration: **{image.get('duration_seconds', 0)} s**",
               f"- Deleted old month folders: `{', '.join(image.get('deleted_month_folders', [])) or 'none'}`",
           ]
           if data.get("error"):
