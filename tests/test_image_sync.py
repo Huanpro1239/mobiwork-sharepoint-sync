@@ -81,6 +81,9 @@ class FakeResponse(requests.Response):
         for index in range(0, len(self._payload), chunk_size):
             yield self._payload[index : index + chunk_size]
 
+    def close(self):
+        return None
+
 
 class FakeDownloadSession:
     def __init__(self, response):
