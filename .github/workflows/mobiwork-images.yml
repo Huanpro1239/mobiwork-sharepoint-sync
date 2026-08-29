@@ -1,4 +1,4 @@
-name: MobiWork Image Reconciliation
+name: MobiWork Daily Image Sync
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ on:
         type: string
         default: ""
   schedule:
-    - cron: "35 2 * * 0"
+    - cron: "0 9 * * *"
       timezone: "Asia/Ho_Chi_Minh"
   push:
     branches:
@@ -26,14 +26,14 @@ permissions:
   contents: read
   id-token: write
 
-# Share the same production lock as the hourly data/image workflow. A reconciliation
-# must never write Data anh while the hourly pipeline is writing the same library.
+# Image writes share the same production lock as the report pipeline so Data anh
+# is never modified concurrently with SharePoint monthly master updates.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false
 
 jobs:
-  reconcile-images:
+  sync-images:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -56,7 +56,7 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q src
 
-      - name: Resolve reconciliation window
+      - name: Resolve rolling two-month window
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -64,8 +64,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            force_from_date="${INPUT_FROM_DATE:-}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "${INPUT_FROM_DATE:-}" ]; then
+            force_from_date="$INPUT_FROM_DATE"
           else
             force_from_date=$(python - <<'PY'
           from datetime import datetime, timedelta
@@ -80,11 +80,7 @@ jobs:
           fi
 
           echo "IMAGE_FORCE_FROM_DATE=$force_from_date" >> "$GITHUB_ENV"
-          if [ -n "$force_from_date" ]; then
-            echo "Reconciliation start date: $force_from_date"
-          else
-            echo "No forced start date; state-based incremental scan requested"
-          fi
+          echo "Rolling image scan starts at: $force_from_date"
 
       - name: Validate MobiWork image credentials
         env:
@@ -158,7 +154,7 @@ jobs:
           echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
           echo "MobiWorkDMS drive id resolved"
 
-      - name: Reconcile images from persisted SharePoint visit data
+      - name: Sync rolling two-month images from SharePoint visit data
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -184,13 +180,13 @@ jobs:
           IMAGE_MAX_BYTES: "20971520"
           IMAGE_ALLOWED_HOSTS: "dmsimages.mobiwork.vn"
           IMAGE_FORCE_FROM_DATE: ${{ env.IMAGE_FORCE_FROM_DATE }}
-          # A reconciliation is an integrity check. Any remaining image failure should
-          # make this workflow red while still publishing its manifest for diagnosis.
+          # Every daily run is also an integrity check over the retained two-month window.
+          # Existing non-empty files are skipped; only new or missing images are downloaded.
           IMAGE_FAIL_ON_PARTIAL: "true"
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_images.py
 
-      - name: Publish image reconciliation summary
+      - name: Publish daily image sync summary
         if: ${{ always() }}
         shell: bash
         run: |
@@ -206,7 +202,7 @@ jobs:
           data = json.loads(path.read_text(encoding="utf-8"))
           image = data.get("image_sync", {})
           lines = [
-              "## MobiWork Image Reconciliation",
+              "## MobiWork Daily Image Sync",
               "",
               f"- Status: **{data.get('status', 'unknown')}**",
               f"- Source mode: `{data.get('source_mode', '')}`",
@@ -217,7 +213,7 @@ jobs:
               f"- Retained months: `{', '.join(image.get('retained_months', []))}`",
               f"- Records scanned: **{int(image.get('records_scanned', 0)):,}**",
               f"- Expected image links: **{int(image.get('candidate_count', 0)):,}**",
-              f"- Missing images repaired: **{int(image.get('uploaded_count', 0)):,}**",
+              f"- New/missing images downloaded: **{int(image.get('uploaded_count', 0)):,}**",
               f"- Already present: **{int(image.get('skipped_existing_count', 0)):,}**",
               f"- Remaining failures: **{int(image.get('failed_count', 0)):,}**",
               f"- Downloaded bytes: **{int(image.get('downloaded_bytes', 0)):,}**",
@@ -231,11 +227,11 @@ jobs:
               handle.write("\n".join(lines) + "\n")
           PY
 
-      - name: Upload image reconciliation manifest
+      - name: Upload daily image sync manifest
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: mobiwork-image-reconciliation-${{ github.run_id }}-${{ github.run_attempt }}
+          name: mobiwork-daily-image-sync-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/image_sync_manifest.json
           if-no-files-found: ignore
           retention-days: 30
