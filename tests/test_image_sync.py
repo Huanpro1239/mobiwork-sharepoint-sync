@@ -198,6 +198,43 @@ class ImageSyncTests(unittest.TestCase):
         self.assertEqual(state_payload["schema_version"], 3)
         self.assertEqual(state_payload["last_completed_sync_date"], "2026-09-01")
 
+    def test_partial_failure_persists_earliest_retry_date(self):
+        class FailingSession:
+            def get(self, url, **kwargs):
+                raise requests.ConnectionError("temporary image failure")
+
+        source = FakeSource(
+            [
+                {
+                    "_sync_date": "2026-08-20",
+                    "hinh_anh": "https://dmsimages.mobiwork.vn/fail.jpg",
+                    "ten_nhan_vien": "NV A",
+                    "ma_kh": "KH001",
+                    "stt_hinh": 1,
+                }
+            ],
+            session=FailingSession(),
+        )
+        storage = FakeStorage(
+            state={"last_completed_sync_date": "2026-08-19"}
+        )
+        cfg = ImageSyncConfig(max_download_retries=0)
+
+        result = run_image_sync(
+            reports=[self.report],
+            source=source,
+            storage=storage,
+            drive_id="drive",
+            dry_run=False,
+            today=date(2026, 8, 29),
+            cfg=cfg,
+        )
+
+        self.assertEqual(result["status"], "partial_failure")
+        self.assertEqual(result["retry_from_date"], "2026-08-20")
+        state_payload = storage.uploaded_json[-1][1]
+        self.assertEqual(state_payload["retry_from_date"], "2026-08-20")
+
     def test_remote_path_is_month_employee_customer_and_sanitized(self):
         folder, remote_path = _remote_image_path(
             ImageSyncConfig(),
@@ -223,6 +260,31 @@ class ImageSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "allow-listed"):
             _download_image(source, "https://example.com/a.jpg", ImageSyncConfig())
         self.assertEqual(source.session.calls, [])
+
+    def test_download_rejects_explicit_non_image_payload_even_with_jpg_suffix(self):
+        response = FakeResponse(
+            "https://dmsimages.mobiwork.vn/error.jpg",
+            b"<html><body>login required</body></html>",
+            content_type="text/html",
+        )
+        session = FakeDownloadSession(response)
+        source = FakeSource([], session=session)
+
+        with self.assertRaisesRegex(ValueError, "not a recognized image"):
+            _download_image(source, response.url, ImageSyncConfig())
+
+    def test_partial_failure_retry_cursor_is_not_lost(self):
+        self.assertEqual(
+            _resolve_start_date(
+                date(2026, 8, 29),
+                {
+                    "last_completed_sync_date": "2026-08-29",
+                    "last_successful_sync_date": "2026-08-28",
+                    "retry_from_date": "2026-08-20",
+                },
+            ),
+            date(2026, 8, 20),
+        )
 
     def test_download_enforces_max_image_size(self):
         response = FakeResponse(

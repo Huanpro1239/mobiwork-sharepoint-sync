@@ -35,8 +35,9 @@ The persisted SharePoint monthly workbook is the metadata source of truth. The i
 - `last_successful_sync_date`: latest run with zero image failures.
 - `last_run_status`: `success` or `partial_failure`.
 - `failed_count`: number of failed images in the last run.
+- `retry_from_date`: earliest business date with an unresolved image failure, or `null`.
 
-The next automatic run uses a one-day overlap from `last_completed_sync_date` to cover late-arriving records without repeatedly scanning the complete two-month archive.
+The next automatic run normally uses a one-day overlap from `last_completed_sync_date`. If a partial run contains an older failed image, `retry_from_date` temporarily widens the scan window so that failure is retried automatically until it succeeds or ages out of the rolling retention window.
 
 ## Repair / backfill
 

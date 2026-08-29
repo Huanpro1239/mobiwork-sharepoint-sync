@@ -265,8 +265,19 @@ def _content_type_and_extension(
         if guessed == ".jpe":
             guessed = ".jpg"
         return content_type, guessed or (suffix if suffix in _IMAGE_EXTENSIONS else ".jpg")
+
+    # An explicit non-image media type is stronger evidence than the URL suffix.
+    # This prevents HTML login/error pages served from a *.jpg URL from being
+    # persisted as fake images. Generic/missing types may still fall back to suffix.
+    if content_type and content_type not in {
+        "application/octet-stream",
+        "binary/octet-stream",
+    }:
+        return "application/octet-stream", ".jpg"
     if suffix in _IMAGE_EXTENSIONS:
-        guessed_type = mimetypes.guess_type(f"x{suffix}")[0] or "application/octet-stream"
+        guessed_type = (
+            mimetypes.guess_type(f"x{suffix}")[0] or "application/octet-stream"
+        )
         return guessed_type, suffix
     return "application/octet-stream", ".jpg"
 
@@ -374,9 +385,14 @@ def _resolve_start_date(
         return floor
     cursor = state.get("last_completed_sync_date") or state.get("last_successful_sync_date")
     last_date = _parse_date(cursor)
+    retry_from_date = _parse_date(state.get("retry_from_date"))
     if not last_date:
-        return floor
-    return max(floor, last_date - timedelta(days=1))
+        return max(floor, retry_from_date) if retry_from_date else floor
+
+    normal_start = max(floor, last_date - timedelta(days=1))
+    if retry_from_date is None:
+        return normal_start
+    return max(floor, min(normal_start, retry_from_date))
 
 
 def _cleanup_old_months(
@@ -554,6 +570,8 @@ def run_image_sync(
 
     previous_successful = state.get("last_successful_sync_date") if state else None
     run_status = "partial_failure" if failures else "success"
+    retry_from_date = min((item["date"] for item in failures), default=None)
+    result["retry_from_date"] = retry_from_date
     storage.upload_json(
         drive_id,
         _state_path(cfg),
@@ -568,6 +586,7 @@ def run_image_sync(
             "retained_months": sorted(retained_months(today)),
             "last_run_status": run_status,
             "failed_count": len(failures),
+            "retry_from_date": retry_from_date,
         },
     )
 
