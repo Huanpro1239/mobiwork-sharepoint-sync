@@ -4,13 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Scan image links only; do not download/upload/delete"
+        description: "Read SharePoint visit data and count image links only"
         required: true
         type: boolean
         default: true
-  schedule:
-    - cron: "30 9 * * *"
-      timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
   contents: read
@@ -44,7 +41,7 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q src
 
-      - name: Validate MobiWork secrets
+      - name: Validate MobiWork image credentials
         env:
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
@@ -63,10 +60,9 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-          echo "MobiWork credentials: available"
+          echo "MobiWork image credentials: available"
 
       - name: Validate Microsoft OIDC configuration
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -88,7 +84,6 @@ jobs:
           echo "Microsoft OIDC configuration: available"
 
       - name: Azure login with GitHub OIDC
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -96,7 +91,6 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Resolve SharePoint document library
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -119,15 +113,12 @@ jobs:
           echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
           echo "MobiWorkDMS drive id resolved"
 
-      - name: Sync rolling two-month images
+      - name: Sync images from persisted SharePoint visit data
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
-          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
-          MOBIWORK_MAX_RETRIES: "8"
-          MOBIWORK_TIMEOUT_SECONDS: "120"
           SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
           SHAREPOINT_SITE_PATH: "/sites/Planning"
           SHAREPOINT_LIBRARY: "MobiWorkDMS"
@@ -143,9 +134,10 @@ jobs:
           IMAGE_CUSTOMER_FIELD: "ma_kh"
           IMAGE_SEQUENCE_FIELD: "stt_hinh"
           IMAGE_REQUIRE_GHI_TON: "false"
-          IMAGE_REQUEST_TIMEOUT_SECONDS: "120"
-          IMAGE_MAX_DOWNLOAD_RETRIES: "3"
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          IMAGE_REQUEST_TIMEOUT_SECONDS: "30"
+          IMAGE_MAX_DOWNLOAD_RETRIES: "2"
+          IMAGE_FAIL_ON_PARTIAL: "false"
+          DRY_RUN: ${{ inputs.dry_run }}
         run: python src/run_images.py
 
       - name: Publish image sync summary
@@ -164,11 +156,13 @@ jobs:
           data = json.loads(path.read_text(encoding="utf-8"))
           image = data.get("image_sync", {})
           lines = [
-              "## MobiWork Image Sync",
+              "## MobiWork Image Sync from SharePoint",
               "",
               f"- Status: **{data.get('status', 'unknown')}**",
+              f"- Source mode: `{data.get('source_mode', '')}`",
               f"- Vietnam date: `{data.get('today_vn', '')}`",
               f"- Scan range: `{image.get('from_date', '')}` → `{image.get('to_date', '')}`",
+              f"- Source workbooks: **{len(image.get('source_files', []))}**",
               f"- Retained months: `{', '.join(image.get('retained_months', []))}`",
               f"- Records scanned: **{int(image.get('records_scanned', 0)):,}**",
               f"- Image links found: **{int(image.get('candidate_count', 0)):,}**",
