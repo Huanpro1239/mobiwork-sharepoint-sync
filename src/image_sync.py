@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Any, Iterable
 from urllib.parse import unquote, urlsplit
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -19,6 +20,7 @@ from mobiwork import MobiWorkClient, ReportConfig
 
 
 LOG = logging.getLogger("mobiwork_sync")
+VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 _INVALID_SEGMENT_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
@@ -102,9 +104,15 @@ def retained_months(today: date) -> set[str]:
     }
 
 
+def _local_date(value: datetime) -> date:
+    if value.tzinfo is not None:
+        return value.astimezone(VN_TZ).date()
+    return value.date()
+
+
 def _parse_date(value: Any) -> date | None:
     if isinstance(value, datetime):
-        return value.date()
+        return _local_date(value)
     if isinstance(value, date):
         return value
 
@@ -114,7 +122,7 @@ def _parse_date(value: Any) -> date | None:
 
     normalized = text.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(normalized).date()
+        return _local_date(datetime.fromisoformat(normalized))
     except ValueError:
         pass
 
@@ -401,9 +409,14 @@ def run_image_sync(
         if cfg.require_ghi_ton and not _looks_true(record.get("ghi_ton")):
             continue
 
-        record_date = _parse_date(record.get(cfg.date_field))
+        # New monthly masters contain _sync_date, which is the exact Vietnam report
+        # partition date. Legacy workbooks fall back to the source field `ngay`.
+        record_date = _parse_date(record.get("_sync_date")) or _parse_date(
+            record.get(cfg.date_field)
+        )
         if (
             record_date is None
+            or record_date < from_date
             or record_date < previous_month_start(today)
             or record_date > today
         ):
@@ -506,11 +519,12 @@ def run_image_sync(
         drive_id,
         _state_path(cfg),
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "last_successful_sync_date": today.isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "root_folder": cfg.root_folder,
             "source_report": cfg.source_report_key,
+            "source_mode": "sharepoint_monthly_master",
             "retained_months": sorted(retained_months(today)),
             "failed_count": len(failures),
         },
