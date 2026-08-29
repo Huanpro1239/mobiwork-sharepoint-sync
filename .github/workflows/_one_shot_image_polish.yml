@@ -84,21 +84,6 @@ jobs:
               encoding="utf-8",
           )
 
-          for workflow in (
-              ".github/workflows/mobiwork-sync.yml",
-              ".github/workflows/mobiwork-images.yml",
-          ):
-              p = Path(workflow)
-              text = p.read_text(encoding="utf-8")
-              needle = '''              f"- Failed: **{int(image.get('failed_count', 0)):,}**",\n'''
-              replacement = (
-                  needle
-                  + '''              f"- Retry from: `{image.get('retry_from_date') or 'none'}`",\n'''
-              )
-              if needle not in text:
-                  raise SystemExit(f"summary marker not found in {workflow}")
-              p.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
-
           p = Path("docs/production-image-sync.md")
           text = p.read_text(encoding="utf-8")
           old = '''- `failed_count`: number of failed images in the last run.\n\nThe next automatic run uses a one-day overlap from `last_completed_sync_date` to cover late-arriving records without repeatedly scanning the complete two-month archive.\n'''
@@ -120,9 +105,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/_one_shot_image_polish.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/image_sync.py tests/test_image_sync.py docs/production-image-sync.md .github/workflows/mobiwork-sync.yml .github/workflows/mobiwork-images.yml
+          git add src/image_sync.py tests/test_image_sync.py docs/production-image-sync.md
           git commit -m 'fix: close image sync reliability edge cases'
           git push origin HEAD:fix/image-sync-reliability-polish
