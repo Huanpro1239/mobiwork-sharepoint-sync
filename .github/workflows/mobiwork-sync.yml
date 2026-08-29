@@ -186,8 +186,10 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_all_reports.py
 
+      # Scheduled image downloads are handled only by mobiwork-images.yml at 09:00 VN.
+      # Keep this path for an explicit manual production run if needed.
       - name: Sync images from persisted SharePoint visit data
-        if: ${{ always() && (github.event_name == 'schedule' || inputs.dry_run == false) }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
