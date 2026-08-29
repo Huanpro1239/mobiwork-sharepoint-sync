@@ -11,7 +11,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mobiwork import ReportConfig
-from sharepoint_image_source import SharePointMonthlyImageSource
+from sharepoint_image_source import SharePointMonthlyImageSource, _legacy_calendar_date
 
 
 class FakeMobiWork:
@@ -79,17 +79,33 @@ class SharePointMonthlyImageSourceTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["ma_kh"], "KH001")
+        self.assertEqual(rows[0]["_sync_date"], "2026-08-29")
         self.assertEqual(source.source_files, [path])
         self.assertIs(source.session, source.mobiwork.session)
 
-    def test_falls_back_to_legacy_history_workbook(self):
+    def test_legacy_calendar_date_does_not_timezone_shift(self):
+        # A real MobiWork-style legacy value may end in Z while representing the
+        # business calendar date itself. Preserve 18 July rather than shifting to 19.
+        self.assertEqual(
+            _legacy_calendar_date("2026-07-18T17:00:00.000Z"),
+            "2026-07-18",
+        )
+
+    def test_falls_back_to_legacy_history_and_derives_sync_date(self):
         folder = "01_BaoCaoViengTham/2026/07"
         history_name = "BaoCaoViengTham_History_2026-07-01_to_2026-07-31.xlsx"
         history_path = f"{folder}/{history_name}"
         sharepoint = FakeSharePoint(
             {
                 history_path: workbook_bytes(
-                    [{"ngay": "2026-07-20", "ma_kh": "KH002", "hinh_anh": ""}]
+                    [
+                        {
+                            "thu": "T7",
+                            "ngay": "2026-07-18T17:00:00.000Z",
+                            "ma_kh": "KH002",
+                            "hinh_anh": "",
+                        }
+                    ]
                 )
             },
             children={
@@ -109,6 +125,7 @@ class SharePointMonthlyImageSourceTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["ma_kh"], "KH002")
+        self.assertEqual(rows[0]["_sync_date"], "2026-07-18")
         self.assertEqual(source.source_files, [history_path])
 
     def test_raises_when_month_source_is_missing(self):

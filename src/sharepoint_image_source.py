@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from typing import Any
 
@@ -13,6 +14,36 @@ from mobiwork import ReportConfig
 
 
 LOG = logging.getLogger("mobiwork_sync")
+_ISO_DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
+
+def _legacy_calendar_date(value: Any) -> str | None:
+    """Return the business calendar date encoded by a legacy MobiWork value.
+
+    Older Visit History workbooks do not have `_sync_date`. MobiWork values such as
+    `2026-07-18T17:00:00.000Z` are business-date strings: the workbook's `thu` field
+    identifies that example as Saturday 2026-07-18. Therefore compatibility handling
+    must preserve the calendar component instead of converting the timestamp timezone.
+    """
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    match = _ISO_DATE_PREFIX_RE.match(text)
+    if match:
+        return match.group(1)
+
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text[:10], fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
 
 
 @dataclass
@@ -108,6 +139,18 @@ class SharePointMonthlyImageSource:
             raise ValueError(f"SharePoint workbook is empty: {remote_path}")
 
         frame = pd.read_excel(BytesIO(content), sheet_name="Data", engine="openpyxl")
+
+        # Canonical monthly masters already contain the exact report partition date.
+        # Legacy History workbooks do not, so derive it from the calendar component of
+        # `ngay` without timezone conversion. This matches MobiWork's business-day
+        # semantics and prevents a 17:00Z-looking value from moving to the next day.
+        if "_sync_date" not in frame.columns and "ngay" in frame.columns:
+            frame.insert(
+                0,
+                "_sync_date",
+                frame["ngay"].map(_legacy_calendar_date),
+            )
+
         # Convert pandas missing values to None so downstream field parsing is stable.
         frame = frame.astype(object).where(pd.notna(frame), None)
         return frame.to_dict(orient="records")

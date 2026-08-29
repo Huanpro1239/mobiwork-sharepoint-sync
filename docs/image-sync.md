@@ -38,7 +38,7 @@ For each month touched by the incremental window, image sync first looks for the
 01_BaoCaoViengTham/YYYY/MM/BaoCaoViengTham_YYYY-MM.xlsx
 ```
 
-For compatibility with older data, if the canonical master is missing it falls back to a compatible `BaoCaoViengTham_History_...xlsx` workbook in the same month folder.
+For compatibility with older data, if the canonical master is missing it falls back to a compatible `BaoCaoViengTham_History_...xlsx` workbook in the same month folder. Legacy History rows receive a derived `_sync_date` from the calendar portion of `ngay`; values such as `2026-07-18T17:00:00.000Z` remain business date `2026-07-18` rather than being timezone-shifted.
 
 ## Image destination
 
@@ -73,7 +73,7 @@ Only folders whose names exactly match `YYYY-MM` are automatically deleted. Manu
 - Later runs read `Data anh/_state.json` and scan from one day before the last completed sync date through today.
 - Even when a whole monthly workbook is loaded, only rows inside that incremental date window are planned for image work.
 - Existing deterministic image paths are skipped instead of re-uploaded.
-- Timezone-aware timestamps are converted to `Asia/Ho_Chi_Minh` before the image date/folder is selected.
+- Current monthly masters use their exact `_sync_date`; legacy History workbooks preserve the business calendar date encoded by `ngay`.
 - Individual broken image links are recorded as `partial_failure` but do not stop the hourly production workflow when `IMAGE_FAIL_ON_PARTIAL=false`.
 
 ## Automatic workflow
