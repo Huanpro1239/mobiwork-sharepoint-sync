@@ -40,6 +40,11 @@ def main() -> int:
         )
         os.environ["AI_PREBUILT_BUNDLE"] = "true"
         os.environ["AI_SYNC_ASSETS"] = "false"
+        if os.environ.get("AI_LEGACY_SCORE_REMOTE", "").strip():
+            from scoring.legacy_seed import seed_legacy_scores
+
+            seed_stats = seed_legacy_scores(client)
+            logger.info("Legacy migration cache: %s", seed_stats)
         result = run(period=args.period, dry_run=args.dry_run)
     except Exception:
         logger.exception("SharePoint cloud image scoring + KPI pipeline failed")
