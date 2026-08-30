@@ -12,7 +12,7 @@ import csv
 import hashlib
 import logging
 import os
-from io import BytesIO, StringIO
+from io import StringIO
 from pathlib import PurePosixPath
 
 import pandas as pd
