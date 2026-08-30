@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: numpy-legacy-pickle-compat
+# retry: legacy-url-reuse-history-sanitizer
 
 on:
   push:
