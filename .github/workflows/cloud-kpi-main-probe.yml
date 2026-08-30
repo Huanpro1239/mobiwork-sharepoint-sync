@@ -1,0 +1,168 @@
+name: Cloud KPI Main-Context Sample Run
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloud-kpi-main-sample
+  cancel-in-progress: false
+
+jobs:
+  sample:
+    if: ${{ contains(github.event.head_commit.message, 'run cloud kpi main-context dry-run') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      PYTHONPATH: src
+      LOG_LEVEL: INFO
+      SHAREPOINT_HOST: vikodacomvn.sharepoint.com
+      SHAREPOINT_SITE_PATH: /sites/Planning
+      SHAREPOINT_LIBRARY: MobiWorkDMS
+      SHAREPOINT_MAX_RETRIES: '6'
+      SHAREPOINT_TIMEOUT_SECONDS: '120'
+      IMAGE_ROOT_FOLDER: Data anh
+      AI_RUNTIME_MODE: cloud
+      AI_PREBUILT_BUNDLE: 'true'
+      AI_SYNC_ASSETS: 'false'
+      AI_DEVICE: cpu
+      AI_DOWNLOAD_WORKERS: '12'
+      AI_LEGACY_SEED_WORKERS: '16'
+      AI_SHAREPOINT_ASSET_ROOT: Chạy chương trình/KPI Assets
+      AI_ASSET_DRIVE_ID: b!2K9oEC8dsUa6BquPvDyH35k3WNCRWItKlw8AJ2EKa5VahAhoPyTCQLc0Qsq_5UdO
+      AI_LEGACY_SCORE_REMOTE: Chạy chương trình/KPI Assets/legacy_scores_through_2026-08-28.csv
+      KPI_SHAREPOINT_ROOT: KPI
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      TOKENIZERS_PARALLELISM: 'false'
+
+    steps:
+      - name: Checkout feature implementation
+        uses: actions/checkout@v7
+        with:
+          ref: feature/image-scoring-kpi-v24
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ai.txt
+
+      - name: Cache AI downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/torch
+            ~/.EasyOCR
+            ~/.config/Ultralytics
+          key: dms-ai-sample-${{ runner.os }}-v2
+
+      - name: Install AI runtime
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ai.txt
+          pip check
+
+      - name: Compile implementation
+        run: python -m compileall -q src
+
+      - name: Azure login with trusted main OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Resolve MobiWorkDMS drive
+        run: |
+          set -euo pipefail
+          site_id=$(az rest --method get --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' --query id -o tsv)
+          az rest --method get --url "https://graph.microsoft.com/v1.0/sites/$site_id/drives" > drives.json
+          data_drive=$(jq -r '.value[] | select((.name | ascii_downcase) == "mobiworkdms") | .id' drives.json | head -n 1)
+          test -n "$data_drive" || { echo 'MobiWorkDMS drive not found'; exit 2; }
+          echo "SHAREPOINT_DRIVE_ID=$data_drive" >> "$GITHUB_ENV"
+
+      - name: Build August KPI sample from July through current stored data
+        run: python src/run_score_kpi_cloud.py --period 2026-08 --dry-run
+
+      - name: Validate workbook formulas
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          path = Path('runtime/output/Ket_qua_cham_cong_va_thuong_KPI.xlsx')
+          if not path.is_file() or path.stat().st_size == 0:
+              raise SystemExit('KPI workbook missing')
+          with ZipFile(path) as zf:
+              formulas = sum(
+                  zf.read(name).count(b'<f')
+                  for name in zf.namelist()
+                  if name.startswith('xl/worksheets/sheet') and name.endswith('.xml')
+              )
+          print(f'workbook_bytes={path.stat().st_size}')
+          print(f'formula_count={formulas}')
+          if formulas < 100:
+              raise SystemExit(f'Formula count too low: {formulas}')
+          PY
+
+      - name: Publish validated SAMPLE files to MobiWorkDMS
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from image_storage import ImageSharePointClient
+
+          client = ImageSharePointClient.from_env()
+          drive_id = __import__('os').environ['SHAREPOINT_DRIVE_ID']
+          folder = 'KPI/2026-08'
+          workbook = Path('runtime/output/Ket_qua_cham_cong_va_thuong_KPI.xlsx')
+          detail = Path('runtime/output/Ket_qua_Chi_tiet_Anh.csv')
+          history = Path('runtime/output/customer_history.csv')
+          manifest_path = Path('runtime/output/run_manifest.json')
+
+          client.upload_bytes(
+              drive_id,
+              f'{folder}/Ket_qua_cham_cong_va_thuong_KPI_SAMPLE_2026-08-30.xlsx',
+              workbook.read_bytes(),
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          )
+          if detail.is_file():
+              client.upload_bytes(
+                  drive_id,
+                  f'{folder}/Ket_qua_Chi_tiet_Anh_SAMPLE_2026-08-30.csv',
+                  detail.read_bytes(),
+                  'text/csv; charset=utf-8',
+              )
+          if history.is_file():
+              client.upload_bytes(
+                  drive_id,
+                  'KPI/History/customer_history_SAMPLE_2026-08-30.csv',
+                  history.read_bytes(),
+                  'text/csv; charset=utf-8',
+              )
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          manifest['sample_publish'] = True
+          manifest['model_bundle_note'] = 'legacy bundle 2.0.0 used for sample migration; not final production V2.3 bundle'
+          client.upload_json(
+              drive_id,
+              f'{folder}/run_manifest_SAMPLE_2026-08-30.json',
+              manifest,
+          )
+          print('sample_sharepoint_folder=' + folder)
+          PY
+
+      - name: Upload sample artifacts to GitHub
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: cloud-kpi-sample-${{ github.run_id }}
+          path: runtime/output/
+          if-no-files-found: warn
+          retention-days: 14
