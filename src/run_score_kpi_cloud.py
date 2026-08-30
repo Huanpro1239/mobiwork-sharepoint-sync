@@ -41,11 +41,13 @@ def main() -> int:
         os.environ["AI_PREBUILT_BUNDLE"] = "true"
         os.environ["AI_SYNC_ASSETS"] = "false"
 
+        from scoring.cloud_image_path import install_robust_image_path_lookup
         from scoring.cloud_sample_compat import (
             install_history_sanitizer,
             install_legacy_url_scoring,
         )
 
+        install_robust_image_path_lookup()
         install_history_sanitizer()
         if os.environ.get("AI_LEGACY_SCORE_REMOTE", "").strip():
             legacy_rows = install_legacy_url_scoring(client)
