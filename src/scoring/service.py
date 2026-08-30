@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -103,12 +104,24 @@ class ImageScoringService:
     """Load model components once and score unique image bytes in CLIP batches."""
 
     def __init__(self, cache: ScoreCache | None = None) -> None:
-        from scoring.classifier import SceneClassifier
         from scoring.face_detector import FaceDetector
         from scoring.ocr_engine import TargetedOCREngine
         from scoring.yolo_verifier import YOLODetector
 
-        self.classifier = SceneClassifier()
+        prebuilt = os.environ.get("AI_PREBUILT_BUNDLE", "false").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if prebuilt:
+            from scoring.prebuilt_classifier import PrebuiltSceneClassifier
+
+            self.classifier = PrebuiltSceneClassifier()
+        else:
+            from scoring.classifier import SceneClassifier
+
+            self.classifier = SceneClassifier()
         self.yolo = YOLODetector()
         self.ocr = TargetedOCREngine()
         self.face = FaceDetector()
