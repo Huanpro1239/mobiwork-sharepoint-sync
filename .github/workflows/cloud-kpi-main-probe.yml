@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: legacy-url-reuse-history-sanitizer
+# retry: url-digest-image-lookup-sample-4
 
 on:
   push:
