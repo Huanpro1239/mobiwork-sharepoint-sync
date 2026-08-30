@@ -1,4 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
+# retry: numpy-legacy-pickle-compat
 
 on:
   push:
@@ -116,45 +117,57 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
           from image_storage import ImageSharePointClient
 
           client = ImageSharePointClient.from_env()
-          drive_id = __import__('os').environ['SHAREPOINT_DRIVE_ID']
+          drive_id = os.environ['SHAREPOINT_DRIVE_ID']
           folder = 'KPI/2026-08'
           workbook = Path('runtime/output/Ket_qua_cham_cong_va_thuong_KPI.xlsx')
           detail = Path('runtime/output/Ket_qua_Chi_tiet_Anh.csv')
           history = Path('runtime/output/customer_history.csv')
           manifest_path = Path('runtime/output/run_manifest.json')
+          expected = []
 
+          workbook_remote = f'{folder}/Ket_qua_cham_cong_va_thuong_KPI_SAMPLE_2026-08-30.xlsx'
           client.upload_bytes(
               drive_id,
-              f'{folder}/Ket_qua_cham_cong_va_thuong_KPI_SAMPLE_2026-08-30.xlsx',
+              workbook_remote,
               workbook.read_bytes(),
               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           )
+          expected.append(workbook_remote)
           if detail.is_file():
+              detail_remote = f'{folder}/Ket_qua_Chi_tiet_Anh_SAMPLE_2026-08-30.csv'
               client.upload_bytes(
                   drive_id,
-                  f'{folder}/Ket_qua_Chi_tiet_Anh_SAMPLE_2026-08-30.csv',
+                  detail_remote,
                   detail.read_bytes(),
                   'text/csv; charset=utf-8',
               )
+              expected.append(detail_remote)
           if history.is_file():
+              history_remote = 'KPI/History/customer_history_SAMPLE_2026-08-30.csv'
               client.upload_bytes(
                   drive_id,
-                  'KPI/History/customer_history_SAMPLE_2026-08-30.csv',
+                  history_remote,
                   history.read_bytes(),
                   'text/csv; charset=utf-8',
               )
+              expected.append(history_remote)
           manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
           manifest['sample_publish'] = True
           manifest['model_bundle_note'] = 'legacy bundle 2.0.0 used for sample migration; not final production V2.3 bundle'
-          client.upload_json(
-              drive_id,
-              f'{folder}/run_manifest_SAMPLE_2026-08-30.json',
-              manifest,
-          )
+          manifest_remote = f'{folder}/run_manifest_SAMPLE_2026-08-30.json'
+          client.upload_json(drive_id, manifest_remote, manifest)
+          expected.append(manifest_remote)
+
+          for remote in expected:
+              item = client.get_item_by_path(drive_id, remote)
+              if not item or 'folder' in item or int(item.get('size') or 0) <= 0:
+                  raise RuntimeError(f'SharePoint SAMPLE verification failed: {remote}')
+              print(f'sharepoint_verified={remote} bytes={item.get("size")}')
           print('sample_sharepoint_folder=' + folder)
           PY
 
