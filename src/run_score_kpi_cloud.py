@@ -40,11 +40,17 @@ def main() -> int:
         )
         os.environ["AI_PREBUILT_BUNDLE"] = "true"
         os.environ["AI_SYNC_ASSETS"] = "false"
-        if os.environ.get("AI_LEGACY_SCORE_REMOTE", "").strip():
-            from scoring.legacy_seed import seed_legacy_scores
 
-            seed_stats = seed_legacy_scores(client)
-            logger.info("Legacy migration cache: %s", seed_stats)
+        from scoring.cloud_sample_compat import (
+            install_history_sanitizer,
+            install_legacy_url_scoring,
+        )
+
+        install_history_sanitizer()
+        if os.environ.get("AI_LEGACY_SCORE_REMOTE", "").strip():
+            legacy_rows = install_legacy_url_scoring(client)
+            logger.info("Legacy URL score lookup loaded: %s unique URLs", legacy_rows)
+
         result = run(period=args.period, dry_run=args.dry_run)
     except Exception:
         logger.exception("SharePoint cloud image scoring + KPI pipeline failed")
