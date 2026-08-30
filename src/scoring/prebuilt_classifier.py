@@ -7,6 +7,7 @@ versioned pickle containing embeddings, trained heads and OOF evaluation.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import pickle
 import sys
@@ -41,7 +42,7 @@ _REQUIRED_FIELDS = {
 
 
 def _install_legacy_pickle_aliases() -> None:
-    """Allow bundles produced by the legacy ``modules.*`` package to unpickle."""
+    """Allow legacy project and NumPy-2-produced bundles to unpickle safely."""
 
     import scoring.decision_policy as decision_policy
     import scoring.modeling as modeling
@@ -55,6 +56,14 @@ def _install_legacy_pickle_aliases() -> None:
     sys.modules["modules.modeling"] = modeling
     sys.modules["modules.reference_data"] = reference_data
     sys.modules["modules.decision_policy"] = decision_policy
+
+    # The current cloud runtime deliberately pins NumPy 1.26 for broad CV
+    # compatibility. The legacy bundle was serialized by NumPy 2.x, which
+    # records ``numpy._core.numeric`` in the pickle. NumPy 1.x exposes the same
+    # implementation as ``numpy.core.numeric``. Alias only that exact module;
+    # no array values or model parameters are transformed.
+    if "numpy._core.numeric" not in sys.modules:
+        sys.modules["numpy._core.numeric"] = importlib.import_module("numpy.core.numeric")
 
 
 def _bundle_signature(payload: dict[str, object], policy: DecisionPolicy) -> str:
