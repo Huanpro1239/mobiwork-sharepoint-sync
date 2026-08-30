@@ -9,6 +9,13 @@ ignore = ["E501"]
 [tool.coverage.run]
 branch = true
 source = ["src"]
+omit = [
+  "src/scoring/*",
+  "src/kpi/kpi_exporter.py",
+  "src/score_kpi_pipeline.py",
+  "src/run_score_kpi.py",
+  "src/sharepoint_kpi_source.py",
+]
 
 [tool.coverage.report]
 show_missing = true

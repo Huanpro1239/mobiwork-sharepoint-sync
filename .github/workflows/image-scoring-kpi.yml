@@ -1,0 +1,140 @@
+name: Image Scoring + Sales KPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      sync_assets:
+        description: "Sync changed AI assets from SharePoint"
+        required: true
+        type: boolean
+        default: true
+      period:
+        description: "Optional KPI month YYYY-MM; blank = current Vietnam month"
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "Build and validate outputs without publishing KPI to SharePoint"
+        required: true
+        type: boolean
+        default: true
+  workflow_run:
+    workflows: ["MobiWork Daily Image Sync"]
+    types: [completed]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: mobiwork-sharepoint-production
+  cancel-in-progress: false
+
+jobs:
+  score-kpi:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, windows, x64, dms-ai]
+    timeout-minutes: 360
+    env:
+      PYTHONPATH: src
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ai.txt
+
+      - name: Install AI runtime dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ai.txt
+          pip check
+
+      - name: Compile AI/KPI sources
+        shell: pwsh
+        run: python -m compileall -q src/scoring src/kpi src/score_kpi_pipeline.py src/run_score_kpi.py tests_ai
+
+      - name: Run V2.3 policy/model tests
+        shell: pwsh
+        run: python -m unittest discover -s tests_ai -v
+
+      - name: Azure login with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Resolve SharePoint document library
+        shell: pwsh
+        run: |
+          $siteId = az rest --method get --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' --query id -o tsv
+          $drives = az rest --method get --url "https://graph.microsoft.com/v1.0/sites/$siteId/drives" | ConvertFrom-Json
+          $drive = $drives.value | Where-Object { $_.name.ToLowerInvariant() -eq "mobiworkdms" } | Select-Object -First 1
+          if (-not $drive) { throw "MobiWorkDMS drive not found" }
+          "SHAREPOINT_DRIVE_ID=$($drive.id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Score stored images and build KPI
+        shell: pwsh
+        env:
+          LOG_LEVEL: INFO
+          SHAREPOINT_HOST: vikodacomvn.sharepoint.com
+          SHAREPOINT_SITE_PATH: /sites/Planning
+          SHAREPOINT_LIBRARY: MobiWorkDMS
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          IMAGE_ROOT_FOLDER: Data anh
+          AI_SHAREPOINT_ASSET_ROOT: Model Assets
+          AI_SYNC_ASSETS: ${{ github.event_name == 'workflow_dispatch' && inputs.sync_assets || true }}
+          KPI_SHAREPOINT_ROOT: KPI
+          KPI_PERIOD: ${{ github.event_name == 'workflow_dispatch' && inputs.period || '' }}
+          KPI_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          $arguments = @()
+          if ($env:KPI_PERIOD) {
+            $arguments += "--period"
+            $arguments += $env:KPI_PERIOD
+          }
+          if ($env:KPI_DRY_RUN -eq "true") {
+            $arguments += "--dry-run"
+          }
+          python src/run_score_kpi.py @arguments
+
+      - name: Publish AI/KPI summary
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $path = "runtime/output/run_manifest.json"
+          if (-not (Test-Path $path)) { exit 0 }
+          $data = Get-Content $path -Raw | ConvertFrom-Json
+          @(
+            "## Image Scoring + Sales KPI",
+            "",
+            "- Status: **$($data.status)**",
+            "- Dry run: **$($data.dry_run)**",
+            "- KPI period: **$($data.period)**",
+            "- Image rows: **$($data.scoring.images)**",
+            "- Stored images loaded: **$($data.scoring.stored_images_loaded)**",
+            "- Cache hits: **$($data.scoring.cache_hits)**",
+            "- New unique scores: **$($data.scoring.new_unique_scores)**",
+            "- KPI customers: **$($data.customers_in_kpi)**",
+            "- KPI employees: **$($data.employees_in_kpi)**",
+            "- Pipeline signature: `$($data.pipeline_signature)`"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload AI/KPI artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-scoring-kpi-${{ github.run_id }}-${{ github.run_attempt }}
+          path: runtime/output/
+          if-no-files-found: ignore
+          retention-days: 30
