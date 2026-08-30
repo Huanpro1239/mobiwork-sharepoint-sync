@@ -58,12 +58,13 @@ def sync_cloud_assets(client: ImageSharePointClient) -> CloudAssetResult:
     for remote_path, local_path in specs:
         _download_file(client, asset_drive_id, remote_path, local_path)
 
-    # Existing validation code expects these reference placeholders. The
-    # prebuilt classifier never reads them; it consumes CACHE_FILE directly.
+    # The prebuilt classifier consumes CACHE_FILE directly. Reference folders
+    # are not downloaded on ephemeral runners, but validation expects the
+    # directory/registry paths to exist.
     REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
     if not REFERENCE_OVERRIDES.exists():
         REFERENCE_OVERRIDES.write_text(
-            "relative_path,action,new_subcategory\n",
+            "relative_path,action,effective_subcategory,reason,source\n",
             encoding="utf-8-sig",
         )
 
