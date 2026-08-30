@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from image_storage import ImageSharePointClient
-from project_paths import CACHE_DIR, REFERENCE_DIR, TEMPLATE_EXCEL, WEIGHTS_DIR, ensure_runtime_dirs
+from project_paths import REFERENCE_DIR, TEMPLATE_EXCEL, ensure_runtime_dirs
 from scoring.config import CACHE_FILE, REFERENCE_OVERRIDES, YOLO_WEIGHTS
 
 
