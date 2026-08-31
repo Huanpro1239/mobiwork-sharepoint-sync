@@ -25,6 +25,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: write
 
 # Image writes share the same production lock as the report pipeline so Data anh
 # is never modified concurrently with SharePoint monthly master updates.
@@ -66,20 +67,23 @@ jobs:
             force_from_date="$INPUT_FROM_DATE"
             mode="manual-backfill"
           elif [ "$EVENT_NAME" = "push" ]; then
-            # Marker pushes are targeted repair runs, not a full retained-window scan.
-            # Three days covers delayed/missing recent uploads while keeping Graph calls bounded.
+            # Marker pushes intentionally reconcile the complete retained window.
+            # The reliable reconciler uses folder indexes + bounded batches, so this
+            # is now safe and is the fastest way to repair historical holes.
             force_from_date=$(python - <<'PY'
           from datetime import datetime, timedelta
           from zoneinfo import ZoneInfo
 
           today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
-          print((today - timedelta(days=3)).isoformat())
+          first_this_month = today.replace(day=1)
+          previous_month = (first_this_month - timedelta(days=1)).replace(day=1)
+          print(previous_month.isoformat())
           PY
             )
-            mode="targeted-repair"
+            mode="full-retained-reconcile"
           else
-            # Scheduled production runs use Data anh/_state.json. The image-sync code
-            # automatically overlaps one day and honors retry_from_date after failures.
+            # Scheduled production runs use Data anh/_state.json. The reconciler
+            # overlaps one day and honors retry_from_date after failures/deferred work.
             force_from_date=""
             mode="incremental-state"
           fi
@@ -183,11 +187,13 @@ jobs:
           IMAGE_SEQUENCE_FIELD: "stt_hinh"
           IMAGE_REQUIRE_GHI_TON: "false"
           IMAGE_REQUEST_TIMEOUT_SECONDS: "30"
-          IMAGE_MAX_DOWNLOAD_RETRIES: "2"
+          IMAGE_MAX_DOWNLOAD_RETRIES: "4"
           IMAGE_MAX_BYTES: "20971520"
           IMAGE_ALLOWED_HOSTS: "dmsimages.mobiwork.vn"
           IMAGE_FORCE_FROM_DATE: ${{ env.IMAGE_FORCE_FROM_DATE }}
-          # Existing non-empty files are skipped; only new or missing images are downloaded.
+          IMAGE_SYNC_MAX_UPLOADS_PER_RUN: "1500"
+          # Persistent source failures fail the run; bounded backlog is warming_up,
+          # checkpointed in Data anh/_state.json, and automatically continued.
           IMAGE_FAIL_ON_PARTIAL: "true"
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_images.py
@@ -219,10 +225,17 @@ jobs:
               f"- Source workbooks: **{len(image.get('source_files', []))}**",
               f"- Retained months: `{', '.join(image.get('retained_months', []))}`",
               f"- Records scanned: **{int(image.get('records_scanned', 0)):,}**",
-              f"- Expected image links: **{int(image.get('candidate_count', 0)):,}**",
-              f"- New/missing images downloaded: **{int(image.get('uploaded_count', 0)):,}**",
+              f"- Raw image links: **{int(image.get('candidate_count', 0)):,}**",
+              f"- Unique image targets: **{int(image.get('unique_target_count', 0)):,}**",
+              f"- Duplicate source rows removed: **{int(image.get('duplicate_candidate_count', 0)):,}**",
               f"- Already present: **{int(image.get('skipped_existing_count', 0)):,}**",
-              f"- Remaining failures: **{int(image.get('failed_count', 0)):,}**",
+              f"- Downloaded this batch: **{int(image.get('uploaded_count', 0)):,}**",
+              f"- Deferred to next batch: **{int(image.get('deferred_count', 0)):,}**",
+              f"- Download failures: **{int(image.get('failed_count', 0)):,}**",
+              f"- Pending remaining: **{int(image.get('pending_remaining', 0)):,}**",
+              f"- Completeness: **{float(image.get('completeness_pct', 0)):.4f}%**",
+              f"- SharePoint folder listings: **{int(image.get('remote_folder_list_calls', 0)):,}**",
+              f"- Folder listing failures: **{int(image.get('remote_folder_list_failures', 0)):,}**",
               f"- Downloaded bytes: **{int(image.get('downloaded_bytes', 0)):,}**",
               f"- Duration: **{image.get('duration_seconds', 0)} s**",
               f"- Retry from date: `{image.get('retry_from_date') or 'none'}`",
@@ -233,6 +246,49 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
           PY
+
+      - name: Continue image catch-up
+        if: ${{ always() && !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          path="output/image_sync_manifest.json"
+          if [ ! -f "$path" ]; then
+            exit 0
+          fi
+
+          status=$(jq -r '.status // "unknown"' "$path")
+          uploaded=$(jq -r '.image_sync.uploaded_count // 0' "$path")
+          pending=$(jq -r '.image_sync.pending_remaining // 0' "$path")
+          retry_from=$(jq -r '.image_sync.retry_from_date // ""' "$path")
+
+          echo "Image catch-up: status=$status uploaded=$uploaded pending=$pending retry_from=$retry_from"
+          if [ "$status" != "warming_up" ] || [ "$pending" -le 0 ] || [ "$uploaded" -le 0 ]; then
+            exit 0
+          fi
+          if [ -z "$retry_from" ] || [ "$retry_from" = "null" ]; then
+            echo "::error::warming_up manifest has no retry_from_date"
+            exit 1
+          fi
+
+          python - "$retry_from" > /tmp/image-dispatch.json <<'PY'
+          import json
+          import sys
+
+          print(json.dumps({
+              "ref": "main",
+              "inputs": {"dry_run": "false", "from_date": sys.argv[1]},
+          }))
+          PY
+
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-images.yml/dispatches" \
+            --input /tmp/image-dispatch.json
+          echo "Requested next image catch-up batch from $retry_from"
 
       - name: Upload daily image sync manifest
         if: ${{ always() }}

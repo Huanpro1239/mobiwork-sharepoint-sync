@@ -8,7 +8,8 @@ from pathlib import Path
 
 import main as core
 from image_storage import ImageSharePointClient
-from image_sync import ImageSyncConfig, run_image_sync
+from image_sync import ImageSyncConfig
+from image_sync_reliable import run_image_sync_reliable
 from mobiwork import MobiWorkClient
 from sharepoint_image_source import SharePointMonthlyImageSource
 
@@ -40,9 +41,10 @@ def run() -> dict:
     reports = core.enabled_reports()
     today = datetime.now(core.VN_TZ).date()
     config = ImageSyncConfig.from_env()
+    batch_limit = int(os.environ.get("IMAGE_SYNC_MAX_UPLOADS_PER_RUN", "1500"))
 
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "today_vn": today.isoformat(),
         "timezone": "Asia/Ho_Chi_Minh",
@@ -61,6 +63,7 @@ def run() -> dict:
             "request_timeout_seconds": config.request_timeout,
             "max_download_retries": config.max_download_retries,
             "max_image_bytes": config.max_image_bytes,
+            "max_uploads_per_run": batch_limit,
             "allowed_hosts": list(config.allowed_hosts),
             "force_from_date": (
                 config.force_from_date.isoformat() if config.force_from_date else None
@@ -84,7 +87,7 @@ def run() -> dict:
     )
 
     try:
-        result = run_image_sync(
+        result = run_image_sync_reliable(
             reports=reports,
             source=source,
             storage=storage,
