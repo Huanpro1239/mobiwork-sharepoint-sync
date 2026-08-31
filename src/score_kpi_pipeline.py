@@ -24,7 +24,13 @@ from kpi.customer_history import (
     history_csv_bytes,
 )
 from kpi.kpi_exporter import KPIExporter
-from project_paths import OUTPUT_DIR, OUTPUT_EXCEL, SCORE_CACHE_DB, TEMPLATE_EXCEL, ensure_runtime_dirs
+from project_paths import (
+    OUTPUT_DIR,
+    OUTPUT_EXCEL,
+    SCORE_CACHE_DB,
+    TEMPLATE_EXCEL,
+    ensure_runtime_dirs,
+)
 from scoring.assets import SharePointAssetManager
 from scoring.records import assign_record_ids, build_audit_record, technical_failure_payload
 from scoring.score_cache import ScoreCache
@@ -50,21 +56,56 @@ def _resolve_drive(client: ImageSharePointClient) -> str:
     return client.get_drive_id(client.get_site_id())
 
 
-def _load_remote_score_rows(client, drive_id: str, period: pd.Timestamp) -> list[dict[str, object]]:
+def _checkpoint_remote_path(root: str, period: pd.Timestamp) -> str:
+    return f"{root}/{period:%Y-%m}/scoring_checkpoint.csv"
+
+
+def _checkpoint_manifest_remote_path(root: str, period: pd.Timestamp) -> str:
+    return f"{root}/{period:%Y-%m}/scoring_checkpoint_manifest.json"
+
+
+def _read_remote_score_csv(client, drive_id: str, remote: str) -> list[dict[str, object]]:
+    content = client.download_file_bytes(drive_id, remote)
+    if not content:
+        return []
+    try:
+        frame = pd.read_csv(BytesIO(content), dtype=str, keep_default_na=False)
+    except Exception as error:
+        LOG.warning("Cannot seed score cache from %s: %s", remote, error)
+        return []
+    return frame.to_dict(orient="records")
+
+
+def _load_remote_score_rows(
+    client, drive_id: str, period: pd.Timestamp
+) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     root = os.environ.get("KPI_SHAREPOINT_ROOT", "KPI").strip().strip("/") or "KPI"
-    for month in (period - pd.offsets.MonthBegin(1), period):
-        remote = f"{root}/{month:%Y-%m}/Ket_qua_Chi_tiet_Anh.csv"
-        content = client.download_file_bytes(drive_id, remote)
-        if not content:
-            continue
-        try:
-            frame = pd.read_csv(BytesIO(content), dtype=str, keep_default_na=False)
-        except Exception as error:
-            LOG.warning("Cannot seed score cache from %s: %s", remote, error)
-            continue
-        rows.extend(frame.to_dict(orient="records"))
+    previous = period - pd.offsets.MonthBegin(1)
+    remotes = (
+        f"{root}/{previous:%Y-%m}/Ket_qua_Chi_tiet_Anh.csv",
+        f"{root}/{period:%Y-%m}/Ket_qua_Chi_tiet_Anh.csv",
+        _checkpoint_remote_path(root, period),
+    )
+    for remote in remotes:
+        rows.extend(_read_remote_score_csv(client, drive_id, remote))
     return rows
+
+
+def _checkpoint_frame(
+    result_frame: pd.DataFrame, pipeline_signature: str
+) -> pd.DataFrame:
+    """Keep only reusable current-model rows for the resumable checkpoint."""
+
+    if result_frame.empty:
+        return result_frame.copy()
+    signature = result_frame.get("pipeline_signature", pd.Series(dtype=str)).astype(str)
+    image_sha = result_frame.get("image_sha256", pd.Series(dtype=str)).astype(str)
+    mask = signature.eq(pipeline_signature) & image_sha.str.strip().ne("")
+    checkpoint = result_frame.loc[mask].copy()
+    if "hinh_anh" in checkpoint.columns:
+        checkpoint = checkpoint.drop_duplicates(subset=["hinh_anh"], keep="last")
+    return checkpoint
 
 
 def _download_previous_kpi(client, drive_id: str, remote_path: str) -> Path | None:
@@ -105,7 +146,9 @@ def _download_image_rows(source, client, drive_id: str, rows: list[dict[str, obj
         return index, remote, content
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(fetch, index, row): index for index, row in enumerate(rows)}
+        futures = {
+            executor.submit(fetch, index, row): index for index, row in enumerate(rows)
+        }
         for future in as_completed(futures):
             index = futures[future]
             try:
@@ -140,6 +183,7 @@ def _build_image_results(
         "remote_seeded_scores": 0,
         "cache_hits": 0,
         "new_unique_scores": 0,
+        "production_pending_remaining": 0,
     }
 
     cache = ScoreCache(SCORE_CACHE_DB)
@@ -222,9 +266,6 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
     reports = core.enabled_reports()
     source = SharePointMonthlyKPISource(client, drive_id, reports)
 
-    # Compact customer history replaces repeated multi-year workbook reads.
-    # First run bootstraps monthly masters one file at a time; later runs load
-    # only M-1/M and preserve the earliest known customer activity forever.
     history_status, inputs = build_customer_history_status(
         source, client, drive_id, current
     )
@@ -245,6 +286,7 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
             "remote_seeded_scores": 0,
             "cache_hits": 0,
             "new_unique_scores": 0,
+            "production_pending_remaining": 0,
         }
         result_frame = pd.DataFrame(
             columns=(
@@ -281,6 +323,8 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
     remote_workbook = f"{remote_folder}/Ket_qua_cham_cong_va_thuong_KPI.xlsx"
     remote_detail = f"{remote_folder}/Ket_qua_Chi_tiet_Anh.csv"
     remote_manifest = f"{remote_folder}/run_manifest.json"
+    remote_checkpoint = _checkpoint_remote_path(root, period_start)
+    remote_checkpoint_manifest = _checkpoint_manifest_remote_path(root, period_start)
 
     prior = _download_previous_kpi(client, drive_id, remote_workbook)
     exporter = KPIExporter(
@@ -303,9 +347,12 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
 
     detail_csv = OUTPUT_DIR / "Ket_qua_Chi_tiet_Anh.csv"
     result_frame.to_csv(detail_csv, index=False, encoding="utf-8-sig")
+
+    pending_remaining = int(scoring_stats.get("production_pending_remaining") or 0)
+    run_status = "warming_up" if not dry_run and pending_remaining > 0 else "success"
     manifest = {
-        "schema_version": 3,
-        "status": "success",
+        "schema_version": 4,
+        "status": run_status,
         "period": period_start.strftime("%Y-%m"),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "scoring_pipeline_version": "2.3.0",
@@ -336,8 +383,15 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
             "detail_csv": remote_detail,
             "manifest": remote_manifest,
             "customer_history": history_status.remote_path,
+            "scoring_checkpoint": remote_checkpoint,
+            "scoring_checkpoint_manifest": remote_checkpoint_manifest,
         },
     }
+    if run_status == "warming_up":
+        manifest["warnings"].append(
+            f"AI production catch-up còn {pending_remaining:,} ảnh; KPI chính chưa bị ghi đè."
+        )
+
     manifest_path = OUTPUT_DIR / "run_manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
@@ -345,25 +399,42 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
     )
 
     if not dry_run:
-        client.upload_file(drive_id, OUTPUT_EXCEL, remote_folder)
-        client.upload_bytes(
-            drive_id,
-            remote_detail,
-            detail_csv.read_bytes(),
-            "text/csv; charset=utf-8",
-        )
-        client.upload_bytes(
-            drive_id,
-            history_status.remote_path,
-            history_csv_bytes(history_status.history),
-            "text/csv; charset=utf-8",
-        )
-        client.upload_json(drive_id, remote_manifest, manifest)
+        if run_status == "warming_up":
+            checkpoint = _checkpoint_frame(result_frame, pipeline_signature)
+            checkpoint_csv = OUTPUT_DIR / "scoring_checkpoint.csv"
+            checkpoint.to_csv(checkpoint_csv, index=False, encoding="utf-8-sig")
+            client.upload_bytes(
+                drive_id,
+                remote_checkpoint,
+                checkpoint_csv.read_bytes(),
+                "text/csv; charset=utf-8",
+            )
+            client.upload_json(drive_id, remote_checkpoint_manifest, manifest)
+            LOG.warning(
+                "Production scoring warm-up checkpoint saved: rows=%s remaining=%s; final KPI untouched",
+                len(checkpoint),
+                pending_remaining,
+            )
+        else:
+            client.upload_file(drive_id, OUTPUT_EXCEL, remote_folder)
+            client.upload_bytes(
+                drive_id,
+                remote_detail,
+                detail_csv.read_bytes(),
+                "text/csv; charset=utf-8",
+            )
+            client.upload_bytes(
+                drive_id,
+                history_status.remote_path,
+                history_csv_bytes(history_status.history),
+                "text/csv; charset=utf-8",
+            )
+            client.upload_json(drive_id, remote_manifest, manifest)
 
     return PipelineRunResult(
         manifest_path=manifest_path,
         workbook_path=OUTPUT_EXCEL,
         detail_csv_path=detail_csv,
         remote_workbook_path=remote_workbook,
-        status="success",
+        status=run_status,
     )
