@@ -1,17 +1,9 @@
-"""Cloud migration compatibility for the one-off KPI sample run.
-
-Historical image decisions are joined by the exact MobiWork image URL so the
-sample does not redownload thousands of already-reviewed photos just to recover
-SHA256 values. Only URLs absent from the legacy export are downloaded/scored.
-An optional sample-only cap can bound how many unmatched images are inferred
-while still carrying all rows through the workbook as auditable technical
-sample skips. The module also sanitizes impossible blank customer IDs while
-bootstrapping the compact customer-history master.
-"""
+"""Cloud scoring compatibility, migration reuse, and bounded production catch-up."""
 from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import logging
 import os
 from io import StringIO
@@ -28,28 +20,63 @@ from scoring.score_cache import ScoreCache
 LOG = logging.getLogger("mobiwork_sync")
 
 
-def _sample_pending_limit() -> int:
-    """Return the sample-only unmatched-image inference cap; zero means unlimited."""
-
-    raw = os.environ.get("AI_SAMPLE_MAX_PENDING_IMAGES", "").strip()
+def _bounded_limit(name: str) -> int:
+    raw = os.environ.get(name, "").strip()
     if not raw:
         return 0
     try:
         limit = int(raw)
     except ValueError as error:
-        raise ValueError("AI_SAMPLE_MAX_PENDING_IMAGES must be an integer") from error
+        raise ValueError(f"{name} must be an integer") from error
     if limit < 0:
-        raise ValueError("AI_SAMPLE_MAX_PENDING_IMAGES must be >= 0")
+        raise ValueError(f"{name} must be >= 0")
     return limit
 
 
-def _sample_pending_selection() -> str:
-    """Return deterministic bounded-sample ordering without changing production runs."""
+def _sample_pending_limit() -> int:
+    """Sample-only unmatched-image cap; zero means unlimited."""
 
+    return _bounded_limit("AI_SAMPLE_MAX_PENDING_IMAGES")
+
+
+def _production_pending_limit() -> int:
+    """Production catch-up cap; zero means unlimited."""
+
+    return _bounded_limit("AI_PRODUCTION_MAX_PENDING_IMAGES")
+
+
+def _sample_pending_selection() -> str:
     value = os.environ.get("AI_SAMPLE_PENDING_SELECTION", "latest").strip().casefold()
     if value not in {"latest", "oldest"}:
         raise ValueError("AI_SAMPLE_PENDING_SELECTION must be 'latest' or 'oldest'")
     return value
+
+
+def _remote_scores_by_url(
+    rows: list[dict[str, object]], pipeline_signature: str
+) -> dict[str, dict[str, object]]:
+    """Return reusable current-model records keyed by exact source URL."""
+
+    output: dict[str, dict[str, object]] = {}
+    for row in rows:
+        url = str(row.get("hinh_anh", "")).strip()
+        signature = str(row.get("pipeline_signature", "")).strip()
+        image_sha = str(row.get("image_sha256", "")).strip()
+        payload_text = row.get("score_payload_json")
+        if not url or signature != pipeline_signature or not image_sha or not payload_text:
+            continue
+        try:
+            payload = json.loads(str(payload_text))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        output[url] = {
+            "image_sha256": image_sha,
+            "payload": payload,
+            "Tên File": str(row.get("Tên File", "")).strip(),
+        }
+    return output
 
 
 def install_history_sanitizer() -> None:
@@ -100,26 +127,54 @@ def _load_legacy_by_url(client) -> dict[str, dict[str, str]]:
     return result
 
 
+def _pending_payload(reason: str) -> dict[str, object]:
+    payload = technical_failure_payload(reason)
+    payload["Trạng Thái Quyết Định"] = "PENDING_SCORE"
+    payload["Căn Cứ Nhận Diện"] = f"Chờ chấm AI theo batch: {reason} [PENDING_SCORE]"
+    return payload
+
+
 def install_legacy_url_scoring(client) -> int:
-    """Patch the cloud run so reviewed historical URLs bypass model inference."""
+    """Patch cloud scoring with legacy reuse and resumable V2.3 production batches."""
 
     import score_kpi_pipeline as pipeline
     from scoring.service import ImageScoringService
 
     legacy_by_url = _load_legacy_by_url(client)
-    if not legacy_by_url:
-        return 0
 
     def build_image_results(source, runtime_client, drive_id, rows, period_start):
         record_ids = assign_record_ids(rows)
         output: list[dict[str, object] | None] = [None] * len(rows)
         legacy_indices: set[int] = set()
+        remote_indices: set[int] = set()
 
         cache = ScoreCache(SCORE_CACHE_DB)
         with ImageScoringService(cache=cache) as service:
             signature = service.pipeline_signature
+            remote_rows = pipeline._load_remote_score_rows(
+                runtime_client, drive_id, period_start
+            )
+            remote_seeded = cache.seed(remote_rows, signature)
+            remote_by_url = _remote_scores_by_url(remote_rows, signature)
+
             for index, row in enumerate(rows):
                 url = str(row.get("hinh_anh", "")).strip()
+                prior = remote_by_url.get(url)
+                if prior is not None:
+                    record = build_audit_record(
+                        row,
+                        record_ids[index],
+                        signature,
+                        str(prior["image_sha256"]),
+                        prior["payload"],
+                    )
+                    prior_name = str(prior.get("Tên File", "")).strip()
+                    if prior_name:
+                        record["Tên File"] = prior_name
+                    output[index] = record
+                    remote_indices.add(index)
+                    continue
+
                 legacy = legacy_by_url.get(url)
                 if legacy is None:
                     continue
@@ -136,45 +191,45 @@ def install_legacy_url_scoring(client) -> int:
                 output[index] = record
                 legacy_indices.add(index)
 
+            reused_indices = legacy_indices | remote_indices
             all_pending_indices = [
-                i for i in range(len(rows)) if i not in legacy_indices
+                i for i in range(len(rows)) if i not in reused_indices
             ]
             pending_indices = list(all_pending_indices)
             skipped_indices: list[int] = []
+
             sample_limit = _sample_pending_limit()
+            production_limit = _production_pending_limit() if not sample_limit else 0
             sample_selection = _sample_pending_selection()
-            if sample_limit and len(pending_indices) > sample_limit:
-                # The default remains newest-first for migration smoke tests.
-                # Strict stored-image validation may explicitly choose oldest
-                # unmatched rows so a just-arrived monthly master cannot make the
-                # probe fail only because its newest photos are still reconciling.
-                if sample_selection == "oldest":
-                    pending_indices = pending_indices[:sample_limit]
-                    selected = set(pending_indices)
-                    skipped_indices = [
-                        i for i in all_pending_indices if i not in selected
-                    ]
+            batch_mode = "sample" if sample_limit else "production" if production_limit else "unbounded"
+            batch_limit = sample_limit or production_limit
+            selection = sample_selection if sample_limit else "oldest"
+
+            if batch_limit and len(pending_indices) > batch_limit:
+                if selection == "oldest":
+                    pending_indices = pending_indices[:batch_limit]
                 else:
-                    pending_indices = pending_indices[-sample_limit:]
-                    selected = set(pending_indices)
-                    skipped_indices = [
-                        i for i in all_pending_indices if i not in selected
-                    ]
+                    pending_indices = pending_indices[-batch_limit:]
+                selected = set(pending_indices)
+                skipped_indices = [i for i in all_pending_indices if i not in selected]
                 for original_index in skipped_indices:
-                    payload = technical_failure_payload(
-                        "SAMPLE_SKIPPED: unmatched image omitted from bounded cloud validation"
+                    reason = (
+                        "unmatched image omitted from bounded cloud validation"
+                        if sample_limit
+                        else "production backlog deferred to the next checkpoint batch"
                     )
                     output[original_index] = build_audit_record(
                         rows[original_index],
                         record_ids[original_index],
                         signature,
                         "",
-                        payload,
+                        _pending_payload(reason),
                     )
                 LOG.warning(
-                    "Bounded cloud sample: %s unmatched image rows total; selection=%s; scoring %s and marking %s as SAMPLE_SKIPPED",
+                    "Bounded cloud scoring: %s unmatched rows; mode=%s selection=%s; scoring %s and deferring %s",
                     len(all_pending_indices),
-                    sample_selection,
+                    batch_mode,
+                    selection,
                     len(pending_indices),
                     len(skipped_indices),
                 )
@@ -192,22 +247,25 @@ def install_legacy_url_scoring(client) -> int:
                 for local_index, (_remote, content, error) in enumerate(downloads)
                 if content is not None and error is None
             ]
+            failed_downloads = len(pending_rows) - len(valid_pending)
+            production_remaining = (
+                len(skipped_indices) + failed_downloads if production_limit else 0
+            )
             stats = {
                 "images": len(rows),
                 "legacy_url_hits": len(legacy_indices),
-                "pending_before_sample_limit": len(all_pending_indices),
+                "remote_url_hits": len(remote_indices),
+                "pending_before_batch_limit": len(all_pending_indices),
                 "sample_pending_limit": sample_limit,
                 "sample_pending_selection": sample_selection,
-                "sample_scored_pending_images": len(pending_indices),
-                "sample_skipped_images": len(skipped_indices),
+                "sample_scored_pending_images": len(pending_indices) if sample_limit else 0,
+                "sample_skipped_images": len(skipped_indices) if sample_limit else 0,
+                "production_batch_limit": production_limit,
+                "production_batch_scored_images": len(pending_indices) if production_limit else 0,
+                "production_pending_remaining": production_remaining,
                 "stored_images_loaded": len(valid_pending),
-                "missing_or_failed_images": len(pending_rows) - len(valid_pending),
-                "remote_seeded_scores": cache.seed(
-                    pipeline._load_remote_score_rows(
-                        runtime_client, drive_id, period_start
-                    ),
-                    signature,
-                ),
+                "missing_or_failed_images": failed_downloads,
+                "remote_seeded_scores": remote_seeded,
                 "cache_hits": 0,
                 "new_unique_scores": 0,
             }
@@ -261,13 +319,14 @@ def install_legacy_url_scoring(client) -> int:
                 )
 
         if any(item is None for item in output):
-            raise RuntimeError("Cloud legacy URL scoring left unresolved result rows")
+            raise RuntimeError("Cloud URL scoring left unresolved result rows")
         LOG.info(
-            "Legacy URL reuse: %s/%s image rows reused; %s unmatched before sample limit; selection=%s; %s scored by stored-image lookup; %s sample-skipped",
+            "Cloud URL reuse: legacy=%s remote_v23=%s total=%s; unmatched=%s; mode=%s; attempted=%s; deferred=%s",
             len(legacy_indices),
+            len(remote_indices),
             len(rows),
             len(all_pending_indices),
-            sample_selection,
+            batch_mode,
             len(pending_indices),
             len(skipped_indices),
         )
