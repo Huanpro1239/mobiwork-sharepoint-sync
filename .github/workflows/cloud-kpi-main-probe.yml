@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: bounded-real-image-sample-6
+# retry: bounded-real-image-sample-7
 
 on:
   push:
@@ -132,6 +132,7 @@ jobs:
 
           client = ImageSharePointClient.from_env()
           drive_id = os.environ['SHAREPOINT_DRIVE_ID']
+          sample_id = os.environ['GITHUB_RUN_ID']
           folder = 'KPI/2026-08'
           workbook = Path('runtime/output/Ket_qua_cham_cong_va_thuong_KPI.xlsx')
           detail = Path('runtime/output/Ket_qua_Chi_tiet_Anh.csv')
@@ -139,7 +140,7 @@ jobs:
           manifest_path = Path('runtime/output/run_manifest.json')
           expected = []
 
-          workbook_remote = f'{folder}/Ket_qua_cham_cong_va_thuong_KPI_SAMPLE_2026-08-31.xlsx'
+          workbook_remote = f'{folder}/Ket_qua_cham_cong_va_thuong_KPI_SAMPLE_{sample_id}.xlsx'
           client.upload_bytes(
               drive_id,
               workbook_remote,
@@ -148,7 +149,7 @@ jobs:
           )
           expected.append(workbook_remote)
           if detail.is_file():
-              detail_remote = f'{folder}/Ket_qua_Chi_tiet_Anh_SAMPLE_2026-08-31.csv'
+              detail_remote = f'{folder}/Ket_qua_Chi_tiet_Anh_SAMPLE_{sample_id}.csv'
               client.upload_bytes(
                   drive_id,
                   detail_remote,
@@ -157,7 +158,7 @@ jobs:
               )
               expected.append(detail_remote)
           if history.is_file():
-              history_remote = 'KPI/History/customer_history_SAMPLE_2026-08-31.csv'
+              history_remote = f'KPI/History/customer_history_SAMPLE_{sample_id}.csv'
               client.upload_bytes(
                   drive_id,
                   history_remote,
@@ -167,9 +168,10 @@ jobs:
               expected.append(history_remote)
           manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
           manifest['sample_publish'] = True
+          manifest['sample_run_id'] = sample_id
           manifest['model_bundle_note'] = 'legacy bundle 2.0.0 used for sample migration; not final production V2.3 bundle'
           manifest['sample_pending_limit'] = int(os.environ.get('AI_SAMPLE_MAX_PENDING_IMAGES', '0'))
-          manifest_remote = f'{folder}/run_manifest_SAMPLE_2026-08-31.json'
+          manifest_remote = f'{folder}/run_manifest_SAMPLE_{sample_id}.json'
           client.upload_json(drive_id, manifest_remote, manifest)
           expected.append(manifest_remote)
 
@@ -179,6 +181,7 @@ jobs:
                   raise RuntimeError(f'SharePoint SAMPLE verification failed: {remote}')
               print(f'sharepoint_verified={remote} bytes={item.get("size")}')
           print('sample_sharepoint_folder=' + folder)
+          print('sample_run_id=' + sample_id)
           PY
 
       - name: Upload sample artifacts to GitHub
