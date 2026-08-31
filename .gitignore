@@ -90,6 +90,7 @@ __pypackages__/
 !.env.example
 .envrc
 .venv
+.venv-ai/
 env/
 venv/
 ENV/
@@ -102,6 +103,10 @@ venv.bak/
 .spyproject
 .ropeproject
 tempCodeRunnerFile.py
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
 
 # Static-analysis caches
 .mypy_cache/
@@ -136,3 +141,29 @@ __marimo__/
 # Generated MobiWork business data and audit outputs.
 # Never commit exported operational/customer data to the repository.
 output/
+runtime/
+.runtime/
+cache/
+input/
+feedback/
+
+# Private AI/model/reference assets. These are synchronized from SharePoint.
+weights/
+reference/
+Nguoi cham/
+Model Assets/
+AI Assets/
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.sqlite
+*.sqlite3
+reference_bundle*.bin
+
+# Generated KPI artifacts
+Ket_qua_*.xlsx
+Ket_qua_*.csv
+Data cham anh*.xlsx
+*_atomic.tmp
+*.rollback
