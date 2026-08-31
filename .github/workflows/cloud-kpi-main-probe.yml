@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: bounded-real-image-sample-7
+# retry: strict-v23-real-image-sample
 
 on:
   push:
@@ -29,7 +29,7 @@ jobs:
       IMAGE_ROOT_FOLDER: Data anh
       AI_RUNTIME_MODE: cloud
       AI_PREBUILT_BUNDLE: 'true'
-      AI_ALLOW_LEGACY_PREBUILT_BUNDLE: 'true'
+      AI_PREBUILT_BUNDLE_REMOTE: reference_bundle_v23_33357852900.pkl
       AI_SYNC_ASSETS: 'false'
       AI_DEVICE: cpu
       AI_DOWNLOAD_WORKERS: '12'
@@ -102,11 +102,13 @@ jobs:
       - name: Build bounded August KPI sample from real stored data
         run: python src/run_score_kpi_cloud.py --period 2026-08 --dry-run
 
-      - name: Validate workbook formulas
+      - name: Validate workbook formulas and strict image scoring
         run: |
           python - <<'PY'
+          import json
           from pathlib import Path
           from zipfile import ZipFile
+
           path = Path('runtime/output/Ket_qua_cham_cong_va_thuong_KPI.xlsx')
           if not path.is_file() or path.stat().st_size == 0:
               raise SystemExit('KPI workbook missing')
@@ -120,6 +122,28 @@ jobs:
           print(f'formula_count={formulas}')
           if formulas < 100:
               raise SystemExit(f'Formula count too low: {formulas}')
+
+          manifest_path = Path('runtime/output/run_manifest.json')
+          if not manifest_path.is_file():
+              raise SystemExit('KPI manifest missing')
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          if str(manifest.get('scoring_pipeline_version')) != '2.3.0':
+              raise SystemExit(f"Unexpected scoring pipeline: {manifest.get('scoring_pipeline_version')!r}")
+          scoring = manifest.get('scoring') or {}
+          stored = int(scoring.get('stored_images_loaded') or 0)
+          new_scores = int(scoring.get('new_unique_scores') or 0)
+          attempted = int(scoring.get('sample_scored_pending_images') or 0)
+          failed = int(scoring.get('missing_or_failed_images') or 0)
+          print(f'stored_images_loaded={stored}')
+          print(f'new_unique_scores={new_scores}')
+          print(f'sample_scored_pending_images={attempted}')
+          print(f'missing_or_failed_images={failed}')
+          if stored <= 0:
+              raise SystemExit('Strict E2E failed: no retained SharePoint images were loaded')
+          if new_scores <= 0:
+              raise SystemExit('Strict E2E failed: no new image scores were produced')
+          if attempted > 0 and failed >= attempted:
+              raise SystemExit('Strict E2E failed: all sampled pending images failed')
           PY
 
       - name: Publish validated SAMPLE files to MobiWorkDMS
@@ -169,7 +193,7 @@ jobs:
           manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
           manifest['sample_publish'] = True
           manifest['sample_run_id'] = sample_id
-          manifest['model_bundle_note'] = 'legacy bundle 2.0.0 used for sample migration; not final production V2.3 bundle'
+          manifest['model_bundle_note'] = 'strict V2.3 versioned bundle reference_bundle_v23_33357852900.pkl'
           manifest['sample_pending_limit'] = int(os.environ.get('AI_SAMPLE_MAX_PENDING_IMAGES', '0'))
           manifest_remote = f'{folder}/run_manifest_SAMPLE_{sample_id}.json'
           client.upload_json(drive_id, manifest_remote, manifest)
