@@ -48,14 +48,17 @@ jobs:
       - name: Install runtime
         run: |
           python -m pip install --upgrade pip
-          pip install 'torch>=2.4,<3' --index-url https://download.pytorch.org/whl/cpu
+          pip install 'torch>=2.4,<3' 'torchvision>=0.19,<1' --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-ai.txt
           pip check
 
-      - name: Validate legacy MediaPipe face API
+      - name: Validate AI runtime imports
         run: |
           python - <<'PY'
+          import easyocr
           import mediapipe as mp
+          import torch
+          import torchvision
           from scoring.face_detector import FaceDetector
 
           if not hasattr(mp, 'solutions'):
@@ -66,8 +69,11 @@ jobs:
           close = getattr(detector.detector, 'close', None)
           if callable(close):
               close()
-          print(f'mediapipe_version={getattr(mp, "__version__", "unknown")}')
-          print('face_detector_smoke=ok')
+          print(f'torch={torch.__version__}')
+          print(f'torchvision={torchvision.__version__}')
+          print(f'easyocr={getattr(easyocr, "__version__", "unknown")}')
+          print(f'mediapipe={getattr(mp, "__version__", "unknown")}')
+          print('ai_runtime_smoke=ok')
           PY
 
       - name: Compile implementation
