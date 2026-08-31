@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: bounded-real-image-sample-5
+# retry: bounded-real-image-sample-6
 
 on:
   push:
@@ -64,14 +64,20 @@ jobs:
             ~/.cache/torch
             ~/.EasyOCR
             ~/.config/Ultralytics
-          key: dms-ai-sample-${{ runner.os }}-v2
+          key: dms-ai-sample-${{ runner.os }}-v3
 
       - name: Install AI runtime
         run: |
           python -m pip install --upgrade pip
-          pip install 'torch>=2.4,<3' --index-url https://download.pytorch.org/whl/cpu
+          pip install 'torch>=2.4,<3' 'torchvision>=0.19,<1' --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-ai.txt
           pip check
+          python - <<'PY'
+          import easyocr, torch, torchvision
+          print(f'torch={torch.__version__}')
+          print(f'torchvision={torchvision.__version__}')
+          print(f'easyocr={getattr(easyocr, "__version__", "unknown")}')
+          PY
 
       - name: Compile implementation
         run: python -m compileall -q src
