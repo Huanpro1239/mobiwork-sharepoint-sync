@@ -20,9 +20,10 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: write
 
 concurrency:
-  group: mobiwork-sharepoint-production
+  group: mobiwork-kpi-production
   cancel-in-progress: false
 
 jobs:
@@ -160,6 +161,25 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
               out.write("\n".join(lines) + "\n")
           PY
+
+      - name: Continue production catch-up
+        if: ${{ success() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          path="runtime/output/run_manifest.json"
+          [ -f "$path" ] || exit 0
+          status=$(jq -r '.status // ""' "$path")
+          dry_run=$(jq -r '.dry_run // true' "$path")
+          loaded=$(jq -r '.scoring.stored_images_loaded // 0' "$path")
+          period=$(jq -r '.period // ""' "$path")
+          if [ "$status" = "warming_up" ] && [ "$dry_run" = "false" ] && [ "$loaded" -gt 0 ]; then
+            echo "Queueing next production scoring batch for $period"
+            jq -n --arg period "$period" '{ref:"main",inputs:{period:$period,dry_run:"false"}}' \
+              | gh api --method POST \
+                  "repos/${GITHUB_REPOSITORY}/actions/workflows/image-scoring-kpi.yml/dispatches" \
+                  --input -
+          fi
 
       - name: Upload AI/KPI artifacts
         if: ${{ always() }}
