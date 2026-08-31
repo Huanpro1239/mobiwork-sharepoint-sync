@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: strict-v23-real-image-sample
+# retry: strict-v23-real-image-sample-1
 
 on:
   push:
