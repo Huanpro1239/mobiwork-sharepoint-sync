@@ -53,10 +53,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Compile Python sources
-        run: python -m compileall -q src
-
-      - name: Resolve rolling two-month window
+      - name: Resolve incremental or repair window
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -64,23 +61,33 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Explicit manual backfills remain authoritative.
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "${INPUT_FROM_DATE:-}" ]; then
             force_from_date="$INPUT_FROM_DATE"
-          else
+            mode="manual-backfill"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            # Marker pushes are targeted repair runs, not a full retained-window scan.
+            # Three days covers delayed/missing recent uploads while keeping Graph calls bounded.
             force_from_date=$(python - <<'PY'
           from datetime import datetime, timedelta
           from zoneinfo import ZoneInfo
 
           today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
-          first_this_month = today.replace(day=1)
-          previous_month = (first_this_month - timedelta(days=1)).replace(day=1)
-          print(previous_month.isoformat())
+          print((today - timedelta(days=3)).isoformat())
           PY
             )
+            mode="targeted-repair"
+          else
+            # Scheduled production runs use Data anh/_state.json. The image-sync code
+            # automatically overlaps one day and honors retry_from_date after failures.
+            force_from_date=""
+            mode="incremental-state"
           fi
 
           echo "IMAGE_FORCE_FROM_DATE=$force_from_date" >> "$GITHUB_ENV"
-          echo "Rolling image scan starts at: $force_from_date"
+          echo "IMAGE_SYNC_WINDOW_MODE=$mode" >> "$GITHUB_ENV"
+          echo "Image sync window mode: $mode"
+          echo "Forced start: ${force_from_date:-state cursor}"
 
       - name: Validate MobiWork image credentials
         env:
@@ -154,7 +161,7 @@ jobs:
           echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
           echo "MobiWorkDMS drive id resolved"
 
-      - name: Sync rolling two-month images from SharePoint visit data
+      - name: Sync images from SharePoint visit data
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -180,7 +187,6 @@ jobs:
           IMAGE_MAX_BYTES: "20971520"
           IMAGE_ALLOWED_HOSTS: "dmsimages.mobiwork.vn"
           IMAGE_FORCE_FROM_DATE: ${{ env.IMAGE_FORCE_FROM_DATE }}
-          # Every daily run is also an integrity check over the retained two-month window.
           # Existing non-empty files are skipped; only new or missing images are downloaded.
           IMAGE_FAIL_ON_PARTIAL: "true"
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
@@ -206,9 +212,10 @@ jobs:
               "",
               f"- Status: **{data.get('status', 'unknown')}**",
               f"- Source mode: `{data.get('source_mode', '')}`",
+              f"- Window mode: `{os.environ.get('IMAGE_SYNC_WINDOW_MODE', '')}`",
               f"- Vietnam date: `{data.get('today_vn', '')}`",
               f"- Scan range: `{image.get('from_date', '')}` → `{image.get('to_date', '')}`",
-              f"- Forced start: `{image.get('forced_from_date') or 'none'}`",
+              f"- Forced start: `{image.get('forced_from_date') or 'state cursor'}`",
               f"- Source workbooks: **{len(image.get('source_files', []))}**",
               f"- Retained months: `{', '.join(image.get('retained_months', []))}`",
               f"- Records scanned: **{int(image.get('records_scanned', 0)):,}**",
