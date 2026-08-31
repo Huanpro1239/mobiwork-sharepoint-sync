@@ -32,6 +32,13 @@ def _download_file(
     temporary.replace(local_path)
 
 
+def _asset_filename(env_name: str, default: str) -> str:
+    value = os.environ.get(env_name, default).strip().strip("/")
+    if not value or "/" in value or "\\" in value or value in {".", ".."}:
+        raise ValueError(f"{env_name} must be a single asset filename")
+    return value
+
+
 def sync_cloud_assets(client: ImageSharePointClient) -> CloudAssetResult:
     """Download the minimal immutable runtime bundle from SharePoint."""
 
@@ -50,8 +57,12 @@ def sync_cloud_assets(client: ImageSharePointClient) -> CloudAssetResult:
     if not root:
         raise ValueError("AI_SHAREPOINT_ASSET_ROOT must not be empty")
 
+    bundle_filename = _asset_filename(
+        "AI_PREBUILT_BUNDLE_REMOTE",
+        "reference_bundle_v2.pkl",
+    )
     specs = (
-        (f"{root}/reference_bundle_v2.pkl", CACHE_FILE),
+        (f"{root}/{bundle_filename}", CACHE_FILE),
         (f"{root}/yolov8s-world.pt", YOLO_WEIGHTS),
         (f"{root}/KPI_template.xlsx", TEMPLATE_EXCEL),
     )
