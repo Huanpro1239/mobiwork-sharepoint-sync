@@ -3,8 +3,10 @@
 Historical image decisions are joined by the exact MobiWork image URL so the
 sample does not redownload thousands of already-reviewed photos just to recover
 SHA256 values. Only URLs absent from the legacy export are downloaded/scored.
-The module also sanitizes impossible blank customer IDs while bootstrapping the
-compact customer-history master.
+An optional sample-only cap can bound how many unmatched images are inferred
+while still carrying all rows through the workbook as auditable technical
+sample skips. The module also sanitizes impossible blank customer IDs while
+bootstrapping the compact customer-history master.
 """
 from __future__ import annotations
 
@@ -24,6 +26,21 @@ from scoring.score_cache import ScoreCache
 
 
 LOG = logging.getLogger("mobiwork_sync")
+
+
+def _sample_pending_limit() -> int:
+    """Return the sample-only unmatched-image inference cap; zero means unlimited."""
+
+    raw = os.environ.get("AI_SAMPLE_MAX_PENDING_IMAGES", "").strip()
+    if not raw:
+        return 0
+    try:
+        limit = int(raw)
+    except ValueError as error:
+        raise ValueError("AI_SAMPLE_MAX_PENDING_IMAGES must be an integer") from error
+    if limit < 0:
+        raise ValueError("AI_SAMPLE_MAX_PENDING_IMAGES must be >= 0")
+    return limit
 
 
 def install_history_sanitizer() -> None:
@@ -110,11 +127,44 @@ def install_legacy_url_scoring(client) -> int:
                 output[index] = record
                 legacy_indices.add(index)
 
-            pending_indices = [i for i in range(len(rows)) if i not in legacy_indices]
+            all_pending_indices = [
+                i for i in range(len(rows)) if i not in legacy_indices
+            ]
+            pending_indices = list(all_pending_indices)
+            skipped_indices: list[int] = []
+            sample_limit = _sample_pending_limit()
+            if sample_limit and len(pending_indices) > sample_limit:
+                # Prefer the most recent rows because SharePoint monthly masters
+                # are chronological and this probe exists to validate the newest
+                # stored-image path plus current model runtime.
+                skipped_indices = pending_indices[:-sample_limit]
+                pending_indices = pending_indices[-sample_limit:]
+                for original_index in skipped_indices:
+                    payload = technical_failure_payload(
+                        "SAMPLE_SKIPPED: unmatched image omitted from bounded cloud validation"
+                    )
+                    output[original_index] = build_audit_record(
+                        rows[original_index],
+                        record_ids[original_index],
+                        signature,
+                        "",
+                        payload,
+                    )
+                LOG.warning(
+                    "Bounded cloud sample: %s unmatched image rows total; scoring latest %s and marking %s as SAMPLE_SKIPPED",
+                    len(all_pending_indices),
+                    len(pending_indices),
+                    len(skipped_indices),
+                )
+
             pending_rows = [rows[i] for i in pending_indices]
-            downloads = pipeline._download_image_rows(
-                source, runtime_client, drive_id, pending_rows
-            ) if pending_rows else []
+            downloads = (
+                pipeline._download_image_rows(
+                    source, runtime_client, drive_id, pending_rows
+                )
+                if pending_rows
+                else []
+            )
             valid_pending = [
                 local_index
                 for local_index, (_remote, content, error) in enumerate(downloads)
@@ -123,10 +173,16 @@ def install_legacy_url_scoring(client) -> int:
             stats = {
                 "images": len(rows),
                 "legacy_url_hits": len(legacy_indices),
+                "pending_before_sample_limit": len(all_pending_indices),
+                "sample_pending_limit": sample_limit,
+                "sample_scored_pending_images": len(pending_indices),
+                "sample_skipped_images": len(skipped_indices),
                 "stored_images_loaded": len(valid_pending),
                 "missing_or_failed_images": len(pending_rows) - len(valid_pending),
                 "remote_seeded_scores": cache.seed(
-                    pipeline._load_remote_score_rows(runtime_client, drive_id, period_start),
+                    pipeline._load_remote_score_rows(
+                        runtime_client, drive_id, period_start
+                    ),
                     signature,
                 ),
                 "cache_hits": 0,
@@ -136,7 +192,8 @@ def install_legacy_url_scoring(client) -> int:
             if valid_pending:
                 contents = [downloads[i][1] for i in valid_pending]
                 before = sum(
-                    cache.get(signature, hashlib.sha256(content).hexdigest()) is not None
+                    cache.get(signature, hashlib.sha256(content).hexdigest())
+                    is not None
                     for content in contents
                     if content is not None
                 )
@@ -183,12 +240,18 @@ def install_legacy_url_scoring(client) -> int:
         if any(item is None for item in output):
             raise RuntimeError("Cloud legacy URL scoring left unresolved result rows")
         LOG.info(
-            "Legacy URL reuse: %s/%s image rows reused; %s require stored-image lookup",
+            "Legacy URL reuse: %s/%s image rows reused; %s unmatched before sample limit; %s scored by stored-image lookup; %s sample-skipped",
             len(legacy_indices),
             len(rows),
-            len(pending_rows),
+            len(all_pending_indices),
+            len(pending_indices),
+            len(skipped_indices),
         )
-        return pd.DataFrame(item for item in output if item is not None), stats, signature
+        return (
+            pd.DataFrame(item for item in output if item is not None),
+            stats,
+            signature,
+        )
 
     pipeline._build_image_results = build_image_results
     return len(legacy_by_url)
