@@ -61,9 +61,20 @@ jobs:
       - name: Install AI runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install 'torch>=2.4,<3' --index-url https://download.pytorch.org/whl/cpu
+          pip install 'torch>=2.4,<3' 'torchvision>=0.19,<1' --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-ai.txt
           pip check
+
+      - name: Validate AI runtime imports
+        run: |
+          python - <<'PY'
+          import easyocr
+          import torch
+          import torchvision
+          print(f'torch={torch.__version__}')
+          print(f'torchvision={torchvision.__version__}')
+          print(f'easyocr={getattr(easyocr, "__version__", "unknown")}')
+          PY
 
       - name: Compile AI/KPI sources
         run: python -m compileall -q src/scoring src/kpi src/score_kpi_pipeline.py src/run_score_kpi_cloud.py tests_ai
