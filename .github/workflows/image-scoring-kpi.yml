@@ -1,6 +1,10 @@
 name: Image Scoring + Sales KPI
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/kpi-production-now"
   workflow_dispatch:
     inputs:
       period:
@@ -28,7 +32,7 @@ concurrency:
 
 jobs:
   score-kpi:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
