@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: url-digest-image-lookup-sample-4
+# retry: bounded-real-image-sample-5
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: cloud-kpi-main-sample
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   sample:
@@ -33,6 +33,7 @@ jobs:
       AI_DEVICE: cpu
       AI_DOWNLOAD_WORKERS: '12'
       AI_LEGACY_SEED_WORKERS: '16'
+      AI_SAMPLE_MAX_PENDING_IMAGES: '24'
       AI_SHAREPOINT_ASSET_ROOT: Chạy chương trình/KPI Assets
       AI_ASSET_DRIVE_ID: b!2K9oEC8dsUa6BquPvDyH35k3WNCRWItKlw8AJ2EKa5VahAhoPyTCQLc0Qsq_5UdO
       AI_LEGACY_SCORE_REMOTE: Chạy chương trình/KPI Assets/legacy_scores_through_2026-08-28.csv
@@ -68,6 +69,7 @@ jobs:
       - name: Install AI runtime
         run: |
           python -m pip install --upgrade pip
+          pip install 'torch>=2.4,<3' --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-ai.txt
           pip check
 
@@ -90,7 +92,7 @@ jobs:
           test -n "$data_drive" || { echo 'MobiWorkDMS drive not found'; exit 2; }
           echo "SHAREPOINT_DRIVE_ID=$data_drive" >> "$GITHUB_ENV"
 
-      - name: Build August KPI sample from July through current stored data
+      - name: Build bounded August KPI sample from real stored data
         run: python src/run_score_kpi_cloud.py --period 2026-08 --dry-run
 
       - name: Validate workbook formulas
@@ -130,7 +132,7 @@ jobs:
           manifest_path = Path('runtime/output/run_manifest.json')
           expected = []
 
-          workbook_remote = f'{folder}/Ket_qua_cham_cong_va_thuong_KPI_SAMPLE_2026-08-30.xlsx'
+          workbook_remote = f'{folder}/Ket_qua_cham_cong_va_thuong_KPI_SAMPLE_2026-08-31.xlsx'
           client.upload_bytes(
               drive_id,
               workbook_remote,
@@ -139,7 +141,7 @@ jobs:
           )
           expected.append(workbook_remote)
           if detail.is_file():
-              detail_remote = f'{folder}/Ket_qua_Chi_tiet_Anh_SAMPLE_2026-08-30.csv'
+              detail_remote = f'{folder}/Ket_qua_Chi_tiet_Anh_SAMPLE_2026-08-31.csv'
               client.upload_bytes(
                   drive_id,
                   detail_remote,
@@ -148,7 +150,7 @@ jobs:
               )
               expected.append(detail_remote)
           if history.is_file():
-              history_remote = 'KPI/History/customer_history_SAMPLE_2026-08-30.csv'
+              history_remote = 'KPI/History/customer_history_SAMPLE_2026-08-31.csv'
               client.upload_bytes(
                   drive_id,
                   history_remote,
@@ -159,7 +161,8 @@ jobs:
           manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
           manifest['sample_publish'] = True
           manifest['model_bundle_note'] = 'legacy bundle 2.0.0 used for sample migration; not final production V2.3 bundle'
-          manifest_remote = f'{folder}/run_manifest_SAMPLE_2026-08-30.json'
+          manifest['sample_pending_limit'] = int(os.environ.get('AI_SAMPLE_MAX_PENDING_IMAGES', '0'))
+          manifest_remote = f'{folder}/run_manifest_SAMPLE_2026-08-31.json'
           client.upload_json(drive_id, manifest_remote, manifest)
           expected.append(manifest_remote)
 
