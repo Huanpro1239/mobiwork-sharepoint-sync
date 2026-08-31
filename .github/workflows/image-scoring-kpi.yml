@@ -111,6 +111,7 @@ jobs:
           IMAGE_ROOT_FOLDER: Data anh
           AI_SHAREPOINT_ASSET_ROOT: Chạy chương trình/KPI Assets
           AI_PREBUILT_BUNDLE: "true"
+          AI_PREBUILT_BUNDLE_REMOTE: reference_bundle_v23_33357852900.pkl
           AI_SYNC_ASSETS: "false"
           AI_DEVICE: cpu
           KPI_SHAREPOINT_ROOT: KPI
