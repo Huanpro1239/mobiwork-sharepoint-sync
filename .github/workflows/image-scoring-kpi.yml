@@ -114,6 +114,7 @@ jobs:
           AI_PREBUILT_BUNDLE_REMOTE: reference_bundle_v23_33357852900.pkl
           AI_SYNC_ASSETS: "false"
           AI_DEVICE: cpu
+          AI_PRODUCTION_MAX_PENDING_IMAGES: "4000"
           KPI_SHAREPOINT_ROOT: KPI
           KPI_PERIOD: ${{ github.event_name == 'workflow_dispatch' && inputs.period || '' }}
           KPI_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
@@ -136,16 +137,21 @@ jobs:
           import json, os
           from pathlib import Path
           data = json.loads(Path("runtime/output/run_manifest.json").read_text(encoding="utf-8"))
+          scoring = data.get('scoring', {})
           lines = [
               "## Image Scoring + Sales KPI",
               "",
               f"- Status: **{data.get('status')}**",
               f"- Dry run: **{data.get('dry_run')}**",
               f"- KPI period: **{data.get('period')}**",
-              f"- Image rows: **{data.get('scoring', {}).get('images')}**",
-              f"- Stored images loaded: **{data.get('scoring', {}).get('stored_images_loaded')}**",
-              f"- Cache hits: **{data.get('scoring', {}).get('cache_hits')}**",
-              f"- New unique scores: **{data.get('scoring', {}).get('new_unique_scores')}**",
+              f"- Image rows: **{scoring.get('images')}**",
+              f"- Legacy URL hits: **{scoring.get('legacy_url_hits', 0)}**",
+              f"- V2.3 checkpoint hits: **{scoring.get('remote_url_hits', 0)}**",
+              f"- Batch attempted: **{scoring.get('production_batch_scored_images', 0)}**",
+              f"- Backlog remaining: **{scoring.get('production_pending_remaining', 0)}**",
+              f"- Stored images loaded: **{scoring.get('stored_images_loaded')}**",
+              f"- Cache hits: **{scoring.get('cache_hits')}**",
+              f"- New unique scores: **{scoring.get('new_unique_scores')}**",
               f"- KPI customers: **{data.get('customers_in_kpi')}**",
               f"- KPI employees: **{data.get('employees_in_kpi')}**",
               f"- Pipeline signature: `{data.get('pipeline_signature')}`",
