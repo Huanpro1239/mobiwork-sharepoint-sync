@@ -59,7 +59,7 @@ jobs:
             requirements-ai.txt
 
       - name: Cache AI downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/huggingface
