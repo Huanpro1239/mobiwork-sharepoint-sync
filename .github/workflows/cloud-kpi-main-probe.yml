@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: strict-v23-real-image-after-reconcile
+# retry: strict-v23-stored-image-sample
 
 on:
   push:
@@ -42,6 +42,7 @@ jobs:
       AI_DOWNLOAD_WORKERS: '12'
       AI_LEGACY_SEED_WORKERS: '16'
       AI_SAMPLE_MAX_PENDING_IMAGES: '24'
+      AI_SAMPLE_PENDING_SELECTION: oldest
       AI_SHAREPOINT_ASSET_ROOT: Chạy chương trình/KPI Assets
       AI_ASSET_DRIVE_ID: b!2K9oEC8dsUa6BquPvDyH35k3WNCRWItKlw8AJ2EKa5VahAhoPyTCQLc0Qsq_5UdO
       AI_LEGACY_SCORE_REMOTE: Chạy chương trình/KPI Assets/legacy_scores_through_2026-08-28.csv
@@ -141,6 +142,7 @@ jobs:
           new_scores = int(scoring.get('new_unique_scores') or 0)
           attempted = int(scoring.get('sample_scored_pending_images') or 0)
           failed = int(scoring.get('missing_or_failed_images') or 0)
+          print(f'sample_pending_selection={scoring.get("sample_pending_selection")}')
           print(f'stored_images_loaded={stored}')
           print(f'new_unique_scores={new_scores}')
           print(f'sample_scored_pending_images={attempted}')
