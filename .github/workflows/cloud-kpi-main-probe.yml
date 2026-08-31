@@ -29,6 +29,7 @@ jobs:
       IMAGE_ROOT_FOLDER: Data anh
       AI_RUNTIME_MODE: cloud
       AI_PREBUILT_BUNDLE: 'true'
+      AI_ALLOW_LEGACY_PREBUILT_BUNDLE: 'true'
       AI_SYNC_ASSETS: 'false'
       AI_DEVICE: cpu
       AI_DOWNLOAD_WORKERS: '12'
