@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 import pickle
 import sys
 import types
@@ -17,8 +18,18 @@ from typing import Sequence
 
 import numpy as np
 
-from scoring.classifier import ClassificationResult, NeighborEvidence
-from scoring.config import CACHE_FILE, CLIP_MODEL_ID, CLIP_MODEL_REVISION, PIPELINE_VERSION
+from scoring.classifier import (
+    ClassificationResult,
+    NeighborEvidence,
+    _implementation_hash,
+)
+from scoring.config import (
+    CACHE_FILE,
+    CACHE_SCHEMA_VERSION,
+    CLIP_MODEL_ID,
+    CLIP_MODEL_REVISION,
+    PIPELINE_VERSION,
+)
 from scoring.decision_policy import (
     DecisionPolicy,
     ScoreVector,
@@ -29,6 +40,8 @@ from scoring.modeling import EvaluationReport, score_embeddings
 
 
 _REQUIRED_FIELDS = {
+    "schema_version",
+    "pipeline_version",
     "embeddings",
     "effective_subcategories",
     "relative_paths",
@@ -38,6 +51,7 @@ _REQUIRED_FIELDS = {
     "clip_model_id",
     "clip_revision",
     "thresholds",
+    "implementation_hash",
 }
 
 
@@ -82,6 +96,15 @@ def _bundle_signature(payload: dict[str, object], policy: DecisionPolicy) -> str
     return digest.hexdigest()
 
 
+def _legacy_bundle_allowed() -> bool:
+    return os.environ.get("AI_ALLOW_LEGACY_PREBUILT_BUNDLE", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 class PrebuiltSceneClassifier:
     """Score images from a trusted SharePoint-hosted reference bundle."""
 
@@ -102,6 +125,26 @@ class PrebuiltSceneClassifier:
             raise ValueError("Prebuilt bundle CLIP revision does not match runtime config")
         if dict(payload.get("thresholds") or {}) != asdict(self.policy):
             raise ValueError("Prebuilt bundle decision thresholds do not match runtime policy")
+
+        allow_legacy = _legacy_bundle_allowed()
+        bundle_pipeline = str(payload.get("pipeline_version", ""))
+        bundle_schema = int(payload.get("schema_version", -1))
+        bundle_implementation = str(payload.get("implementation_hash", ""))
+        if not allow_legacy and bundle_pipeline != PIPELINE_VERSION:
+            raise ValueError(
+                "Prebuilt bundle pipeline version does not match runtime: "
+                f"bundle={bundle_pipeline!r} runtime={PIPELINE_VERSION!r}"
+            )
+        if not allow_legacy and bundle_schema != CACHE_SCHEMA_VERSION:
+            raise ValueError(
+                "Prebuilt bundle schema version does not match runtime: "
+                f"bundle={bundle_schema} runtime={CACHE_SCHEMA_VERSION}"
+            )
+        expected_implementation = _implementation_hash()
+        if not allow_legacy and bundle_implementation != expected_implementation:
+            raise ValueError(
+                "Prebuilt bundle implementation hash does not match current scoring code"
+            )
 
         self.reference_embeddings = np.asarray(payload["embeddings"], dtype=np.float32)
         self.reference_subcategories = np.asarray(
