@@ -49,9 +49,12 @@ def main() -> int:
 
         install_robust_image_path_lookup()
         install_history_sanitizer()
-        if os.environ.get("AI_LEGACY_SCORE_REMOTE", "").strip():
-            legacy_rows = install_legacy_url_scoring(client)
-            logger.info("Legacy URL score lookup loaded: %s unique URLs", legacy_rows)
+        legacy_rows = install_legacy_url_scoring(client)
+        logger.info(
+            "Cloud score reuse enabled: legacy_urls=%s production_batch_limit=%s",
+            legacy_rows,
+            os.environ.get("AI_PRODUCTION_MAX_PENDING_IMAGES", "0"),
+        )
 
         result = run(period=args.period, dry_run=args.dry_run)
     except Exception:
