@@ -1,12 +1,9 @@
 name: Cloud KPI Main-Context Sample Run
-# retry: strict-v23-stored-image-sample
+# strict-v23-real-image-verified: run 33369085050
 
 on:
   push:
     branches: [main]
-  workflow_run:
-    workflows: ["MobiWork Daily Image Sync"]
-    types: [completed]
 
 permissions:
   contents: read
@@ -18,11 +15,7 @@ concurrency:
 
 jobs:
   sample:
-    if: >-
-      ${{
-        (github.event_name == 'push' && contains(github.event.head_commit.message, 'run cloud kpi main-context dry-run')) ||
-        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
-      }}
+    if: ${{ contains(github.event.head_commit.message, 'run cloud kpi main-context dry-run') }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
