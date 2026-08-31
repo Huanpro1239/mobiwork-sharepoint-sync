@@ -18,9 +18,11 @@ class CloudScoringCheckpointTests(unittest.TestCase):
     def test_production_limit_is_validated(self):
         with patch.dict(os.environ, {"AI_PRODUCTION_MAX_PENDING_IMAGES": "4000"}):
             self.assertEqual(_production_pending_limit(), 4000)
-        with patch.dict(os.environ, {"AI_PRODUCTION_MAX_PENDING_IMAGES": "-1"}):
-            with self.assertRaises(ValueError):
-                _production_pending_limit()
+        with (
+            patch.dict(os.environ, {"AI_PRODUCTION_MAX_PENDING_IMAGES": "-1"}),
+            self.assertRaises(ValueError),
+        ):
+            _production_pending_limit()
 
     def test_remote_rows_are_reused_only_for_current_signature(self):
         payload = {"Phân Loại AI": "Bien_hieu", "Trạng Thái Quyết Định": "AUTO_PASS"}
