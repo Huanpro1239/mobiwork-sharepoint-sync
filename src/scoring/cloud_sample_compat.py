@@ -43,6 +43,15 @@ def _sample_pending_limit() -> int:
     return limit
 
 
+def _sample_pending_selection() -> str:
+    """Return deterministic bounded-sample ordering without changing production runs."""
+
+    value = os.environ.get("AI_SAMPLE_PENDING_SELECTION", "latest").strip().casefold()
+    if value not in {"latest", "oldest"}:
+        raise ValueError("AI_SAMPLE_PENDING_SELECTION must be 'latest' or 'oldest'")
+    return value
+
+
 def install_history_sanitizer() -> None:
     """Drop history rows that cannot ever join to a customer KPI record."""
 
@@ -133,12 +142,24 @@ def install_legacy_url_scoring(client) -> int:
             pending_indices = list(all_pending_indices)
             skipped_indices: list[int] = []
             sample_limit = _sample_pending_limit()
+            sample_selection = _sample_pending_selection()
             if sample_limit and len(pending_indices) > sample_limit:
-                # Prefer the most recent rows because SharePoint monthly masters
-                # are chronological and this probe exists to validate the newest
-                # stored-image path plus current model runtime.
-                skipped_indices = pending_indices[:-sample_limit]
-                pending_indices = pending_indices[-sample_limit:]
+                # The default remains newest-first for migration smoke tests.
+                # Strict stored-image validation may explicitly choose oldest
+                # unmatched rows so a just-arrived monthly master cannot make the
+                # probe fail only because its newest photos are still reconciling.
+                if sample_selection == "oldest":
+                    pending_indices = pending_indices[:sample_limit]
+                    selected = set(pending_indices)
+                    skipped_indices = [
+                        i for i in all_pending_indices if i not in selected
+                    ]
+                else:
+                    pending_indices = pending_indices[-sample_limit:]
+                    selected = set(pending_indices)
+                    skipped_indices = [
+                        i for i in all_pending_indices if i not in selected
+                    ]
                 for original_index in skipped_indices:
                     payload = technical_failure_payload(
                         "SAMPLE_SKIPPED: unmatched image omitted from bounded cloud validation"
@@ -151,8 +172,9 @@ def install_legacy_url_scoring(client) -> int:
                         payload,
                     )
                 LOG.warning(
-                    "Bounded cloud sample: %s unmatched image rows total; scoring latest %s and marking %s as SAMPLE_SKIPPED",
+                    "Bounded cloud sample: %s unmatched image rows total; selection=%s; scoring %s and marking %s as SAMPLE_SKIPPED",
                     len(all_pending_indices),
+                    sample_selection,
                     len(pending_indices),
                     len(skipped_indices),
                 )
@@ -175,6 +197,7 @@ def install_legacy_url_scoring(client) -> int:
                 "legacy_url_hits": len(legacy_indices),
                 "pending_before_sample_limit": len(all_pending_indices),
                 "sample_pending_limit": sample_limit,
+                "sample_pending_selection": sample_selection,
                 "sample_scored_pending_images": len(pending_indices),
                 "sample_skipped_images": len(skipped_indices),
                 "stored_images_loaded": len(valid_pending),
@@ -240,10 +263,11 @@ def install_legacy_url_scoring(client) -> int:
         if any(item is None for item in output):
             raise RuntimeError("Cloud legacy URL scoring left unresolved result rows")
         LOG.info(
-            "Legacy URL reuse: %s/%s image rows reused; %s unmatched before sample limit; %s scored by stored-image lookup; %s sample-skipped",
+            "Legacy URL reuse: %s/%s image rows reused; %s unmatched before sample limit; selection=%s; %s scored by stored-image lookup; %s sample-skipped",
             len(legacy_indices),
             len(rows),
             len(all_pending_indices),
+            sample_selection,
             len(pending_indices),
             len(skipped_indices),
         )
