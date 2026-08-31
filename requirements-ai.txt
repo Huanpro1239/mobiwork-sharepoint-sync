@@ -8,4 +8,6 @@ transformers>=4.45,<5
 torch>=2.4,<3
 ultralytics>=8.3,<9
 easyocr>=1.7,<2
-mediapipe>=0.10,<1
+# FaceDetector uses the legacy mp.solutions.face_detection API.
+# MediaPipe >=0.10.22 no longer exposes mp.solutions in current wheels.
+mediapipe>=0.10.20,<0.10.22
