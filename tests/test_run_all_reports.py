@@ -18,8 +18,9 @@ class FakeMobiWork:
 
 
 class FakeSharePoint:
-    def __init__(self, fail_report="visit"):
+    def __init__(self, fail_report="visit", upload_skipped=False):
         self.fail_report = fail_report
+        self.upload_skipped = upload_skipped
         self.calls = []
 
     def upload_file(self, drive_id, path, remote_folder):
@@ -30,8 +31,11 @@ class FakeSharePoint:
         return {
             "size": Path(path).stat().st_size + 10,
             "local_size": Path(path).stat().st_size,
-            "verification_mode": "xlsx_semantic",
+            "verification_mode": (
+                "xlsx_semantic_noop" if self.upload_skipped else "xlsx_semantic"
+            ),
             "semantic_match": True,
+            "upload_skipped": self.upload_skipped,
             "webUrl": f"https://example/{Path(path).name}",
         }
 
@@ -68,8 +72,39 @@ class IncrementalScopeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SYNC_SCOPE"):
             runner.incremental_target_dates("invalid", 1)
 
+    def test_target_dates_are_grouped_by_month(self):
+        values = runner.group_target_dates_by_month(
+            [
+                date(2026, 9, 1),
+                date(2026, 8, 31),
+                date(2026, 8, 30),
+            ]
+        )
+        self.assertEqual(
+            values,
+            [
+                [date(2026, 9, 1)],
+                [date(2026, 8, 30), date(2026, 8, 31)],
+            ],
+        )
+
 
 class AllReportsRunnerTests(unittest.TestCase):
+    @staticmethod
+    def _fake_bundle(temp_path, cfg, target_dates):
+        anchor = max(target_dates)
+        path = temp_path / f"{cfg.name}_{anchor:%Y-%m}.xlsx"
+        path.write_bytes(f"workbook-{cfg.name}-{anchor:%Y-%m}".encode())
+        return {
+            "path": path,
+            "source_rows": {value: 1 for value in target_dates},
+            "errors": {},
+            "master_rows": 10,
+            "month_rebuilt": False,
+            "rebuild_days": 0,
+            "remote_folder": f"{cfg.folder}/{anchor:%Y}/{anchor:%m}",
+        }
+
     def test_one_report_failure_does_not_block_remaining_reports(self):
         reports = [
             ReportConfig(key="visit", enabled=True, name="visit", folder="01"),
@@ -83,14 +118,12 @@ class AllReportsRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
-            def fake_master(cfg, target_date, mobiwork, sp, drive_id, dry_run):
-                path = temp_path / f"{cfg.name}_{target_date:%Y-%m}.xlsx"
-                path.write_bytes(f"workbook-{cfg.name}".encode())
-                return path, 1, 10, False, 0
+            def fake_group(cfg, target_dates, mobiwork, sp, drive_id, dry_run):
+                return self._fake_bundle(temp_path, cfg, target_dates)
 
             with (
                 patch.object(runner.core, "target_dates", return_value=[date(2026, 8, 21)]),
-                patch.object(runner, "_build_or_update_master", side_effect=fake_master),
+                patch.object(runner, "_build_or_update_month_group", side_effect=fake_group),
             ):
                 results = runner.run_incremental_all_reports(
                     reports,
@@ -121,6 +154,113 @@ class AllReportsRunnerTests(unittest.TestCase):
         self.assertEqual(manifest["successful_report_count"], 3)
         self.assertEqual(manifest["source_row_count"], 3)
         self.assertEqual(manifest["master_row_count"], 30)
+        self.assertEqual(manifest["sharepoint_write_count"], 3)
+
+    def test_three_same_month_dates_publish_one_workbook(self):
+        report = ReportConfig(key="visit", enabled=True, name="visit", folder="01")
+        target_dates = [date(2026, 8, 31), date(2026, 8, 30), date(2026, 8, 29)]
+        sharepoint = FakeSharePoint(fail_report="never")
+        manifest = runner.core._new_manifest("incremental", False)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            def fake_group(cfg, grouped_dates, mobiwork, sp, drive_id, dry_run):
+                return self._fake_bundle(temp_path, cfg, grouped_dates)
+
+            with (
+                patch.object(runner.core, "target_dates", return_value=target_dates),
+                patch.object(runner, "_build_or_update_month_group", side_effect=fake_group) as group_mock,
+            ):
+                results = runner.run_incremental_all_reports(
+                    [report],
+                    FakeMobiWork(),
+                    sharepoint,
+                    "drive",
+                    3,
+                    False,
+                    manifest,
+                    sync_scope="lookback",
+                )
+
+        self.assertEqual(group_mock.call_count, 1)
+        self.assertEqual(len(sharepoint.calls), 1)
+        self.assertEqual(len(manifest["files"]), 1)
+        self.assertEqual(manifest["files"][0]["source_rows"], 3)
+        self.assertEqual(manifest["files"][0]["target_execution_count"], 3)
+        self.assertEqual([item["status"] for item in results], ["success"] * 3)
+
+        runner._finalize_manifest(manifest, results)
+        self.assertEqual(manifest["target_execution_count"], 3)
+        self.assertEqual(manifest["workbook_group_count"], 1)
+        self.assertEqual(manifest["source_row_count"], 3)
+        self.assertEqual(manifest["master_row_count"], 10)
+        self.assertEqual(manifest["sharepoint_write_count"], 1)
+
+    def test_cross_month_lookback_publishes_once_per_month(self):
+        report = ReportConfig(key="visit", enabled=True, name="visit", folder="01")
+        target_dates = [date(2026, 9, 1), date(2026, 8, 31), date(2026, 8, 30)]
+        sharepoint = FakeSharePoint(fail_report="never")
+        manifest = runner.core._new_manifest("incremental", False)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            def fake_group(cfg, grouped_dates, mobiwork, sp, drive_id, dry_run):
+                return self._fake_bundle(temp_path, cfg, grouped_dates)
+
+            with (
+                patch.object(runner.core, "target_dates", return_value=target_dates),
+                patch.object(runner, "_build_or_update_month_group", side_effect=fake_group) as group_mock,
+            ):
+                results = runner.run_incremental_all_reports(
+                    [report],
+                    FakeMobiWork(),
+                    sharepoint,
+                    "drive",
+                    3,
+                    False,
+                    manifest,
+                    sync_scope="lookback",
+                )
+
+        self.assertEqual(group_mock.call_count, 2)
+        self.assertEqual(len(sharepoint.calls), 2)
+        self.assertEqual(len(manifest["files"]), 2)
+        self.assertEqual([item["status"] for item in results], ["success"] * 3)
+
+    def test_noop_upload_is_counted_as_avoided_write(self):
+        report = ReportConfig(key="visit", enabled=True, name="visit", folder="01")
+        sharepoint = FakeSharePoint(fail_report="never", upload_skipped=True)
+        manifest = runner.core._new_manifest("incremental", False)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            def fake_group(cfg, grouped_dates, mobiwork, sp, drive_id, dry_run):
+                return self._fake_bundle(temp_path, cfg, grouped_dates)
+
+            with (
+                patch.object(runner.core, "target_dates", return_value=[date(2026, 8, 31)]),
+                patch.object(runner, "_build_or_update_month_group", side_effect=fake_group),
+            ):
+                results = runner.run_incremental_all_reports(
+                    [report],
+                    FakeMobiWork(),
+                    sharepoint,
+                    "drive",
+                    1,
+                    False,
+                    manifest,
+                    sync_scope="lookback",
+                )
+
+        runner._finalize_manifest(manifest, results)
+        self.assertEqual(manifest["upload_skipped_count"], 1)
+        self.assertEqual(manifest["sharepoint_write_avoided_count"], 1)
+        self.assertEqual(manifest["sharepoint_write_count"], 0)
+        self.assertTrue(manifest["files"][0]["upload_skipped"])
+        self.assertTrue(results[0]["upload_skipped"])
 
     def test_cleanup_deletes_only_legacy_report_files(self):
         class CleanupSharePoint:
@@ -166,6 +306,7 @@ class AllReportsRunnerTests(unittest.TestCase):
         self.assertEqual(manifest["successful_report_count"], 2)
         self.assertEqual(manifest["source_row_count"], 0)
         self.assertEqual(manifest["master_row_count"], 0)
+        self.assertEqual(manifest["sharepoint_write_count"], 0)
 
 
 if __name__ == "__main__":
