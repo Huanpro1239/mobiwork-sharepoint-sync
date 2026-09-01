@@ -45,6 +45,20 @@ def incremental_target_dates(sync_scope: str, lookback_days: int) -> list[date]:
     raise ValueError("SYNC_SCOPE must be today, yesterday, or lookback")
 
 
+def group_target_dates_by_month(target_dates: list[date]) -> list[list[date]]:
+    """Group target dates by calendar month while keeping newest month first.
+
+    Dates inside each month are returned oldest-to-newest so partition merges happen
+    in natural business order. This lets one report/month use one SharePoint read and
+    at most one publish even when a lookback spans many target dates.
+    """
+    groups: dict[tuple[int, int], list[date]] = {}
+    for target_date in target_dates:
+        key = (target_date.year, target_date.month)
+        groups.setdefault(key, []).append(target_date)
+    return [sorted(values) for values in groups.values()]
+
+
 def build_clients(
     dry_run: bool,
 ) -> tuple[MobiWorkClient, SemanticSharePointClient | None, str | None]:
@@ -99,8 +113,9 @@ def _record_monthly_export(
     master_rows: int,
     remote_folder: str,
     uploaded: dict[str, Any] | None,
+    target_dates: list[date] | None = None,
 ) -> None:
-    """Record current-source rows separately from rows stored in the monthly master."""
+    """Record one physical monthly-master preparation/publish operation."""
     core._record_export(
         manifest,
         cfg,
@@ -111,9 +126,152 @@ def _record_monthly_export(
     )
     export = manifest["files"][-1]
     export["master_rows"] = master_rows
+    if target_dates:
+        export["target_dates"] = [value.isoformat() for value in target_dates]
+        export["target_execution_count"] = len(target_dates)
     if uploaded:
         export["verification_mode"] = uploaded.get("verification_mode")
         export["semantic_match"] = uploaded.get("semantic_match")
+        export["upload_skipped"] = bool(uploaded.get("upload_skipped", False))
+
+
+def _build_or_update_month_group(
+    cfg: ReportConfig,
+    target_dates: list[date],
+    mobiwork: MobiWorkClient,
+    sharepoint: SemanticSharePointClient | None,
+    drive_id: str | None,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Prepare one report/month with one SharePoint read and one final workbook write.
+
+    When a canonical monthly master already exists, target-day fetches are isolated:
+    one failed day is reported but does not block successful target dates in the same
+    month. When the canonical master is missing, the month must be rebuilt from day 01
+    through the latest requested date; any missing rebuild partition fails the whole
+    group to avoid publishing an incomplete canonical workbook.
+    """
+    if not target_dates:
+        raise ValueError("target_dates must not be empty")
+
+    ordered_dates = sorted(set(target_dates))
+    anchor = ordered_dates[-1]
+    if any((value.year, value.month) != (anchor.year, anchor.month) for value in ordered_dates):
+        raise ValueError("target_dates must belong to the same calendar month")
+
+    remote_folder = f"{cfg.folder}/{anchor:%Y}/{anchor:%m}"
+    canonical_name = master_filename(cfg.name, anchor)
+    remote_path = f"{remote_folder}/{canonical_name}"
+    target_set = set(ordered_dates)
+    source_rows: dict[date, int] = {}
+    errors: dict[date, str] = {}
+    rebuilt = False
+    rebuild_days = 0
+
+    if dry_run:
+        frames: dict[str, Any] | None = None
+        for target_date in ordered_dates:
+            try:
+                records = mobiwork.fetch_report(cfg, target_date)
+                incoming = frames_from_records(records, cfg.export_mode, target_date)
+                if frames is None:
+                    frames = build_month_from_partitions([], cfg.export_mode)
+                frames = merge_partition(frames, incoming, target_date, cfg.export_mode)
+                source_rows[target_date] = len(records)
+            except Exception as exc:
+                errors[target_date] = f"{type(exc).__name__}: {exc}"
+                LOG.exception(
+                    "Dry-run target failed while remaining dates continue: report=%s date=%s",
+                    cfg.key,
+                    target_date,
+                )
+
+        if frames is None or not source_rows:
+            return {
+                "path": None,
+                "source_rows": source_rows,
+                "errors": errors,
+                "master_rows": 0,
+                "month_rebuilt": False,
+                "rebuild_days": 0,
+                "remote_folder": remote_folder,
+            }
+        path = write_master(frames, cfg.name, anchor)
+        return {
+            "path": path,
+            "source_rows": source_rows,
+            "errors": errors,
+            "master_rows": master_row_count(frames, cfg.export_mode),
+            "month_rebuilt": False,
+            "rebuild_days": 0,
+            "remote_folder": remote_folder,
+        }
+
+    if not sharepoint or not drive_id:
+        raise RuntimeError("SharePoint client is unavailable in production mode")
+
+    existing_content = sharepoint.download_file_bytes(drive_id, remote_path)
+    if existing_content is None:
+        rebuilt = True
+        rebuild_dates = month_dates_through(anchor)
+        rebuild_days = len(rebuild_dates)
+        partitions: list[tuple[date, list[dict[str, Any]]]] = []
+        LOG.info(
+            "Monthly master missing; rebuilding once report=%s month=%s days=%s target_dates=%s",
+            cfg.key,
+            anchor.strftime("%Y-%m"),
+            rebuild_days,
+            ",".join(value.isoformat() for value in ordered_dates),
+        )
+        for rebuild_date in rebuild_dates:
+            try:
+                records = mobiwork.fetch_report(cfg, rebuild_date)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Cannot safely rebuild {cfg.key} {anchor:%Y-%m}; "
+                    f"source fetch failed for {rebuild_date}: {type(exc).__name__}: {exc}"
+                ) from exc
+            partitions.append((rebuild_date, records))
+            if rebuild_date in target_set:
+                source_rows[rebuild_date] = len(records)
+        frames = build_month_from_partitions(partitions, cfg.export_mode)
+    else:
+        frames = read_master(existing_content, cfg.export_mode)
+        for target_date in ordered_dates:
+            try:
+                records = mobiwork.fetch_report(cfg, target_date)
+                incoming = frames_from_records(records, cfg.export_mode, target_date)
+                frames = merge_partition(frames, incoming, target_date, cfg.export_mode)
+                source_rows[target_date] = len(records)
+            except Exception as exc:
+                errors[target_date] = f"{type(exc).__name__}: {exc}"
+                LOG.exception(
+                    "Target failed while same-month dates continue: report=%s date=%s",
+                    cfg.key,
+                    target_date,
+                )
+
+    if not source_rows:
+        return {
+            "path": None,
+            "source_rows": source_rows,
+            "errors": errors,
+            "master_rows": master_row_count(frames, cfg.export_mode),
+            "month_rebuilt": rebuilt,
+            "rebuild_days": rebuild_days,
+            "remote_folder": remote_folder,
+        }
+
+    path = write_master(frames, cfg.name, anchor)
+    return {
+        "path": path,
+        "source_rows": source_rows,
+        "errors": errors,
+        "master_rows": master_row_count(frames, cfg.export_mode),
+        "month_rebuilt": rebuilt,
+        "rebuild_days": rebuild_days,
+        "remote_folder": remote_folder,
+    }
 
 
 def _build_or_update_master(
@@ -124,52 +282,27 @@ def _build_or_update_master(
     drive_id: str | None,
     dry_run: bool,
 ) -> tuple[Any, int, int, bool, int]:
-    """Return path, target-day rows, master rows, rebuilt flag, rebuild days."""
-    remote_folder = f"{cfg.folder}/{target_date:%Y}/{target_date:%m}"
-    canonical_name = master_filename(cfg.name, target_date)
-    remote_path = f"{remote_folder}/{canonical_name}"
-
-    if dry_run:
-        records = mobiwork.fetch_report(cfg, target_date)
-        frames = build_month_from_partitions([(target_date, records)], cfg.export_mode)
-        path = write_master(frames, cfg.name, target_date)
-        return path, len(records), master_row_count(frames, cfg.export_mode), False, 0
-
-    if not sharepoint or not drive_id:
-        raise RuntimeError("SharePoint client is unavailable in production mode")
-
-    existing_content = sharepoint.download_file_bytes(drive_id, remote_path)
-    if existing_content is None:
-        rebuild_dates = month_dates_through(target_date)
-        partitions: list[tuple[date, list[dict[str, Any]]]] = []
-        target_rows = 0
-        LOG.info(
-            "Monthly master missing; rebuilding report=%s month=%s days=%s",
-            cfg.key,
-            target_date.strftime("%Y-%m"),
-            len(rebuild_dates),
-        )
-        for rebuild_date in rebuild_dates:
-            records = mobiwork.fetch_report(cfg, rebuild_date)
-            partitions.append((rebuild_date, records))
-            if rebuild_date == target_date:
-                target_rows = len(records)
-        frames = build_month_from_partitions(partitions, cfg.export_mode)
-        path = write_master(frames, cfg.name, target_date)
-        return (
-            path,
-            target_rows,
-            master_row_count(frames, cfg.export_mode),
-            True,
-            len(rebuild_dates),
-        )
-
-    existing_frames = read_master(existing_content, cfg.export_mode)
-    records = mobiwork.fetch_report(cfg, target_date)
-    incoming = frames_from_records(records, cfg.export_mode, target_date)
-    merged = merge_partition(existing_frames, incoming, target_date, cfg.export_mode)
-    path = write_master(merged, cfg.name, target_date)
-    return path, len(records), master_row_count(merged, cfg.export_mode), False, 0
+    """Backward-compatible single-date helper used by tests and local callers."""
+    bundle = _build_or_update_month_group(
+        cfg,
+        [target_date],
+        mobiwork,
+        sharepoint,
+        drive_id,
+        dry_run,
+    )
+    if bundle["errors"].get(target_date):
+        raise RuntimeError(bundle["errors"][target_date])
+    path = bundle["path"]
+    if path is None:
+        raise RuntimeError(f"No workbook produced for {cfg.key} {target_date}")
+    return (
+        path,
+        int(bundle["source_rows"].get(target_date, 0)),
+        int(bundle["master_rows"]),
+        bool(bundle["month_rebuilt"]),
+        int(bundle["rebuild_days"]),
+    )
 
 
 def run_incremental_all_reports(
@@ -182,58 +315,103 @@ def run_incremental_all_reports(
     manifest: dict[str, Any],
     sync_scope: str = "lookback",
 ) -> list[dict[str, Any]]:
-    """Run every report independently; one failure must not block the others."""
+    """Run reports independently while batching physical I/O by report and month."""
+    target_dates = incremental_target_dates(sync_scope, lookback_days)
+    month_groups = group_target_dates_by_month(target_dates)
     results: list[dict[str, Any]] = []
+    result_map: dict[tuple[str, date], dict[str, Any]] = {}
 
-    for target_date in incremental_target_dates(sync_scope, lookback_days):
-        LOG.info("Incremental sync date: %s scope=%s", target_date, sync_scope)
+    # Preserve the historical date-major result order for manifests and summaries.
+    for target_date in target_dates:
         for cfg in reports:
             result = _result_entry(cfg, target_date)
             results.append(result)
+            result_map[(cfg.key, target_date)] = result
+
+    for cfg in reports:
+        for grouped_dates in month_groups:
+            anchor = grouped_dates[-1]
+            group_results = [result_map[(cfg.key, value)] for value in grouped_dates]
+            remote_folder = f"{cfg.folder}/{anchor:%Y}/{anchor:%m}"
+            group_id = f"{cfg.key}:{anchor:%Y-%m}"
             path = None
-            remote_folder = f"{cfg.folder}/{target_date:%Y}/{target_date:%m}"
+
+            LOG.info(
+                "Processing report/month batch report=%s month=%s targets=%s",
+                cfg.key,
+                anchor.strftime("%Y-%m"),
+                ",".join(value.isoformat() for value in grouped_dates),
+            )
 
             try:
-                path, target_rows, master_rows, rebuilt, rebuild_days = _build_or_update_master(
+                bundle = _build_or_update_month_group(
                     cfg,
-                    target_date,
+                    grouped_dates,
                     mobiwork,
                     sharepoint,
                     drive_id,
                     dry_run,
                 )
-                result["source_rows"] = target_rows
-                result["master_rows"] = master_rows
-                result["month_rebuilt"] = rebuilt
-                result["rebuild_days"] = rebuild_days
-                result["filename"] = path.name
-                result["local_size_bytes"] = path.stat().st_size
-                result["remote_folder"] = remote_folder
-                LOG.info(
-                    "Prepared monthly master report=%s target_rows=%s master_rows=%s file=%s",
-                    cfg.key,
-                    target_rows,
-                    master_rows,
-                    path,
-                )
+                path = bundle["path"]
+                source_rows: dict[date, int] = bundle["source_rows"]
+                target_errors: dict[date, str] = bundle["errors"]
+                master_rows = int(bundle["master_rows"])
+                rebuilt = bool(bundle["month_rebuilt"])
+                rebuild_days = int(bundle["rebuild_days"])
+
+                for target_date in grouped_dates:
+                    result = result_map[(cfg.key, target_date)]
+                    result["publish_group"] = group_id
+                    result["remote_folder"] = remote_folder
+                    result["master_rows"] = master_rows
+                    result["month_rebuilt"] = rebuilt
+                    result["rebuild_days"] = rebuild_days
+                    if target_date in target_errors:
+                        result["status"] = "failed"
+                        result["error"] = target_errors[target_date]
+                    elif target_date in source_rows:
+                        result["source_rows"] = source_rows[target_date]
+                    else:
+                        result["status"] = "failed"
+                        result["error"] = "No source result was produced for target date"
+
+                successful_dates = [
+                    value
+                    for value in grouped_dates
+                    if result_map[(cfg.key, value)]["status"] == "running"
+                ]
+                if not successful_dates or path is None:
+                    for value in successful_dates:
+                        result_map[(cfg.key, value)]["status"] = "failed"
+                        result_map[(cfg.key, value)]["error"] = "No monthly workbook was produced"
+                    continue
+
+                for value in successful_dates:
+                    result = result_map[(cfg.key, value)]
+                    result["filename"] = path.name
+                    result["local_size_bytes"] = path.stat().st_size
 
                 uploaded: dict[str, Any] | None = None
                 if not dry_run:
                     if not sharepoint or not drive_id:
-                        raise RuntimeError(
-                            "SharePoint client is unavailable in production mode"
-                        )
+                        raise RuntimeError("SharePoint client is unavailable in production mode")
                     uploaded = sharepoint.upload_file(drive_id, path, remote_folder)
-                    result["remote_size_bytes"] = uploaded.get("size")
-                    result["verification_mode"] = uploaded.get("verification_mode")
-                    result["semantic_match"] = uploaded.get("semantic_match")
-                    result["web_url"] = uploaded.get("webUrl")
+                    upload_skipped = bool(uploaded.get("upload_skipped", False))
+                    verification_mode = uploaded.get("verification_mode")
                     LOG.info(
-                        "Uploaded monthly master report=%s -> %s verification=%s",
+                        "Published monthly master report=%s targets=%s verification=%s skipped=%s",
                         cfg.key,
-                        uploaded.get("webUrl", remote_folder),
-                        uploaded.get("verification_mode", "standard"),
+                        len(successful_dates),
+                        verification_mode or "standard",
+                        upload_skipped,
                     )
+                    for value in successful_dates:
+                        result = result_map[(cfg.key, value)]
+                        result["remote_size_bytes"] = uploaded.get("size")
+                        result["verification_mode"] = verification_mode
+                        result["semantic_match"] = uploaded.get("semantic_match")
+                        result["upload_skipped"] = upload_skipped
+                        result["web_url"] = uploaded.get("webUrl")
 
                     deleted = _cleanup_legacy_files(
                         sharepoint,
@@ -242,30 +420,37 @@ def run_incremental_all_reports(
                         cfg.name,
                         path.name,
                     )
-                    result["cleanup_deleted_count"] = len(deleted)
-                    if deleted:
-                        result["cleanup_deleted_files"] = deleted
+                    for value in successful_dates:
+                        result = result_map[(cfg.key, value)]
+                        result["cleanup_deleted_count"] = len(deleted)
+                        if deleted:
+                            result["cleanup_deleted_files"] = deleted
 
                 _record_monthly_export(
                     manifest,
                     cfg,
                     path,
-                    target_rows,
+                    sum(int(source_rows[value]) for value in successful_dates),
                     master_rows,
                     remote_folder,
                     uploaded,
+                    target_dates=successful_dates,
                 )
-                result["status"] = "success"
+                for value in successful_dates:
+                    result_map[(cfg.key, value)]["status"] = "success"
             except Exception as exc:
-                result["status"] = "failed"
-                result["error"] = f"{type(exc).__name__}: {exc}"
-                if path is not None:
-                    result.setdefault("filename", path.name)
-                    result.setdefault("local_size_bytes", path.stat().st_size)
+                error = f"{type(exc).__name__}: {exc}"
+                for result in group_results:
+                    if result.get("status") == "running":
+                        result["status"] = "failed"
+                        result["error"] = error
+                        if path is not None:
+                            result.setdefault("filename", path.name)
+                            result.setdefault("local_size_bytes", path.stat().st_size)
                 LOG.exception(
-                    "Report failed but remaining reports will continue: report=%s date=%s",
+                    "Report/month batch failed but remaining batches continue: report=%s month=%s",
                     cfg.key,
-                    target_date,
+                    anchor.strftime("%Y-%m"),
                 )
 
     manifest["report_results"] = results
@@ -278,13 +463,20 @@ def _finalize_manifest(
 ) -> None:
     failed = [item for item in results if item.get("status") == "failed"]
     successful = [item for item in results if item.get("status") == "success"]
+    files = manifest.get("files", [])
+    dry_run = bool(manifest.get("dry_run", False))
+    upload_skipped_count = sum(bool(item.get("upload_skipped", False)) for item in files)
+
     manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
-    manifest["file_count"] = len(manifest.get("files", []))
-    manifest["source_row_count"] = sum(
-        int(item.get("source_rows", 0)) for item in manifest.get("files", [])
-    )
-    manifest["master_row_count"] = sum(
-        int(item.get("master_rows", 0)) for item in manifest.get("files", [])
+    manifest["file_count"] = len(files)
+    manifest["workbook_group_count"] = len(files)
+    manifest["target_execution_count"] = len(results)
+    manifest["source_row_count"] = sum(int(item.get("source_rows", 0)) for item in files)
+    manifest["master_row_count"] = sum(int(item.get("master_rows", 0)) for item in files)
+    manifest["upload_skipped_count"] = upload_skipped_count
+    manifest["sharepoint_write_avoided_count"] = upload_skipped_count
+    manifest["sharepoint_write_count"] = (
+        0 if dry_run else max(len(files) - upload_skipped_count, 0)
     )
     manifest["successful_report_count"] = len(successful)
     manifest["failed_report_count"] = len(failed)
@@ -307,6 +499,7 @@ def run_incremental() -> dict[str, Any]:
     manifest["storage_model"] = "single_monthly_master_per_report"
     manifest["execution_policy"] = "continue_on_report_error"
     manifest["xlsx_verification"] = "semantic_cell_content"
+    manifest["publish_batching"] = "one_read_one_publish_per_report_month"
 
     sharepoint: SemanticSharePointClient | None = None
     drive_id: str | None = None
