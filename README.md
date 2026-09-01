@@ -1,84 +1,133 @@
 # MobiWork → SharePoint → Image AI → Sales KPI
 
-Pipeline Python phục vụ vận hành thực tế cho luồng **MobiWork DMS → Microsoft SharePoint → Chấm ảnh AI V2.3 → KPI bán hàng V2.4**.
+Pipeline Python phục vụ vận hành thực tế cho luồng **MobiWork DMS → Microsoft SharePoint → đồng bộ ảnh → Chấm ảnh AI V2.3 → KPI bán hàng V2.4**.
 
-Phần đồng bộ báo cáo và hình ảnh được thiết kế nhẹ để có thể chạy trên GitHub-hosted runner. Phần suy luận AI nặng chạy trên Windows self-hosted runner cố định, gắn nhãn `dms-ai`.
+Hiện tại các workflow production chính chạy trên **GitHub-hosted Ubuntu runner**. Dữ liệu nghiệp vụ, ảnh DMS, model assets và file KPI được lưu ngoài Git; SharePoint là nguồn lưu trữ chính của pipeline.
 
-## 1. Kiến trúc hệ thống
+## 1. Luồng production hiện tại
 
 ```text
 MobiWork Open API
-   ├─ đồng bộ báo cáo ─────► File master theo tháng trên SharePoint
-   └─ đồng bộ hình ảnh ─────► SharePoint Data anh/YYYY-MM/...
-                                   │
-                                   ▼
-                          Windows self-hosted runner
-                                   │
-                    ┌──────────────┴──────────────┐
-                    ▼                             ▼
-             Image Scoring V2.3              Sales KPI V2.4
-             CLIP + YOLO + OCR              Visit/Order M-1 + M
-             evidence + quality gate        tồn kho + bằng chứng ảnh
-                    │                             │
-                    │                  Customer History dạng gọn
-                    │                  (1 dòng / Mã KH)
-                    └──────────────┬──────────────┘
-                                   ▼
-                         File Excel KPI dùng công thức sống
-                                   ▼
-                          SharePoint KPI/YYYY-MM/
+        │
+        ▼
+MobiWork DMS Sync
+(mobiwork-sync.yml)
+        │
+        ├──► cập nhật monthly master trên SharePoint
+        │
+        └──► sau khi refresh "yesterday" thành công
+                 │
+                 ▼
+        MobiWork Daily Image Sync
+        (mobiwork-images.yml)
+                 │
+                 ├── warming_up ──► tự chạy batch tiếp theo
+                 │
+                 └── success + pending=0 + failed=0
+                              │
+                              ▼
+                    Image Scoring + Sales KPI
+                    (image-scoring-kpi.yml)
+                              │
+                              ├── CLIP + YOLO + OCR
+                              ├── Customer History
+                              └── Excel KPI có công thức sống
+                                      │
+                                      ▼
+                              SharePoint KPI/YYYY-MM/
 ```
 
-## 2. Các cơ chế kiểm soát chính
+**Nguyên tắc quan trọng:** KPI production không được chạy chỉ vì workflow ảnh kết thúc. KPI chỉ được dispatch khi manifest của image sync xác nhận ảnh đã reconcile hoàn tất, không còn pending và không có download failure.
 
-- Khi thay file trên SharePoint, hệ thống dùng cơ chế staged replacement và kiểm tra cấu trúc workbook trước khi ghi đè.
-- Phân loại khách hàng Mới/Cũ sử dụng file lịch sử gọn `KPI/History/customer_history.csv`, mỗi khách hàng chỉ có một dòng.
-- Lần chạy đầu tiên có thể bootstrap lịch sử từ các file master theo tháng, xử lý từng workbook một để tránh tốn RAM.
-- Các lần chạy sau chỉ cần lấy dữ liệu tháng M-1 và M để tính KPI và cập nhật lịch sử tăng dần.
-- Dữ liệu M-1 và M được nối theo `ma_kh`.
-- Nhân viên sở hữu KPI là nhân viên đi viếng thăm khách hàng trong tháng M.
-- `ma_phieu` là khóa chính để nhận diện đơn hàng; thông tin cũ trong `dien_giai [...]` chỉ được dùng làm phương án dự phòng.
-- Các dòng sản phẩm khuyến mãi có `is_km=True` không được cộng vào sản lượng KPI hoặc lịch sử mua hàng.
-- Điểm chấm ảnh được cache theo **chữ ký model + SHA256 của nội dung ảnh**.
-- Có thể dùng các file điểm tháng M-1/M trước đó để khởi tạo cache cho runner mới.
-- Lỗi kỹ thuật khi chấm ảnh được ghi là `Khong_the_cham`, không bị quy thành kết quả kinh doanh `Khong_dat`.
-- Nhãn sửa tay trong sheet `Chi_tiet_Anh_Checkin` được giữ lại khi xuất file KPI mới và công thức Excel sẽ tính lại trực tiếp.
-- Model weights, ảnh tham chiếu, ảnh DMS, secrets và file KPI đầu ra không được đưa vào Git history.
+## 2. Nguồn dữ liệu và monthly master
 
-## 3. Cấu trúc repository
+Các báo cáo được cấu hình tại `config/reports.json`:
+
+| Key | Báo cáo | Thư mục SharePoint |
+|---|---|---|
+| `visit` | Báo cáo viếng thăm | `01_BaoCaoViengTham` |
+| `new_customer` | Mở mới khách hàng | `02_MoMoiKhachHang` |
+| `order` | Đơn đặt hàng | `03_DonDatHang` |
+| `bill` | Đơn bán hàng | `04_DonBanHang` |
+
+Mỗi báo cáo được lưu thành **một file master cho mỗi tháng**:
 
 ```text
-src/
-├─ mobiwork.py / sharepoint.py / image_sync.py   đồng bộ MobiWork và SharePoint
-├─ scoring/                                      Chấm ảnh AI V2.3
-│  ├─ classifier.py / modeling.py
-│  ├─ decision_policy.py / image_scoring.py
-│  ├─ yolo_verifier.py / ocr_engine.py / face_detector.py
-│  ├─ assets.py / score_cache.py / records.py
-│  └─ ...
-├─ kpi/                                          KPI V2.4
-│  ├─ customer_aggregator.py
-│  ├─ customer_history.py                        lịch sử khách hàng dạng gọn
-│  ├─ kpi_rules.py
-│  ├─ manual_labels.py / workbook_formulas.py
-│  ├─ output_contract.py                         kiểm tra cấu trúc file KPI đầu ra
-│  └─ kpi_exporter.py
-├─ sharepoint_kpi_source.py
-├─ score_kpi_pipeline.py
-├─ run_score_kpi.py
-└─ bootstrap_model_assets.py
+<Folder>/<YYYY>/<MM>/<ReportName>_YYYY-MM.xlsx
 ```
 
-## 4. Chấm ảnh AI V2.3
+Khi đồng bộ một ngày, partition `_sync_date` của ngày đó được thay mới trong master tháng thay vì nối mù vào cuối file. Nếu master tháng bị thiếu, hệ thống có thể rebuild từ ngày đầu tháng đến ngày mục tiêu.
 
-V2.3 sử dụng bốn nhóm điểm chính:
+Nếu một report lỗi, các report còn lại vẫn được chạy để tạo audit đầy đủ, nhưng manifest cuối cùng chuyển sang `partial_failure` và workflow production fail. Vì vậy bước image sync phía sau không được dispatch từ một lần refresh report chưa hoàn chỉnh.
 
-1. Scene: nhận diện loại bối cảnh.
-2. Sign validity: kiểm tra biển hiệu.
-3. Display validity: kiểm tra trưng bày.
-4. Fraud: phát hiện ảnh có dấu hiệu bất thường/gian lận.
+## 3. Đồng bộ SharePoint an toàn
 
-Ngưỡng mặc định theo hướng thận trọng:
+Luồng ghi file sử dụng staged replacement và semantic verification để giảm nguy cơ ghi đè workbook hỏng.
+
+Các kiểm soát chính:
+
+- kiểm tra file target có phải folder hay không;
+- upload file tạm trước khi thay file production;
+- kiểm tra lại nội dung workbook sau khi upload;
+- chỉ thay file chính khi verification đạt;
+- giữ audit manifest của từng lần chạy;
+- dọn các file report legacy sau khi canonical monthly master đã được ghi thành công.
+
+## 4. Đồng bộ hình ảnh
+
+Metadata ảnh không đọc trực tiếp lại từ API MobiWork để tính KPI. Image sync lấy metadata từ **monthly master viếng thăm đã được lưu trên SharePoint**, nhờ đó báo cáo và ảnh dùng chung một nguồn dữ liệu đã persist.
+
+Ảnh được lưu theo cấu trúc:
+
+```text
+Data anh/YYYY-MM/<Nhân viên>/<Mã KH>/...
+```
+
+Identity ảnh sử dụng:
+
+```text
+ngày nghiệp vụ + SHA256(URL ảnh MobiWork)
+```
+
+Điều này có hai mục đích:
+
+- cùng một ảnh trong cùng ngày không bị tải lặp chỉ vì `stt_hinh` hoặc đuôi file thay đổi;
+- nếu cùng URL xuất hiện ở **hai ngày viếng thăm khác nhau**, hai bằng chứng vẫn được giữ riêng, không bị mất ảnh ngày sau.
+
+Image sync có state tại SharePoint, overlap khi chạy incremental, retry cursor, batch limit và soft runtime budget. Khi backlog chưa hết, trạng thái là `warming_up`; workflow tự dispatch batch tiếp theo.
+
+KPI chỉ được gọi khi image sync đạt đồng thời:
+
+```text
+status = success
+pending_remaining = 0
+failed_count = 0
+dry_run = false
+```
+
+## 5. Cơ chế queue của GitHub Actions
+
+Các workflow ghi SharePoint dùng chung concurrency group:
+
+```text
+mobiwork-sharepoint-production
+```
+
+Cấu hình production dùng `queue: max` và `cancel-in-progress: false` để các run đang chờ không bị run mới thay thế. Điều này đặc biệt quan trọng vì report chạy theo giờ, trong khi refresh ngày hôm qua và image reconciliation có thể phải xếp hàng chờ.
+
+Luồng AI/KPI sử dụng concurrency group riêng `mobiwork-kpi-production`, cũng chạy tuần tự để tránh hai lần publish KPI cùng lúc.
+
+## 6. Chấm ảnh AI V2.3
+
+V2.3 sử dụng nhiều nguồn bằng chứng:
+
+1. **Scene** – nhận diện loại bối cảnh.
+2. **Sign validity** – kiểm tra biển hiệu.
+3. **Display validity** – kiểm tra trưng bày.
+4. **Fraud** – phát hiện dấu hiệu ảnh bất thường/gian lận.
+5. **YOLO/OCR** – bổ sung bằng chứng cho quyết định.
+
+Các ngưỡng mặc định theo hướng thận trọng:
 
 | Điều kiện | Giá trị mặc định |
 |---|---:|
@@ -90,22 +139,25 @@ Ngưỡng mặc định theo hướng thận trọng:
 | Biên mơ hồ scene | `0.08` |
 | Precision tối thiểu cho auto-decision OOF | `>= 99%` |
 
-YOLO/OCR có nhiệm vụ bổ sung bằng chứng để xác nhận ứng viên hoặc xử lý scene mơ hồ. YOLO/OCR không được phép bỏ qua các quality gate, validity gate, novelty gate hoặc fraud gate.
+YOLO/OCR không được phép bỏ qua novelty, fraud, validity hoặc quality gate.
 
-## 5. KPI bán hàng V2.4
+Điểm chấm được cache theo **model/pipeline signature + SHA256 nội dung ảnh**. Lỗi kỹ thuật khi chấm ảnh được ghi là `Khong_the_cham`, không tự động biến thành kết quả kinh doanh `Khong_dat`.
 
-Khách hàng chỉ được đưa vào KPI tháng M khi có ít nhất một lượt viếng thăm trong tháng M. Bằng chứng có thể được cộng từ tháng M-1 và M.
+## 7. KPI bán hàng V2.4
+
+Khách hàng được xét KPI tháng M khi có viếng thăm trong tháng M. Bằng chứng có thể cộng trong M-1 và M.
 
 Quy tắc chính:
 
-- **KHTC:** có ít nhất một đơn hàng thật đạt ngưỡng đơn lớn nhất cấu hình, mặc định `3.0 KTB`.
+- **KHTC:** có ít nhất một đơn thật đạt ngưỡng đơn lớn nhất, mặc định `3.0 KTB`.
 - **KHĐĐK:** nếu không đạt KHTC thì tổng sản lượng M-1/M phải đạt ngưỡng cấu hình, mặc định `5.0 KTB`.
 - Có ít nhất một lần `ghi_ton` trong M-1/M.
-- Có ít nhất một bằng chứng `Bien_hieu` hợp lệ và một bằng chứng `Trung_bay` hợp lệ trong M-1/M.
-- Ghi chú hợp lệ có thể thay thế bằng chứng biển hiệu trong một số trường hợp nhưng không được thay thế bằng chứng trưng bày.
-- Mới/Cũ được xác định từ `first_activity_date` trong file lịch sử khách hàng.
+- Có bằng chứng `Bien_hieu` và `Trung_bay` hợp lệ trong M-1/M theo rule hiện hành.
+- Ghi chú hợp lệ có thể thay thế bằng chứng biển hiệu trong trường hợp được rule cho phép, nhưng không thay bằng chứng trưng bày.
+- Dòng sản phẩm khuyến mãi `is_km=True` không được cộng vào sản lượng KPI/history facts.
+- `ma_phieu` là identity chính của đơn hàng; `dien_giai [...]` chỉ là fallback tương thích dữ liệu cũ.
 
-Quy tắc phân loại khách hàng cho tháng M:
+Phân loại Mới/Cũ:
 
 ```text
 first_activity_date < ngày đầu tháng M  → Cũ
@@ -113,71 +165,100 @@ first_activity_date >= ngày đầu tháng M → Mới
 không có first_activity_date            → Không rõ
 ```
 
-File lịch sử khách hàng được lưu tại:
+Customer history được lưu tại:
 
 ```text
 KPI/History/customer_history.csv
 ```
 
-Lần chạy thành công đầu tiên, hệ thống có thể đọc tuần tự các master Visit/Order lịch sử và tạo file history chỉ một dòng cho mỗi `ma_kh`. Các lần chạy sau chỉ tải workbook M-1/M và cập nhật lịch sử tăng dần, đồng thời không bao giờ đẩy `first_activity_date` sang ngày muộn hơn.
+History chỉ giữ một dòng cho mỗi `ma_kh`. Sau bootstrap ban đầu, các lần chạy sau cập nhật tăng dần và không được đẩy `first_activity_date` sang ngày muộn hơn.
 
-Chi tiết xem `docs/CUSTOMER_HISTORY.md` và `docs/KPI_RULES_V2_4.md`.
+## 8. File Excel KPI và fail-closed validation
 
-Ngày công và tiền thưởng được tính bằng công thức Excel sống, có xử lý ngày Chủ nhật và giới hạn mức thưởng.
-
-## 6. Tài nguyên AI riêng tư
-
-Các tài nguyên AI riêng tư được lưu trên SharePoint, không lưu trong Git:
+Workbook KPI production có hợp đồng 5 sheet:
 
 ```text
-Model Assets/
-├─ reference/...
-├─ reference_overrides.csv
-├─ weights/yolov8s-world.pt
-└─ template/KPI_template.xlsx
+Tong_hop_KPI_Nhan_vien
+Chi_tiet_Khach_hang
+Chi_tiet_Anh_Checkin
+Canh_bao
+Tham_so
 ```
 
-Khởi tạo một lần từ dự án local cũ:
+Trước khi publish, hệ thống:
+
+- kiểm tra cấu trúc workbook trong bộ nhớ;
+- serialize ra XLSX tạm;
+- mở lại file vừa ghi để kiểm tra lần nữa;
+- chỉ thay file production nếu validation đạt.
+
+Các giá trị `Nhãn Sửa Tay` trong `Chi_tiet_Anh_Checkin` được giữ lại khi re-export và các công thức Excel được đặt ở chế độ tính lại.
+
+## 9. Cấu trúc repository chính
+
+```text
+src/
+├─ mobiwork.py                 gọi MobiWork Open API + retry/pagination
+├─ monthly_master.py           partition và monthly master
+├─ sharepoint.py               Microsoft Graph / SharePoint
+├─ sharepoint_semantic.py      staged replacement + semantic verification
+├─ run_all_reports.py          report pipeline
+├─ image_sync.py               rule và cấu hình ảnh
+├─ image_sync_reliable.py      reconcile ảnh, state, retry, batch/resume
+├─ sharepoint_image_source.py  đọc metadata ảnh từ monthly master
+├─ scoring/                    Image Scoring V2.3
+├─ kpi/                        Sales KPI V2.4
+├─ sharepoint_kpi_source.py    dữ liệu Visit/Order + resolve ảnh cho KPI
+├─ score_kpi_pipeline.py       orchestration AI/KPI
+├─ run_score_kpi.py            entrypoint local
+└─ run_score_kpi_cloud.py      entrypoint GitHub-hosted production
+```
+
+## 10. GitHub Actions
+
+Các workflow chính:
+
+- `.github/workflows/mobiwork-sync.yml` – cập nhật report master; chạy hourly và refresh `yesterday` hằng ngày.
+- `.github/workflows/mobiwork-images.yml` – image reconciliation; production được report workflow dispatch sau refresh `yesterday` thành công, đồng thời tự chạy tiếp khi còn backlog.
+- `.github/workflows/image-scoring-kpi.yml` – chấm ảnh + KPI; production chỉ được image workflow dispatch sau khi reconcile ảnh hoàn tất.
+- `.github/workflows/ci.yml` – compile, Ruff, unit test, coverage và các regression test.
+
+Một số workflow probe/migration trong `.github/workflows/` dùng cho kiểm thử hoặc chuyển đổi dữ liệu và chỉ chạy khi điều kiện tương ứng được đáp ứng.
+
+## 11. Cách chạy local
+
+Cài runtime nhẹ:
 
 ```powershell
-python src\bootstrap_model_assets.py --source "D:\DMS cham anh" --dry-run
-python src\bootstrap_model_assets.py --source "D:\DMS cham anh"
+pip install -r requirements.txt
 ```
 
-Nên chạy `--dry-run` trước để kiểm tra danh sách file trước khi upload thật.
-
-## 7. Cách chạy
-
-### Đồng bộ báo cáo MobiWork
+Đồng bộ report:
 
 ```powershell
 python src\run_all_reports.py
 ```
 
-### Đồng bộ hình ảnh rolling
+Đồng bộ ảnh:
 
 ```powershell
 python src\run_images.py
 ```
 
-### Chấm ảnh AI và tính KPI
+Chấm ảnh + KPI:
 
 ```powershell
 pip install -r requirements-ai.txt
 python src\run_score_kpi.py
 ```
 
-### Kiểm tra một tháng lịch sử nhưng không upload
-
-Ví dụ kiểm tra tháng 08/2026:
+Kiểm tra một tháng nhưng không publish:
 
 ```powershell
 python src\run_score_kpi.py --period 2026-08 --dry-run
 ```
 
-Ở chế độ dry-run, hệ thống có thể tạo file local `runtime/output/customer_history.csv` để kiểm tra nhưng không publish history master hoặc KPI output lên SharePoint.
-
-## 8. Đầu ra trên SharePoint
+## 12. Đầu ra KPI
 
 ```text
 KPI/
@@ -189,51 +270,9 @@ KPI/
    └─ run_manifest.json
 ```
 
-Trước khi xuất KPI mới, hệ thống tải workbook tháng hiện có nếu có để giữ lại các giá trị `Nhãn Sửa Tay`.
+Ở `--dry-run`, output được tạo local để kiểm tra nhưng không publish KPI/history production lên SharePoint.
 
-File history chỉ được upload ở giai đoạn publish khi không chạy `--dry-run`.
-
-## 9. Kiểm tra an toàn file KPI
-
-File KPI đầu ra có hợp đồng cấu trúc cố định gồm 5 sheet:
-
-```text
-Tong_hop_KPI_Nhan_vien
-Chi_tiet_Khach_hang
-Chi_tiet_Anh_Checkin
-Canh_bao
-Tham_so
-```
-
-Trước khi thay file sản xuất, hệ thống kiểm tra cấu trúc workbook trong bộ nhớ và mở lại file XLSX vừa serialize để phát hiện lỗi quan hệ, công thức hoặc sheet trước khi ghi đè SharePoint.
-
-Nếu kiểm tra thất bại, hệ thống dừng theo hướng fail-closed thay vì publish một workbook hỏng.
-
-## 10. Giới hạn thời gian chấm AI và cơ chế resume
-
-Luồng production được chia thành batch giới hạn thay vì cố chấm toàn bộ backlog trong một lần.
-
-Mục tiêu:
-
-- tránh GitHub Actions hoặc self-hosted runner bị hard timeout;
-- lưu checkpoint sau từng batch;
-- có thể chạy tiếp phần backlog còn lại;
-- không phải chấm lại các ảnh đã có cache hợp lệ.
-
-Workflow production hiện hỗ trợ các biến giới hạn số ảnh, thời gian runtime, chunk size và số worker tải ảnh.
-
-## 11. GitHub Actions
-
-Các workflow chính:
-
-- `.github/workflows/mobiwork-sync.yml`: đồng bộ các file master báo cáo.
-- `.github/workflows/mobiwork-images.yml`: đồng bộ hình ảnh rolling.
-- `.github/workflows/image-scoring-kpi.yml`: chấm ảnh AI + KPI trên Windows runner `dms-ai` và có thể chạy sau khi image sync thành công.
-- `.github/workflows/ci.yml`: compile, Ruff, coverage và unit test nhẹ, không cài toàn bộ AI stack nặng.
-
-Một số workflow probe/migration trong `.github/workflows/` phục vụ kiểm thử hoặc chuyển đổi dữ liệu và có thể được cấu hình chỉ chạy trong điều kiện cụ thể.
-
-## 12. Kiểm tra code local
+## 13. Kiểm tra code
 
 Cài thư viện dev:
 
@@ -241,10 +280,10 @@ Cài thư viện dev:
 pip install -r requirements-dev.txt
 ```
 
-Chạy kiểm tra nhẹ:
+Chạy kiểm tra:
 
 ```bash
-python -m compileall -q src tests
+python -m compileall -q src tests tests_ai
 ruff check .
 coverage run -m unittest discover -s tests -v
 coverage report
@@ -257,42 +296,41 @@ pip install -r requirements-ai.txt
 python -m unittest discover -s tests_ai -v
 ```
 
-## 13. Bảo mật
+## 14. Bảo mật
 
-Không commit các dữ liệu sau vào repository:
+Không commit vào repository:
 
-- file `.env`;
-- Microsoft access/refresh token;
-- tài khoản hoặc mật khẩu MobiWork;
+- `.env`;
+- Microsoft token hoặc credentials;
+- MobiWork credentials;
 - dữ liệu khách hàng export;
-- ảnh DMS;
-- ảnh tham chiếu;
+- ảnh DMS hoặc ảnh tham chiếu;
 - model weights;
-- database/cache runtime;
-- file KPI được sinh ra;
-- secret dùng cho GitHub Actions hoặc SharePoint.
+- cache/database runtime;
+- file KPI production;
+- GitHub Actions secrets.
 
-Các tài nguyên runtime/private phải được loại khỏi Git bằng `.gitignore`.
+Private model assets và template được lưu trên SharePoint theo cấu hình môi trường/workflow, không lưu trong Git history.
 
-Trước khi bật production, nên đọc thêm:
+Xem thêm:
 
 - `SECURITY.md`
-- `docs/SELF_HOSTED_RUNNER.md`
 - `docs/CUSTOMER_HISTORY.md`
 - `docs/KPI_RULES_V2_4.md`
 
-## 14. Đánh giá trạng thái hiện tại
+## 15. Trạng thái hiện tại
 
-Repository hiện đã có các thành phần chính cần thiết cho một pipeline vận hành thực tế: đồng bộ MobiWork, lưu SharePoint, đồng bộ ảnh, cache, chấm ảnh AI, KPI, lịch sử khách hàng, kiểm tra file đầu ra, workflow CI và cơ chế batch/resume.
+Pipeline hiện đã có các lớp bảo vệ quan trọng cho production:
 
-Tuy nhiên, trước khi coi hệ thống là hoàn toàn ổn định cho production dài hạn, vẫn cần theo dõi định kỳ:
+- MobiWork API retry và kiểm tra response;
+- monthly partition replacement thay vì append mù;
+- SharePoint staged replacement + semantic verification;
+- report failure chặn pipeline downstream;
+- image reconciliation có state, batch, runtime budget và resume;
+- identity ảnh thống nhất theo ngày nghiệp vụ + URL digest;
+- image backlog chưa hoàn tất không được kích hoạt KPI;
+- workflow production được serialize bằng concurrency queue;
+- KPI workbook có fail-closed validation;
+- CI có regression tests cho orchestration và image identity.
 
-- tỷ lệ thành công của `mobiwork-sync.yml` và `mobiwork-images.yml`;
-- backlog ảnh còn lại sau mỗi batch AI;
-- dung lượng SharePoint và thời gian tải file;
-- tình trạng online của self-hosted runner `dms-ai`;
-- độ chính xác thực tế của nhãn AI so với nhãn sửa tay;
-- tính đúng của KPI sau mỗi thay đổi quy tắc kinh doanh;
-- cảnh báo workbook fail-closed và các lỗi dữ liệu nguồn.
-
-Không nên đánh giá production chỉ dựa vào việc workflow có màu xanh. Cần kiểm tra đồng thời tính đầy đủ của dữ liệu SharePoint, số lượng bản ghi, số ảnh, file KPI cuối cùng và `run_manifest.json`.
+Vẫn cần theo dõi vận hành bằng `sync_manifest.json`, `image_sync_manifest.json` và `run_manifest.json`; không nên đánh giá tính đúng của production chỉ dựa trên màu xanh của GitHub Actions.
