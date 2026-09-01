@@ -111,6 +111,68 @@ class SemanticSharePointClient(SharePointClient):
     def _is_xlsx(filename: str) -> bool:
         return filename.casefold().endswith(".xlsx")
 
+    def _put_content(
+        self,
+        drive_id: str,
+        remote_folder: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+    ) -> dict[str, Any]:
+        """Avoid staged replace when an existing Excel workbook is semantically unchanged."""
+        if self._is_xlsx(filename):
+            remote_path = "/".join(
+                part for part in (remote_folder.strip("/"), filename) if part
+            )
+            existing = self.get_item_by_path(drive_id, remote_path)
+            if existing:
+                if "folder" in existing:
+                    raise RuntimeError(
+                        f"SharePoint target {remote_path!r} exists but is a folder"
+                    )
+                item_id = str(existing.get("id", "")).strip()
+                if not item_id:
+                    raise RuntimeError(
+                        f"Existing SharePoint file {remote_path!r} has no driveItem id"
+                    )
+
+                current_content = self._download_item_content(drive_id, item_id)
+                try:
+                    matched, details = workbooks_semantically_equal(content, current_content)
+                except Exception as exc:
+                    LOG.warning(
+                        "Unable to compare existing Excel workbook %s before upload: %s: %s. "
+                        "Falling back to staged replacement.",
+                        remote_path,
+                        type(exc).__name__,
+                        exc,
+                    )
+                else:
+                    if matched:
+                        LOG.info(
+                            "Skipping unchanged SharePoint Excel write: %s local_bytes=%s remote_bytes=%s",
+                            remote_path,
+                            len(content),
+                            len(current_content),
+                        )
+                        return {
+                            **existing,
+                            **details,
+                            "size": len(current_content),
+                            "local_size": len(content),
+                            "verification_mode": "xlsx_semantic_noop",
+                            "semantic_match": True,
+                            "upload_skipped": True,
+                        }
+
+        return super()._put_content(
+            drive_id,
+            remote_folder,
+            filename,
+            content,
+            content_type,
+        )
+
     def _verify_xlsx_content(
         self,
         drive_id: str,

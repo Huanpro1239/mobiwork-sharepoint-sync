@@ -1,0 +1,191 @@
+name: MobiWork Operations Health
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 */2 * * *"
+      timezone: "Asia/Ho_Chi_Minh"
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: mobiwork-operations-health
+  cancel-in-progress: true
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Fetch recent production workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-sync.yml/runs?branch=main&per_page=30" \
+            > sync-runs.json
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-images.yml/runs?branch=main&per_page=30" \
+            > image-runs.json
+
+      - name: Evaluate freshness and success
+        id: evaluate
+        shell: bash
+        run: |
+          set +e
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          now = datetime.now(timezone.utc)
+
+          def parse_time(value):
+              if not value:
+                  return None
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          def successful_ages(path):
+              payload = json.loads(Path(path).read_text(encoding="utf-8"))
+              ages = []
+              for run in payload.get("workflow_runs", []):
+                  if run.get("conclusion") != "success":
+                      continue
+                  finished = parse_time(run.get("updated_at") or run.get("created_at"))
+                  if finished is None:
+                      continue
+                  ages.append((now - finished).total_seconds() / 60.0)
+              return sorted(ages)
+
+          sync_ages = successful_ages("sync-runs.json")
+          image_ages = successful_ages("image-runs.json")
+          reasons = []
+
+          # Hourly report refresh: allow queueing/runtime jitter and one missed slot.
+          if not sync_ages:
+              reasons.append("No successful MobiWork DMS Sync run was found in recent history.")
+          elif sync_ages[0] > 150:
+              reasons.append(
+                  f"Latest successful MobiWork DMS Sync is {sync_ages[0]:.0f} minutes old (>150)."
+              )
+
+          # Image reconciliation is expected after daily D-1 finalization. Allow backlog/batch runtime.
+          if not image_ages:
+              reasons.append("No successful MobiWork Images run was found in recent history.")
+          elif image_ages[0] > 2160:
+              reasons.append(
+                  f"Latest successful MobiWork Images run is {image_ages[0] / 60:.1f} hours old (>36)."
+              )
+
+          healthy = not reasons
+          state = "healthy" if healthy else "unhealthy"
+          Path("health.txt").write_text("\n".join(reasons), encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"state={state}\n")
+              handle.write(f"sync_age_minutes={(sync_ages[0] if sync_ages else -1):.1f}\n")
+              handle.write(f"image_age_minutes={(image_ages[0] if image_ages else -1):.1f}\n")
+
+          print(f"health={state}")
+          for reason in reasons:
+              print(f"- {reason}")
+          raise SystemExit(0 if healthy else 1)
+          PY
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Open or update operational incident
+        if: ${{ steps.evaluate.outputs.state == 'unhealthy' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALERT_TITLE: "[OPS] MobiWork automation unhealthy"
+        shell: bash
+        run: |
+          set -euo pipefail
+          details=$(cat health.txt)
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          body=$(cat <<EOF
+          Automated health watchdog detected an operational problem.
+
+          ${details}
+
+          Health run: ${run_url}
+          Detected at: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          EOF
+          )
+
+          issue_number=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "in:title $ALERT_TITLE" \
+            --json number,title \
+            --jq '.[] | select(.title == env.ALERT_TITLE) | .number' \
+            | head -n 1)
+
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
+            echo "Updated incident issue #$issue_number"
+          else
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$ALERT_TITLE" \
+              --body "$body"
+          fi
+
+      - name: Close recovered operational incident
+        if: ${{ steps.evaluate.outputs.state == 'healthy' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALERT_TITLE: "[OPS] MobiWork automation unhealthy"
+        shell: bash
+        run: |
+          set -euo pipefail
+          issue_number=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "in:title $ALERT_TITLE" \
+            --json number,title \
+            --jq '.[] | select(.title == env.ALERT_TITLE) | .number' \
+            | head -n 1)
+
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body "Automation recovered. Recent report and image workflows are back within the health thresholds."
+            gh issue close "$issue_number" --repo "$GITHUB_REPOSITORY" --reason completed
+            echo "Closed recovered incident issue #$issue_number"
+          else
+            echo "No open operational incident."
+          fi
+
+      - name: Publish health summary
+        if: ${{ always() }}
+        env:
+          STATE: ${{ steps.evaluate.outputs.state }}
+          SYNC_AGE: ${{ steps.evaluate.outputs.sync_age_minutes }}
+          IMAGE_AGE: ${{ steps.evaluate.outputs.image_age_minutes }}
+        shell: bash
+        run: |
+          {
+            echo "## MobiWork operations health"
+            echo
+            echo "- State: **${STATE:-unknown}**"
+            echo "- Latest successful report sync age: **${SYNC_AGE:-unknown} min**"
+            echo "- Latest successful image sync age: **${IMAGE_AGE:-unknown} min**"
+            if [ -s health.txt ]; then
+              echo
+              echo "### Findings"
+              sed 's/^/- /' health.txt
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail watchdog when unhealthy
+        if: ${{ steps.evaluate.outputs.state == 'unhealthy' }}
+        run: exit 1

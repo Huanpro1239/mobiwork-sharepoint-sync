@@ -1,0 +1,74 @@
+name: MobiWork Nightly Reconciliation
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "How many completed days to reconcile"
+        required: true
+        default: "3"
+  schedule:
+    - cron: "30 23 * * *"
+      timezone: "Asia/Ho_Chi_Minh"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: mobiwork-nightly-reconcile-dispatch
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Resolve reconciliation window
+        id: window
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_LOOKBACK: ${{ inputs.lookback_days }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            days="${INPUT_LOOKBACK:-3}"
+          else
+            days="3"
+          fi
+          if ! [[ "$days" =~ ^[1-9][0-9]*$ ]] || [ "$days" -gt 31 ]; then
+            echo "::error::lookback_days must be an integer between 1 and 31"
+            exit 2
+          fi
+          echo "days=$days" >> "$GITHUB_OUTPUT"
+          echo "Nightly reconciliation will refresh the previous $days completed day(s)."
+
+      - name: Queue production reconciliation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOOKBACK_DAYS: ${{ steps.window.outputs.days }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n --arg days "$LOOKBACK_DAYS" \
+            '{ref:"main",inputs:{sync_scope:"lookback",lookback_days:$days,dry_run:"false"}}' \
+            | gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-sync.yml/dispatches" \
+                --input -
+          echo "Queued MobiWork DMS Sync lookback=$LOOKBACK_DAYS on main."
+
+      - name: Publish summary
+        env:
+          LOOKBACK_DAYS: ${{ steps.window.outputs.days }}
+        shell: bash
+        run: |
+          {
+            echo "## Nightly reconciliation queued"
+            echo
+            echo "- Scope: \`lookback\`"
+            echo "- Completed days: **$LOOKBACK_DAYS**"
+            echo "- Production workflow: \`mobiwork-sync.yml\`"
+            echo "- Image reconciliation will be queued automatically after a successful production refresh."
+          } >> "$GITHUB_STEP_SUMMARY"
