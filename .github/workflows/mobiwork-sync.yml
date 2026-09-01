@@ -254,11 +254,14 @@ jobs:
                   f"- Status: **{data.get('status', 'unknown')}**",
                   f"- Sync scope: `{data.get('sync_scope', '')}`",
                   f"- Run ID: `{data.get('run_id', '')}`",
+                  f"- Target report-date executions: **{data.get('target_execution_count', 0)}**",
                   f"- Successful report executions: **{data.get('successful_report_count', 0)}**",
                   f"- Failed report executions: **{data.get('failed_report_count', 0)}**",
-                  f"- Uploaded files: **{data.get('file_count', len(data.get('files', [])))}**",
+                  f"- Workbook groups prepared: **{data.get('workbook_group_count', data.get('file_count', 0))}**",
+                  f"- SharePoint writes performed: **{data.get('sharepoint_write_count', 0)}**",
+                  f"- SharePoint writes avoided: **{data.get('sharepoint_write_avoided_count', 0)}**",
                   f"- Current-run source rows: **{data.get('source_row_count', 0):,}**",
-                  f"- Rows stored in written monthly masters: **{data.get('master_row_count', 0):,}**",
+                  f"- Rows stored in prepared monthly masters: **{data.get('master_row_count', 0):,}**",
               ])
               if data.get("error"):
                   lines.append(f"- Error summary: `{data['error']}`")
@@ -269,21 +272,29 @@ jobs:
               if results:
                   lines.extend([
                       "",
-                      "| Date | Report | Status | Source rows | Master rows | Verification | File |",
-                      "|---|---|---|---:|---:|---|---|",
+                      "| Date | Report | Status | Source rows | Master rows | Write | Verification | File |",
+                      "|---|---|---|---:|---:|---|---|---|",
                   ])
                   for item in results:
                       filename = item.get("filename", "")
                       web_url = item.get("web_url")
                       file_cell = f"[{filename}]({web_url})" if web_url else filename
+                      if data.get("dry_run"):
+                          write_state = "dry-run"
+                      elif item.get("upload_skipped"):
+                          write_state = "avoided"
+                      elif item.get("status") == "success" and filename:
+                          write_state = "written"
+                      else:
+                          write_state = ""
                       lines.append(
                           f"| {item.get('target_date', '')} | {item.get('report', '')} | "
                           f"{item.get('status', '')} | {int(item.get('source_rows', 0)):,} | "
-                          f"{int(item.get('master_rows', 0)):,} | "
+                          f"{int(item.get('master_rows', 0)):,} | {write_state} | "
                           f"{item.get('verification_mode', '')} | {file_cell} |"
                       )
                       if item.get("error"):
-                          lines.append(f"|  | ↳ error |  |  |  |  | `{item['error']}` |")
+                          lines.append(f"|  | ↳ error |  |  |  |  |  | `{item['error']}` |")
 
           if lines:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
