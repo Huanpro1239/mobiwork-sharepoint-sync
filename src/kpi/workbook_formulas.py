@@ -1,4 +1,10 @@
-"""Live Excel formulas for rolling two-month Sales KPI V2.4."""
+"""Live Excel formulas matching the production KPI workbook contract.
+
+The Python aggregation layer may use rolling history internally, but the workbook
+presented to Sales/Planning deliberately keeps the stable five-sheet contract used
+in the approved KPI file. Manual image labels remain live Excel inputs and flow
+through customer qualification and employee rewards without rerunning Python.
+"""
 from __future__ import annotations
 
 from copy import copy
@@ -18,35 +24,32 @@ CUSTOMER_HEADERS = {
     2: "Tên Nhân Viên",
     3: "Mã Khách Hàng",
     4: "Tên Khách Hàng",
-    5: "Lượt Viếng Thăm Tháng M",
-    6: "Loại KH (Mới/Cũ)",
-    7: "Đơn Lớn Nhất 2T (KTB)",
-    8: "Tổng Sản Lượng 2T (KTB)",
-    9: "Phân Loại Doanh Số",
-    10: "Ghi Tồn 2T",
+    5: "Loại Khách Hàng",
+    6: "Số Đơn Hàng",
+    7: "Đơn Lớn Nhất (KTB)",
+    8: "Tổng Sản Lượng (KTB)",
+    9: "Đạt Đơn Hàng",
+    10: "Ghi Tồn",
     11: "Ảnh Biển Hiệu",
     12: "Ảnh Trưng Bày",
     13: "Ảnh Không Đạt",
     14: "BH Theo Ghi Chú",
-    15: "Đủ Ảnh 2T",
+    15: "Đạt Ảnh Check-in",
     16: "KẾT QUẢ ĐẠT",
-    17: "Lý Do",
-    18: "Ngày Hoạt Động Đầu Tiên",
-    19: "Số Đơn 2T",
-    20: "Ghi Chú 2T",
-    21: "Kỳ Tính M",
+    17: "Chi Tiết / Lý Do Đánh Giá",
+    18: "Dò Ảnh",
 }
 
 SUMMARY_HEADERS = {
     1: "STT",
     2: "Tên Nhân Viên",
-    3: "Tổng KH Viếng Thăm M",
+    3: "Tổng KH Viếng Thăm",
     4: "Tổng KH Đạt",
     5: "KH Chưa Có Đơn",
     6: "Doanh Số Không Đủ",
-    7: "Không Đạt Ghi Tồn",
-    8: "Không Đạt Ảnh BH/TB",
-    9: "Tỷ Lệ Đạt (Benchmark)",
+    7: "Không Có Ảnh BH/TB",
+    8: "Ảnh BH/TB Không Đạt",
+    9: "Tỷ Lệ Đạt (Benchmark 50 KH)",
     10: "Ngày Công Chuẩn",
     11: "NGÀY CÔNG ĐƯỢC TÍNH",
     12: "Số KH Mới Đạt",
@@ -77,37 +80,53 @@ def _reset_table(sheet, headers: dict[int, str]) -> tuple[list, list]:
     return styles, formats
 
 
+def _working_days_excluding_sundays(period_start: pd.Timestamp) -> int:
+    start = pd.Timestamp(period_start).normalize()
+    end = start + pd.offsets.MonthEnd(0)
+    days = pd.date_range(start, end, freq="D")
+    return int((days.dayofweek != 6).sum())
+
+
 def write_parameters(sheet, period_start: pd.Timestamp, warnings: tuple[str, ...]) -> None:
+    """Write the exact policy block used by the approved production workbook."""
+
     policy = DEFAULT_KPI_POLICY
-    sheet["A1"] = "THAM SỐ KPI SALES - GHÉP 2 THÁNG"
     rows = (
-        (3, "Kỳ tính (M)", period_start.to_pydatetime()),
-        (4, "Benchmark khách hàng", policy.benchmark_customers),
-        (5, "Ngưỡng KHTC - đơn đơn lẻ (KTB)", policy.khtc_single_order_ktb),
-        (6, "Ngưỡng KHĐĐK - tổng 2 tháng (KTB)", policy.khddk_total_ktb),
-        (7, "Thưởng KH mới (VNĐ)", policy.new_customer_reward_vnd),
-        (8, "Thưởng KH cũ (VNĐ)", policy.old_customer_reward_vnd),
-        (9, "Trần KH thưởng / loại", policy.reward_customer_cap),
-        (10, "Trần thưởng KPI (VNĐ)", policy.reward_total_cap_vnd),
+        (1, "Tham Số Chính Sách & Công Chuẩn", "Giá Trị"),
+        (2, "Ngưỡng KHTC (đơn lớn nhất, KTB)", policy.khtc_single_order_ktb),
+        (3, "Ngưỡng KHĐĐK (cộng dồn tháng, KTB)", policy.khddk_total_ktb),
+        (4, "Mức thưởng / KH mới (VNĐ)", policy.new_customer_reward_vnd),
+        (5, "Mức thưởng / KH cũ (VNĐ)", policy.old_customer_reward_vnd),
+        (6, "Trần số khách được thưởng / loại", policy.reward_customer_cap),
+        (7, "Trần tổng thưởng / nhân viên (VNĐ)", policy.reward_total_cap_vnd),
+        (8, "Benchmark KH (mẫu số tỷ lệ đạt)", policy.benchmark_customers),
+        (9, "Ngày công chuẩn trong tháng", _working_days_excluding_sundays(period_start)),
     )
     for row, label, value in rows:
         sheet.cell(row, 1, label)
         sheet.cell(row, 2, value)
-    sheet["A11"] = "Ngày công chuẩn (trừ Chủ nhật)"
-    sheet["B11"] = '=NETWORKDAYS.INTL(B3,EOMONTH(B3,0),"0000001")'
-    sheet["A12"] = "Tháng M-1"
-    sheet["B12"] = "=EDATE(B3,-1)"
-    sheet["B3"].number_format = "dd/mm/yyyy"
-    sheet["B12"].number_format = "dd/mm/yyyy"
-    for cell in ("B7", "B8", "B10"):
-        sheet[cell].number_format = '#,##0 "VNĐ"'
-    sheet["A14"] = "CẢNH BÁO DỮ LIỆU"
-    for row in range(15, max(25, sheet.max_row + 1)):
+    # Do not leak stale warnings or the superseded two-month parameter block into
+    # the user-facing production template. Operational warnings live in Canh_bao
+    # and the run manifest.
+    for row in range(10, sheet.max_row + 1):
         sheet.cell(row, 1, None)
-    for offset, warning in enumerate(warnings or ("Không có cảnh báo dữ liệu KPI.",), start=15):
-        sheet.cell(offset, 1, warning)
-    sheet.column_dimensions["A"].width = max(sheet.column_dimensions["A"].width or 0, 48)
-    sheet.column_dimensions["B"].width = max(sheet.column_dimensions["B"].width or 0, 18)
+        sheet.cell(row, 2, None)
+    for cell in ("B4", "B5", "B7"):
+        sheet[cell].number_format = '#,##0 "VNĐ"'
+    sheet.column_dimensions["A"].width = max(sheet.column_dimensions["A"].width or 0, 38)
+    sheet.column_dimensions["B"].width = max(sheet.column_dimensions["B"].width or 0, 15)
+
+
+def _customer_type(record: dict[str, object]) -> str:
+    first_activity = record.get("first_activity_date")
+    period = record.get("period_start")
+    if first_activity is None or pd.isna(first_activity) or period is None or pd.isna(period):
+        return "Không rõ"
+    return (
+        "Khách hàng cũ"
+        if pd.Timestamp(first_activity).normalize() < pd.Timestamp(period).normalize()
+        else "Khách hàng mới"
+    )
 
 
 def replace_customer_rows(sheet, frame: pd.DataFrame) -> int:
@@ -118,47 +137,65 @@ def replace_customer_rows(sheet, frame: pd.DataFrame) -> int:
         for col in range(1, max(CUSTOMER_HEADERS) + 1):
             sheet.cell(row, col)._style = copy(styles[col - 1])
             sheet.cell(row, col).number_format = formats[col - 1]
-        first_activity = record.get("first_activity_date")
-        period = record.get("period_start")
+
         values = {
             1: offset + 1,
             2: record.get("ten_nhan_vien", ""),
             3: record.get("ma_kh", ""),
             4: record.get("ten_kh", ""),
-            5: int(record.get("visit_count_m", 0) or 0),
-            6: f'=IF(R{row}="","Không rõ",IF(R{row}<\'{PARAM_SHEET}\'!$B$3,"Cũ","Mới"))',
+            5: _customer_type(record),
+            6: int(record.get("order_count_2m", 0) or 0),
             7: float(record.get("max_order_2m_ktb", 0) or 0),
             8: float(record.get("total_order_2m_ktb", 0) or 0),
-            9: f'=IF(G{row}>=\'{PARAM_SHEET}\'!$B$5,"KHTC",IF(H{row}>=\'{PARAM_SHEET}\'!$B$6,"KHĐĐK","Không đạt DS"))',
-            10: 1 if bool(record.get("ghi_ton_2m", False)) else 0,
+            9: f'=IF(OR(G{row}>=\'{PARAM_SHEET}\'!$B$2,H{row}>=\'{PARAM_SHEET}\'!$B$3),"ĐẠT","CHƯA ĐẠT")',
+            10: "ĐÃ GHI TỒN" if bool(record.get("ghi_ton_2m", False)) else "CHƯA GHI TỒN",
             11: 0,
             12: 0,
             13: 0,
-            14: 1 if bool(record.get("valid_sign_note_2m", False)) else 0,
-            15: f'=IF(AND(OR(K{row}>=1,N{row}=1),L{row}>=1),1,0)',
-            16: f'=IF(E{row}<=0,"Không xét",IF(I{row}="Không đạt DS","Không Đạt",IF(J{row}<>1,"Không Đạt",IF(O{row}<>1,"Không Đạt",I{row}))))',
-            17: f'=IF(P{row}="KHTC","Đạt KHTC",IF(P{row}="KHĐĐK","Đạt KHĐĐK",IF(E{row}<=0,"Không có viếng thăm tháng M",IF(I{row}="Không đạt DS","Doanh số 2 tháng không đủ",IF(J{row}<>1,"Thiếu ghi tồn M-1/M",IF(O{row}<>1,"Thiếu Biển hiệu/Trưng bày M-1/M",""))))))',
-            19: int(record.get("order_count_2m", 0) or 0),
-            20: record.get("ghi_chu_2m", ""),
+            14: bool(record.get("valid_sign_note_2m", False)),
+            15: f'=IF(AND(OR(K{row}>=1,N{row}=TRUE),L{row}>=1),"ĐẠT","KHÔNG ĐẠT")',
+            16: (
+                f'=IF(F{row}=0,"Không Đạt",IF(E{row}="Khách hàng cũ",'
+                f'IF(G{row}>=\'{PARAM_SHEET}\'!$B$2,"KHTC",IF(H{row}>=\'{PARAM_SHEET}\'!$B$3,"KHĐĐK","Không Đạt")),'
+                f'IF(O{row}="KHÔNG ĐẠT","Không Đạt",IF(G{row}>=\'{PARAM_SHEET}\'!$B$2,"KHTC",IF(H{row}>=\'{PARAM_SHEET}\'!$B$3,"KHĐĐK","Không Đạt")))))'
+            ),
+            17: (
+                f'=IF(P{row}="KHTC",IF(E{row}="Khách hàng cũ","Đạt KHTC (KH cũ có đơn ≥ "&\'{PARAM_SHEET}\'!$B$2&" KTB)",'
+                f'"Đạt KHTC (KH mới có đơn ≥ "&\'{PARAM_SHEET}\'!$B$2&" KTB & đạt ảnh)"),'
+                f'IF(P{row}="KHĐĐK",IF(E{row}="Khách hàng cũ","Đạt KHĐĐK (KH cũ cộng dồn ≥ "&\'{PARAM_SHEET}\'!$B$3&" KTB)",'
+                f'"Đạt KHĐĐK (KH mới cộng dồn ≥ "&\'{PARAM_SHEET}\'!$B$3&" KTB & đạt ảnh)"),'
+                f'IF(F{row}=0,IF(E{row}="Khách hàng mới","KH mới chưa có đơn hàng","KH cũ chưa có đơn hàng"),'
+                f'IF(I{row}="CHƯA ĐẠT","Doanh số không đủ ngưỡng",'
+                f'IF(AND(NOT(OR(K{row}>=1,N{row}=TRUE)),L{row}=0),IF(M{row}>=1,"Ảnh biển hiệu không đạt; Ảnh trưng bày không đạt","Không có ảnh biển hiệu; Không có ảnh trưng bày"),'
+                f'IF(NOT(OR(K{row}>=1,N{row}=TRUE)),IF(M{row}>=1,"Ảnh biển hiệu không đạt","Không có ảnh biển hiệu"),'
+                f'IF(L{row}=0,IF(M{row}>=1,"Ảnh trưng bày không đạt","Không có ảnh trưng bày"),"Doanh số không đủ ngưỡng")))))))'
+            ),
+            18: "Dò ảnh",
         }
         for col, value in values.items():
             sheet.cell(row, col, value)
-        if first_activity is not None and not pd.isna(first_activity):
-            sheet.cell(row, 18, pd.Timestamp(first_activity).to_pydatetime())
-            sheet.cell(row, 18).number_format = "dd/mm/yyyy"
-        if period is not None and not pd.isna(period):
-            sheet.cell(row, 21, pd.Timestamp(period).to_pydatetime())
-            sheet.cell(row, 21).number_format = "mm/yyyy"
         sheet.cell(row, 7).number_format = "0.00"
         sheet.cell(row, 8).number_format = "0.00"
+
     end_row = START_ROW + len(records) - 1 if records else START_ROW - 1
     sheet.freeze_panes = "A5"
-    sheet.auto_filter.ref = f"A4:{openpyxl.utils.get_column_letter(max(CUSTOMER_HEADERS))}{max(4, end_row)}"
+    sheet.auto_filter.ref = f"A4:R{max(4, end_row)}"
     return end_row
 
 
-def update_customer_image_formulas(sheet, detail_count: int) -> None:
+def update_customer_image_formulas(
+    sheet,
+    detail_count: int,
+    detail_frame: pd.DataFrame | None = None,
+) -> None:
     detail_end = max(START_ROW, START_ROW + detail_count - 1)
+    first_rows: dict[str, int] = {}
+    if detail_frame is not None and not detail_frame.empty and "ma_kh" in detail_frame.columns:
+        for offset, value in enumerate(detail_frame["ma_kh"].tolist(), start=START_ROW):
+            key = str(value or "").strip()
+            if key and key not in first_rows:
+                first_rows[key] = offset
+
     for row in range(START_ROW, sheet.max_row + 1):
         customer = f"C{row}"
         base = (
@@ -168,11 +205,21 @@ def update_customer_image_formulas(sheet, detail_count: int) -> None:
         sheet[f"K{row}"] = f'=COUNTIFS({base},"Bien_hieu")'
         sheet[f"L{row}"] = f'=COUNTIFS({base},"Trung_bay")'
         sheet[f"M{row}"] = f'=COUNTIFS({base},"Khong_dat")'
+        cell = sheet[f"R{row}"]
+        customer_code = str(sheet[f"C{row}"].value or "").strip()
+        target_row = first_rows.get(customer_code)
+        if target_row:
+            cell.value = "Dò ảnh"
+            cell.hyperlink = f"#'{DETAIL_SHEET}'!A{target_row}"
+            cell.style = "Hyperlink"
+        else:
+            cell.value = "Không có ảnh"
+            cell.hyperlink = None
 
 
 def replace_summary_rows(sheet, customer_frame: pd.DataFrame, customer_end_row: int) -> None:
     styles, formats = _reset_table(sheet, SUMMARY_HEADERS)
-    employees = []
+    employees: list[str] = []
     if not customer_frame.empty and "ten_nhan_vien" in customer_frame.columns:
         employees = [
             str(value)
@@ -185,30 +232,31 @@ def replace_summary_rows(sheet, customer_frame: pd.DataFrame, customer_end_row: 
         for col in range(1, max(SUMMARY_HEADERS) + 1):
             sheet.cell(row, col)._style = copy(styles[col - 1])
             sheet.cell(row, col).number_format = formats[col - 1]
-        ranges = {
-            key: f"'{CUSTOMER_SHEET}'!${key}$5:${key}${customer_end}"
-            for key in ("B", "E", "F", "H", "I", "J", "O", "P")
-        }
-        b, e, f, h, i, j, o, p = (ranges[key] for key in ("B", "E", "F", "H", "I", "J", "O", "P"))
+        customer_range = f"'{CUSTOMER_SHEET}'!$B$5:$B${customer_end}"
+        result_range = f"'{CUSTOMER_SHEET}'!$P$5:$P${customer_end}"
+        reason_range = f"'{CUSTOMER_SHEET}'!$Q$5:$Q${customer_end}"
+        type_range = f"'{CUSTOMER_SHEET}'!$E$5:$E${customer_end}"
         sheet.cell(row, 1, offset + 1)
         sheet.cell(row, 2, employee)
-        sheet.cell(row, 3, f'=COUNTIFS({b},B{row},{e},">0")')
-        sheet.cell(row, 4, f'=COUNTIFS({b},B{row},{p},"KHTC")+COUNTIFS({b},B{row},{p},"KHĐĐK")')
-        sheet.cell(row, 5, f'=COUNTIFS({b},B{row},{h},0)')
-        sheet.cell(row, 6, f'=COUNTIFS({b},B{row},{i},"Không đạt DS")')
-        sheet.cell(row, 7, f'=COUNTIFS({b},B{row},{j},0)')
-        sheet.cell(row, 8, f'=COUNTIFS({b},B{row},{o},0)')
-        sheet.cell(row, 9, f'=MIN(D{row}/\'{PARAM_SHEET}\'!$B$4,1)')
-        sheet.cell(row, 10, f'=\'{PARAM_SHEET}\'!$B$11')
-        sheet.cell(row, 11, f'=I{row}*J{row}')
-        new_pass = f'COUNTIFS({b},B{row},{f},"Mới",{p},"KHTC")+COUNTIFS({b},B{row},{f},"Mới",{p},"KHĐĐK")'
-        old_pass = f'COUNTIFS({b},B{row},{f},"Cũ",{p},"KHTC")+COUNTIFS({b},B{row},{f},"Cũ",{p},"KHĐĐK")'
-        sheet.cell(row, 12, f'={new_pass}')
-        sheet.cell(row, 13, f'=MIN(L{row},\'{PARAM_SHEET}\'!$B$9)*\'{PARAM_SHEET}\'!$B$7')
-        sheet.cell(row, 14, f'={old_pass}')
-        sheet.cell(row, 15, f'=MIN(N{row},\'{PARAM_SHEET}\'!$B$9)*\'{PARAM_SHEET}\'!$B$8')
-        sheet.cell(row, 16, f'=MIN(M{row}+O{row},\'{PARAM_SHEET}\'!$B$10)')
-        sheet.cell(row, 17, f'=IF(C{row}=0,"Không có KH viếng thăm",IF(D{row}=0,"Chưa có KH đạt",""))')
+        sheet.cell(row, 3, f'=COUNTIF({customer_range},B{row})')
+        sheet.cell(row, 4, f'=COUNTIFS({customer_range},B{row},{result_range},"<>Không Đạt")')
+        sheet.cell(row, 5, f'=COUNTIFS({customer_range},B{row},{reason_range},"*chưa có đơn hàng*")')
+        sheet.cell(row, 6, f'=COUNTIFS({customer_range},B{row},{reason_range},"Doanh số không đủ ngưỡng")')
+        sheet.cell(row, 7, f'=COUNTIFS({customer_range},B{row},{reason_range},"Không có ảnh*")')
+        sheet.cell(row, 8, f'=COUNTIFS({customer_range},B{row},{reason_range},"Ảnh*không đạt*")')
+        sheet.cell(row, 9, f'=IF(\'{PARAM_SHEET}\'!$B$8=0,0,D{row}/\'{PARAM_SHEET}\'!$B$8)')
+        sheet.cell(row, 10, f'=\'{PARAM_SHEET}\'!$B$9')
+        sheet.cell(row, 11, f'=ROUND(MIN(I{row},1)*J{row},2)')
+        sheet.cell(row, 12, f'=COUNTIFS({customer_range},B{row},{type_range},"Khách hàng mới",{result_range},"<>Không Đạt")')
+        sheet.cell(row, 13, f'=MIN(L{row},\'{PARAM_SHEET}\'!$B$6)*\'{PARAM_SHEET}\'!$B$4')
+        sheet.cell(row, 14, f'=COUNTIFS({customer_range},B{row},{type_range},"Khách hàng cũ",{result_range},"<>Không Đạt")')
+        sheet.cell(row, 15, f'=MIN(N{row},\'{PARAM_SHEET}\'!$B$6)*\'{PARAM_SHEET}\'!$B$5')
+        sheet.cell(row, 16, f'=MIN(M{row}+O{row},\'{PARAM_SHEET}\'!$B$7)')
+        sheet.cell(
+            row,
+            17,
+            f'=IF(I{row}>=1,"Đạt xuất sắc (100% công)",IF(I{row}>=0.8,"Hoàn thành tốt",IF(I{row}>=0.5,"Hoàn thành trung bình","Chưa đạt chỉ tiêu")))',
+        )
         sheet.cell(row, 9).number_format = "0.00%"
         sheet.cell(row, 11).number_format = "0.00"
         for col in (13, 15, 16):
