@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from io import StringIO
 from pathlib import PurePosixPath
 
@@ -35,14 +36,31 @@ def _bounded_limit(name: str) -> int:
 
 def _sample_pending_limit() -> int:
     """Sample-only unmatched-image cap; zero means unlimited."""
-
     return _bounded_limit("AI_SAMPLE_MAX_PENDING_IMAGES")
 
 
 def _production_pending_limit() -> int:
     """Production catch-up cap; zero means unlimited."""
-
     return _bounded_limit("AI_PRODUCTION_MAX_PENDING_IMAGES")
+
+
+def _production_runtime_limit_seconds() -> int:
+    """Soft wall-clock budget for production scoring; zero disables it."""
+    value = _bounded_limit("AI_PRODUCTION_MAX_RUNTIME_SECONDS")
+    if value and value < 300:
+        raise ValueError("AI_PRODUCTION_MAX_RUNTIME_SECONDS must be 0 or >= 300")
+    return value
+
+
+def _score_chunk_size() -> int:
+    raw = os.environ.get("AI_SCORE_CHUNK_SIZE", "50").strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError("AI_SCORE_CHUNK_SIZE must be an integer") from error
+    if not 1 <= value <= 500:
+        raise ValueError("AI_SCORE_CHUNK_SIZE must be between 1 and 500")
+    return value
 
 
 def _sample_pending_selection() -> str:
@@ -56,7 +74,6 @@ def _remote_scores_by_url(
     rows: list[dict[str, object]], pipeline_signature: str
 ) -> dict[str, dict[str, object]]:
     """Return reusable current-model records keyed by exact source URL."""
-
     output: dict[str, dict[str, object]] = {}
     for row in rows:
         url = str(row.get("hinh_anh", "")).strip()
@@ -81,7 +98,6 @@ def _remote_scores_by_url(
 
 def install_history_sanitizer() -> None:
     """Drop history rows that cannot ever join to a customer KPI record."""
-
     import kpi.customer_history as history_module
 
     original = history_module._prepare_existing
@@ -136,13 +152,13 @@ def _pending_payload(reason: str) -> dict[str, object]:
 
 def install_legacy_url_scoring(client) -> int:
     """Patch cloud scoring with legacy reuse and resumable V2.3 production batches."""
-
     import score_kpi_pipeline as pipeline
     from scoring.service import ImageScoringService
 
     legacy_by_url = _load_legacy_by_url(client)
 
     def build_image_results(source, runtime_client, drive_id, rows, period_start):
+        started = time.monotonic()
         record_ids = assign_record_ids(rows)
         output: list[dict[str, object] | None] = [None] * len(rows)
         legacy_indices: set[int] = set()
@@ -151,9 +167,7 @@ def install_legacy_url_scoring(client) -> int:
         cache = ScoreCache(SCORE_CACHE_DB)
         with ImageScoringService(cache=cache) as service:
             signature = service.pipeline_signature
-            remote_rows = pipeline._load_remote_score_rows(
-                runtime_client, drive_id, period_start
-            )
+            remote_rows = pipeline._load_remote_score_rows(runtime_client, drive_id, period_start)
             remote_seeded = cache.seed(remote_rows, signature)
             remote_by_url = _remote_scores_by_url(remote_rows, signature)
 
@@ -192,14 +206,15 @@ def install_legacy_url_scoring(client) -> int:
                 legacy_indices.add(index)
 
             reused_indices = legacy_indices | remote_indices
-            all_pending_indices = [
-                i for i in range(len(rows)) if i not in reused_indices
-            ]
+            all_pending_indices = [i for i in range(len(rows)) if i not in reused_indices]
             pending_indices = list(all_pending_indices)
             skipped_indices: list[int] = []
 
             sample_limit = _sample_pending_limit()
             production_limit = _production_pending_limit() if not sample_limit else 0
+            runtime_limit = _production_runtime_limit_seconds() if production_limit else 0
+            deadline = started + runtime_limit if runtime_limit else None
+            chunk_size = _score_chunk_size()
             sample_selection = _sample_pending_selection()
             batch_mode = "sample" if sample_limit else "production" if production_limit else "unbounded"
             batch_limit = sample_limit or production_limit
@@ -226,7 +241,7 @@ def install_legacy_url_scoring(client) -> int:
                         _pending_payload(reason),
                     )
                 LOG.warning(
-                    "Bounded cloud scoring: %s unmatched rows; mode=%s selection=%s; scoring %s and deferring %s",
+                    "Bounded cloud scoring: %s unmatched rows; mode=%s selection=%s; selected=%s deferred=%s",
                     len(all_pending_indices),
                     batch_mode,
                     selection,
@@ -236,9 +251,7 @@ def install_legacy_url_scoring(client) -> int:
 
             pending_rows = [rows[i] for i in pending_indices]
             downloads = (
-                pipeline._download_image_rows(
-                    source, runtime_client, drive_id, pending_rows
-                )
+                pipeline._download_image_rows(source, runtime_client, drive_id, pending_rows)
                 if pending_rows
                 else []
             )
@@ -248,9 +261,8 @@ def install_legacy_url_scoring(client) -> int:
                 if content is not None and error is None
             ]
             failed_downloads = len(pending_rows) - len(valid_pending)
-            production_remaining = (
-                len(skipped_indices) + failed_downloads if production_limit else 0
-            )
+            runtime_deferred = 0
+            production_remaining = len(skipped_indices) + failed_downloads if production_limit else 0
             stats = {
                 "images": len(rows),
                 "legacy_url_hits": len(legacy_indices),
@@ -258,48 +270,84 @@ def install_legacy_url_scoring(client) -> int:
                 "pending_before_batch_limit": len(all_pending_indices),
                 "sample_pending_limit": sample_limit,
                 "sample_pending_selection": sample_selection,
-                "sample_scored_pending_images": len(pending_indices) if sample_limit else 0,
+                "sample_scored_pending_images": 0,
                 "sample_skipped_images": len(skipped_indices) if sample_limit else 0,
                 "production_batch_limit": production_limit,
-                "production_batch_scored_images": len(pending_indices) if production_limit else 0,
+                "production_selected_images": len(pending_indices) if production_limit else 0,
+                "production_batch_scored_images": 0,
                 "production_pending_remaining": production_remaining,
+                "production_runtime_limit_seconds": runtime_limit,
+                "runtime_budget_exhausted": False,
+                "score_chunk_size": chunk_size,
                 "stored_images_loaded": len(valid_pending),
                 "missing_or_failed_images": failed_downloads,
                 "remote_seeded_scores": remote_seeded,
                 "cache_hits": 0,
                 "new_unique_scores": 0,
+                "preexisting_local_cache_matches": 0,
             }
 
+            scored_count = 0
             if valid_pending:
-                contents = [downloads[i][1] for i in valid_pending]
-                before = sum(
-                    cache.get(signature, hashlib.sha256(content).hexdigest())
-                    is not None
-                    for content in contents
-                    if content is not None
-                )
-                scored = service.score_contents(
-                    content for content in contents if content is not None
-                )
-                stats["cache_hits"] = sum(int(item.cache_hit) for item in scored)
-                stats["new_unique_scores"] = len(
-                    {item.image_sha256 for item in scored if not item.cache_hit}
-                )
-                stats["preexisting_local_cache_matches"] = int(before)
-                for local_index, outcome in zip(valid_pending, scored, strict=True):
-                    original_index = pending_indices[local_index]
-                    remote = downloads[local_index][0]
-                    row = rows[original_index]
-                    record = build_audit_record(
-                        row,
-                        record_ids[original_index],
-                        signature,
-                        outcome.image_sha256,
-                        outcome.payload,
+                for start in range(0, len(valid_pending), chunk_size):
+                    if deadline is not None and time.monotonic() >= deadline:
+                        remaining_local = valid_pending[start:]
+                        runtime_deferred = len(remaining_local)
+                        for local_index in remaining_local:
+                            original_index = pending_indices[local_index]
+                            output[original_index] = build_audit_record(
+                                rows[original_index],
+                                record_ids[original_index],
+                                signature,
+                                "",
+                                _pending_payload("production scoring runtime budget exhausted"),
+                            )
+                        stats["runtime_budget_exhausted"] = True
+                        production_remaining += runtime_deferred
+                        LOG.warning(
+                            "Production scoring soft runtime budget exhausted after %.1fs; deferring %s downloaded images",
+                            time.monotonic() - started,
+                            runtime_deferred,
+                        )
+                        break
+
+                    chunk_local = valid_pending[start : start + chunk_size]
+                    contents = [downloads[i][1] for i in chunk_local]
+                    before = sum(
+                        cache.get(signature, hashlib.sha256(content).hexdigest()) is not None
+                        for content in contents
+                        if content is not None
                     )
-                    if remote:
-                        record["Tên File"] = PurePosixPath(remote).name
-                    output[original_index] = record
+                    scored = service.score_contents(
+                        content for content in contents if content is not None
+                    )
+                    stats["cache_hits"] += sum(int(item.cache_hit) for item in scored)
+                    stats["new_unique_scores"] += len(
+                        {item.image_sha256 for item in scored if not item.cache_hit}
+                    )
+                    stats["preexisting_local_cache_matches"] += int(before)
+                    for local_index, outcome in zip(chunk_local, scored, strict=True):
+                        original_index = pending_indices[local_index]
+                        remote = downloads[local_index][0]
+                        row = rows[original_index]
+                        record = build_audit_record(
+                            row,
+                            record_ids[original_index],
+                            signature,
+                            outcome.image_sha256,
+                            outcome.payload,
+                        )
+                        if remote:
+                            record["Tên File"] = PurePosixPath(remote).name
+                        output[original_index] = record
+                    scored_count += len(scored)
+
+            if sample_limit:
+                stats["sample_scored_pending_images"] = scored_count
+            if production_limit:
+                stats["production_batch_scored_images"] = scored_count
+                stats["production_pending_remaining"] = production_remaining
+                stats["runtime_deferred_images"] = runtime_deferred
 
             for local_index, (_remote, _content, error) in enumerate(downloads):
                 original_index = pending_indices[local_index]
@@ -321,20 +369,18 @@ def install_legacy_url_scoring(client) -> int:
         if any(item is None for item in output):
             raise RuntimeError("Cloud URL scoring left unresolved result rows")
         LOG.info(
-            "Cloud URL reuse: legacy=%s remote_v23=%s total=%s; unmatched=%s; mode=%s; attempted=%s; deferred=%s",
+            "Cloud URL reuse: legacy=%s remote_v23=%s total=%s unmatched=%s mode=%s selected=%s scored=%s deferred=%s duration=%.1fs",
             len(legacy_indices),
             len(remote_indices),
             len(rows),
             len(all_pending_indices),
             batch_mode,
             len(pending_indices),
-            len(skipped_indices),
+            scored_count,
+            (len(skipped_indices) + runtime_deferred),
+            time.monotonic() - started,
         )
-        return (
-            pd.DataFrame(item for item in output if item is not None),
-            stats,
-            signature,
-        )
+        return pd.DataFrame(item for item in output if item is not None), stats, signature
 
     pipeline._build_image_results = build_image_results
     return len(legacy_by_url)
