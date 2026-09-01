@@ -36,6 +36,9 @@ jobs:
           gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/production-smoke.yml/runs?branch=main&per_page=10" \
             > smoke-runs.json
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/commits?path=.github/workflows/production-smoke.yml&per_page=1" \
+            > smoke-definition.json
 
       - name: Evaluate freshness and success
         id: evaluate
@@ -81,9 +84,22 @@ jobs:
               )
               return completed[0]
 
+          def smoke_definition_age_minutes():
+              payload = json.loads(Path("smoke-definition.json").read_text(encoding="utf-8"))
+              if not isinstance(payload, list) or not payload:
+                  return None
+              commit = payload[0].get("commit", {})
+              committer = commit.get("committer", {}) if isinstance(commit, dict) else {}
+              author = commit.get("author", {}) if isinstance(commit, dict) else {}
+              created = parse_time(committer.get("date") or author.get("date"))
+              if created is None:
+                  return None
+              return (now - created).total_seconds() / 60.0
+
           sync_ages = successful_ages("sync-runs.json")
           image_ages = successful_ages("image-runs.json")
           smoke_run = latest_completed("smoke-runs.json")
+          definition_age = smoke_definition_age_minutes()
           reasons = []
 
           if not sync_ages:
@@ -103,7 +119,12 @@ jobs:
           smoke_age = -1.0
           smoke_conclusion = "missing"
           if smoke_run is None:
-              reasons.append("No completed production consistency smoke run was found.")
+              if definition_age is not None and definition_age <= 2160:
+                  smoke_conclusion = "bootstrap_grace"
+              else:
+                  reasons.append(
+                      "No completed production consistency smoke run was found after the 36-hour bootstrap grace period."
+                  )
           else:
               smoke_conclusion = str(smoke_run.get("conclusion") or "unknown")
               finished = parse_time(smoke_run.get("updated_at") or smoke_run.get("created_at"))
@@ -128,6 +149,9 @@ jobs:
               handle.write(f"image_age_minutes={(image_ages[0] if image_ages else -1):.1f}\n")
               handle.write(f"smoke_age_minutes={smoke_age:.1f}\n")
               handle.write(f"smoke_conclusion={smoke_conclusion}\n")
+              handle.write(
+                  f"smoke_definition_age_minutes={(definition_age if definition_age is not None else -1):.1f}\n"
+              )
 
           print(f"health={state}")
           for reason in reasons:
@@ -210,6 +234,7 @@ jobs:
           IMAGE_AGE: ${{ steps.evaluate.outputs.image_age_minutes }}
           SMOKE_AGE: ${{ steps.evaluate.outputs.smoke_age_minutes }}
           SMOKE_CONCLUSION: ${{ steps.evaluate.outputs.smoke_conclusion }}
+          SMOKE_DEFINITION_AGE: ${{ steps.evaluate.outputs.smoke_definition_age_minutes }}
         shell: bash
         run: |
           {
@@ -219,6 +244,7 @@ jobs:
             echo "- Latest successful report sync age: **${SYNC_AGE:-unknown} min**"
             echo "- Latest successful image sync age: **${IMAGE_AGE:-unknown} min**"
             echo "- Latest production smoke: **${SMOKE_CONCLUSION:-unknown}**, age **${SMOKE_AGE:-unknown} min**"
+            echo "- Smoke workflow definition age: **${SMOKE_DEFINITION_AGE:-unknown} min**"
             if [ -s health.txt ]; then
               echo
               echo "### Findings"
