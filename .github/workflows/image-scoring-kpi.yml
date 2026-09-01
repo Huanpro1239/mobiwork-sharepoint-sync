@@ -17,9 +17,6 @@ on:
         required: true
         type: boolean
         default: true
-  workflow_run:
-    workflows: ["MobiWork Daily Image Sync"]
-    types: [completed]
 
 permissions:
   contents: read
@@ -29,10 +26,10 @@ permissions:
 concurrency:
   group: mobiwork-kpi-production
   cancel-in-progress: false
+  queue: max
 
 jobs:
   score-kpi:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
