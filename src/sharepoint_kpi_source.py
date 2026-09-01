@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -224,12 +225,22 @@ class SharePointMonthlyKPISource:
     def resolve_image_path(
         self, row: dict[str, Any], cfg: ImageSyncConfig
     ) -> str:
+        """Resolve a persisted image using exact identity, then stable URL digest.
+
+        Image synchronization treats the SHA256 digest of the original MobiWork URL
+        as the immutable identity. ``stt_hinh`` and the detected file extension can
+        change between source exports, so KPI lookup must use the same identity rule.
+        The business date remains part of the match to avoid crossing visits/days.
+        """
         image_date = _parse_date(row.get("_sync_date")) or _parse_date(
             row.get(cfg.date_field)
         )
         if image_date is None:
             raise ValueError("Ảnh không có ngày hợp lệ")
         url = str(row.get(cfg.url_field, "")).strip()
+        if not url:
+            raise ValueError("Ảnh không có URL")
+
         suffix = PurePosixPath(unquote(urlsplit(url).path)).suffix.casefold()
         if suffix == ".jpeg":
             suffix = ".jpg"
@@ -253,17 +264,48 @@ class SharePointMonthlyKPISource:
             int(row.get("_image_index") or 1),
             suffix,
         )
-        if self.sharepoint.get_item_by_path(self.drive_id, provisional):
+        existing = self.sharepoint.get_item_by_path(self.drive_id, provisional)
+        if existing and "folder" not in existing and int(existing.get("size") or 0) > 0:
             return provisional
+
+        children = self._children(folder)
         stem = PurePosixPath(provisional).stem
-        matches = [
+        exact_stem_matches = [
             str(item.get("name", "")).strip()
-            for item in self._children(folder)
+            for item in children
             if "folder" not in item
+            and int(item.get("size") or 0) > 0
             and PurePosixPath(str(item.get("name", ""))).stem == stem
         ]
-        if len(matches) == 1:
-            return f"{folder}/{matches[0]}"
-        if not matches:
-            raise FileNotFoundError(f"Không tìm thấy ảnh đã sync: {provisional}")
-        raise RuntimeError(f"Có nhiều file cùng identity ảnh: {folder}/{stem}")
+        if len(exact_stem_matches) == 1:
+            return f"{folder}/{exact_stem_matches[0]}"
+        if len(exact_stem_matches) > 1:
+            raise RuntimeError(f"Có nhiều file cùng identity ảnh: {folder}/{stem}")
+
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:10]
+        date_token = f"_{image_date:%Y%m%d}_"
+        digest_matches = [
+            str(item.get("name", "")).strip()
+            for item in children
+            if "folder" not in item
+            and int(item.get("size") or 0) > 0
+            and date_token in PurePosixPath(str(item.get("name", ""))).stem
+            and PurePosixPath(str(item.get("name", ""))).stem.endswith(f"_{digest}")
+        ]
+        if len(digest_matches) == 1:
+            resolved = f"{folder}/{digest_matches[0]}"
+            LOG.info("Resolved stored image by URL digest: %s", resolved)
+            return resolved
+        if len(digest_matches) > 1:
+            raise RuntimeError(
+                f"Có nhiều ảnh cùng URL digest/date trong folder {folder}: "
+                f"{', '.join(sorted(digest_matches))}"
+            )
+        raise FileNotFoundError(
+            f"Không tìm thấy ảnh đã sync: folder={folder} date={image_date} digest={digest}"
+        )
+
+
+# Cloud compatibility code checks this marker before installing its historical
+# monkey-patch. Core lookup is now sequence/extension independent, so no patch is needed.
+SharePointMonthlyKPISource.resolve_image_path._url_digest_fallback = True  # type: ignore[attr-defined]
