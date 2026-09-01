@@ -122,6 +122,72 @@ class ReliableImageSyncTests(unittest.TestCase):
         self.assertEqual(storage.list_calls.count(folder), 1)
         self.assertEqual(storage.exact_calls, [])
 
+    def test_same_url_on_different_business_dates_stays_two_targets(self):
+        url = "https://dmsimages.mobiwork.vn/reused.jpg"
+        source = FakeSource(
+            [
+                self.record(url, day="2026-08-20", sequence=1),
+                self.record(url, day="2026-08-21", sequence=1),
+            ]
+        )
+        storage = FolderStorage()
+
+        with patch(
+            "image_sync_reliable._download_image",
+            return_value=(b"\xff\xd8\xffimage", "image/jpeg", ".jpg"),
+        ):
+            result = run_image_sync_reliable(
+                [self.report],
+                source,
+                storage,
+                "drive",
+                False,
+                date(2026, 8, 31),
+                ImageSyncConfig(),
+            )
+
+        self.assertEqual(result["candidate_count"], 2)
+        self.assertEqual(result["unique_target_count"], 2)
+        self.assertEqual(result["duplicate_candidate_count"], 0)
+        self.assertEqual(result["uploaded_count"], 2)
+        paths = [item[0] for item in storage.uploaded_bytes]
+        self.assertTrue(any("_20260820_" in path for path in paths))
+        self.assertTrue(any("_20260821_" in path for path in paths))
+
+    def test_existing_same_digest_on_other_date_does_not_hide_missing_image(self):
+        url = "https://dmsimages.mobiwork.vn/reused.jpg"
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:10]
+        folder = "Data anh/2026-08/NV A/KH001"
+        storage = FolderStorage(
+            folders={
+                folder: [
+                    {
+                        "name": f"KH001_20260820_1_{digest}.jpg",
+                        "file": {},
+                        "size": 1234,
+                    }
+                ]
+            }
+        )
+
+        with patch(
+            "image_sync_reliable._download_image",
+            return_value=(b"\xff\xd8\xffimage", "image/jpeg", ".jpg"),
+        ):
+            result = run_image_sync_reliable(
+                [self.report],
+                FakeSource([self.record(url, day="2026-08-21", sequence=1)]),
+                storage,
+                "drive",
+                False,
+                date(2026, 8, 31),
+                ImageSyncConfig(),
+            )
+
+        self.assertEqual(result["skipped_existing_count"], 0)
+        self.assertEqual(result["uploaded_count"], 1)
+        self.assertIn("_20260821_", storage.uploaded_bytes[0][0])
+
     def test_batch_limit_preserves_retry_cursor_and_reports_warming_up(self):
         urls = [
             "https://dmsimages.mobiwork.vn/a.jpg",
@@ -197,7 +263,7 @@ class ReliableImageSyncTests(unittest.TestCase):
         self.assertEqual(len(storage.uploaded_bytes) - first_uploads, 1)
         self.assertEqual(storage.state["last_completed_sync_date"], "2026-08-31")
 
-    def test_duplicate_rows_for_same_folder_and_url_are_one_target(self):
+    def test_duplicate_rows_for_same_folder_date_and_url_are_one_target(self):
         url = "https://dmsimages.mobiwork.vn/same.jpg"
         source = FakeSource([self.record(url, sequence=1), self.record(url, sequence=99)])
         storage = FolderStorage()
