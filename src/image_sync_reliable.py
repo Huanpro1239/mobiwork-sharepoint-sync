@@ -78,7 +78,7 @@ def _is_nonempty_file(item: dict[str, Any]) -> bool:
 
 
 class RemoteFolderIndex:
-    """Cache folder children and recognize stored images by URL digest."""
+    """Cache folder children and recognize stored images by business date + URL digest."""
 
     def __init__(self, storage: ImageStorage, drive_id: str) -> None:
         self.storage = storage
@@ -111,12 +111,16 @@ class RemoteFolderIndex:
             LOG.exception("Unable to list SharePoint image folder: %s", folder)
             return None
 
-    def contains_digest(self, folder: str, digest: str) -> bool | None:
+    def contains_identity(self, folder: str, image_date: date, digest: str) -> bool | None:
         indexed = self._load(folder)
         if indexed is None:
             return None
-        marker = f"_{digest}."
-        return any(marker in name.casefold() for name in indexed)
+        date_marker = f"_{image_date:%Y%m%d}_"
+        digest_marker = f"_{digest}."
+        return any(
+            date_marker in name and digest_marker in name.casefold()
+            for name in indexed
+        )
 
     def remember(self, remote_path: str, size: int) -> None:
         folder, _, name = remote_path.rpartition("/")
@@ -125,7 +129,13 @@ class RemoteFolderIndex:
 
 
 def _deduplicate_candidates(planned: list[Any], cfg: ImageSyncConfig) -> list[Any]:
-    unique: dict[tuple[str, str], Any] = {}
+    """Deduplicate only identical image targets on the same business date.
+
+    MobiWork can reuse the same image URL on different visit dates. The destination
+    filename intentionally contains the business date, so treating URL digest alone
+    as identity would silently drop later-day evidence.
+    """
+    unique: dict[tuple[str, date, str], Any] = {}
     for candidate in planned:
         folder, _ = _remote_image_path(
             cfg,
@@ -135,14 +145,10 @@ def _deduplicate_candidates(planned: list[Any], cfg: ImageSyncConfig) -> list[An
             candidate.image_index,
             _provisional_extension(candidate.url),
         )
-        key = (folder, _url_digest(candidate.url))
+        key = (folder, candidate.image_date, _url_digest(candidate.url))
         current = unique.get(key)
-        order = (candidate.image_date, candidate.image_index, candidate.url)
-        if current is None or order < (
-            current.image_date,
-            current.image_index,
-            current.url,
-        ):
+        order = (candidate.image_index, candidate.url)
+        if current is None or order < (current.image_index, current.url):
             unique[key] = candidate
     return sorted(
         unique.values(),
@@ -286,7 +292,7 @@ def run_image_sync_reliable(
         )
         digest = _url_digest(candidate.url)
         try:
-            present = remote_index.contains_digest(folder, digest)
+            present = remote_index.contains_identity(folder, candidate.image_date, digest)
             if present is True:
                 result["skipped_existing_count"] += 1
                 continue
@@ -314,7 +320,11 @@ def run_image_sync_reliable(
                 extension,
             )
             if remote_path != provisional_path:
-                present_after_download = remote_index.contains_digest(folder, digest)
+                present_after_download = remote_index.contains_identity(
+                    folder,
+                    candidate.image_date,
+                    digest,
+                )
                 if present_after_download is True:
                     result["skipped_existing_count"] += 1
                     continue
