@@ -33,6 +33,9 @@ jobs:
           gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-images.yml/runs?branch=main&per_page=30" \
             > image-runs.json
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/production-smoke.yml/runs?branch=main&per_page=10" \
+            > smoke-runs.json
 
       - name: Evaluate freshness and success
         id: evaluate
@@ -64,11 +67,25 @@ jobs:
                   ages.append((now - finished).total_seconds() / 60.0)
               return sorted(ages)
 
+          def latest_completed(path):
+              payload = json.loads(Path(path).read_text(encoding="utf-8"))
+              completed = [
+                  run for run in payload.get("workflow_runs", [])
+                  if run.get("status") == "completed"
+              ]
+              if not completed:
+                  return None
+              completed.sort(
+                  key=lambda run: run.get("updated_at") or run.get("created_at") or "",
+                  reverse=True,
+              )
+              return completed[0]
+
           sync_ages = successful_ages("sync-runs.json")
           image_ages = successful_ages("image-runs.json")
+          smoke_run = latest_completed("smoke-runs.json")
           reasons = []
 
-          # Hourly report refresh: allow queueing/runtime jitter and one missed slot.
           if not sync_ages:
               reasons.append("No successful MobiWork DMS Sync run was found in recent history.")
           elif sync_ages[0] > 150:
@@ -76,13 +93,31 @@ jobs:
                   f"Latest successful MobiWork DMS Sync is {sync_ages[0]:.0f} minutes old (>150)."
               )
 
-          # Image reconciliation is expected after daily D-1 finalization. Allow backlog/batch runtime.
           if not image_ages:
               reasons.append("No successful MobiWork Images run was found in recent history.")
           elif image_ages[0] > 2160:
               reasons.append(
                   f"Latest successful MobiWork Images run is {image_ages[0] / 60:.1f} hours old (>36)."
               )
+
+          smoke_age = -1.0
+          smoke_conclusion = "missing"
+          if smoke_run is None:
+              reasons.append("No completed production consistency smoke run was found.")
+          else:
+              smoke_conclusion = str(smoke_run.get("conclusion") or "unknown")
+              finished = parse_time(smoke_run.get("updated_at") or smoke_run.get("created_at"))
+              if finished is not None:
+                  smoke_age = (now - finished).total_seconds() / 60.0
+              if smoke_conclusion != "success":
+                  reasons.append(
+                      "Latest production consistency smoke did not succeed: "
+                      f"conclusion={smoke_conclusion}, url={smoke_run.get('html_url', '')}"
+                  )
+              elif smoke_age > 2160:
+                  reasons.append(
+                      f"Latest successful production consistency smoke is {smoke_age / 60:.1f} hours old (>36)."
+                  )
 
           healthy = not reasons
           state = "healthy" if healthy else "unhealthy"
@@ -91,6 +126,8 @@ jobs:
               handle.write(f"state={state}\n")
               handle.write(f"sync_age_minutes={(sync_ages[0] if sync_ages else -1):.1f}\n")
               handle.write(f"image_age_minutes={(image_ages[0] if image_ages else -1):.1f}\n")
+              handle.write(f"smoke_age_minutes={smoke_age:.1f}\n")
+              handle.write(f"smoke_conclusion={smoke_conclusion}\n")
 
           print(f"health={state}")
           for reason in reasons:
@@ -158,7 +195,7 @@ jobs:
           if [ -n "$issue_number" ]; then
             gh issue comment "$issue_number" \
               --repo "$GITHUB_REPOSITORY" \
-              --body "Automation recovered. Recent report and image workflows are back within the health thresholds."
+              --body "Automation recovered. Report sync, image sync, and production consistency smoke are healthy again."
             gh issue close "$issue_number" --repo "$GITHUB_REPOSITORY" --reason completed
             echo "Closed recovered incident issue #$issue_number"
           else
@@ -171,6 +208,8 @@ jobs:
           STATE: ${{ steps.evaluate.outputs.state }}
           SYNC_AGE: ${{ steps.evaluate.outputs.sync_age_minutes }}
           IMAGE_AGE: ${{ steps.evaluate.outputs.image_age_minutes }}
+          SMOKE_AGE: ${{ steps.evaluate.outputs.smoke_age_minutes }}
+          SMOKE_CONCLUSION: ${{ steps.evaluate.outputs.smoke_conclusion }}
         shell: bash
         run: |
           {
@@ -179,6 +218,7 @@ jobs:
             echo "- State: **${STATE:-unknown}**"
             echo "- Latest successful report sync age: **${SYNC_AGE:-unknown} min**"
             echo "- Latest successful image sync age: **${IMAGE_AGE:-unknown} min**"
+            echo "- Latest production smoke: **${SMOKE_CONCLUSION:-unknown}**, age **${SMOKE_AGE:-unknown} min**"
             if [ -s health.txt ]; then
               echo
               echo "### Findings"
