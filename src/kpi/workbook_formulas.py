@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from copy import copy
 
-import openpyxl
 import pandas as pd
 
 from kpi.kpi_rules import DEFAULT_KPI_POLICY
@@ -89,7 +88,6 @@ def _working_days_excluding_sundays(period_start: pd.Timestamp) -> int:
 
 def write_parameters(sheet, period_start: pd.Timestamp, warnings: tuple[str, ...]) -> None:
     """Write the exact policy block used by the approved production workbook."""
-
     policy = DEFAULT_KPI_POLICY
     rows = (
         (1, "Tham Số Chính Sách & Công Chuẩn", "Giá Trị"),
@@ -105,9 +103,6 @@ def write_parameters(sheet, period_start: pd.Timestamp, warnings: tuple[str, ...
     for row, label, value in rows:
         sheet.cell(row, 1, label)
         sheet.cell(row, 2, value)
-    # Do not leak stale warnings or the superseded two-month parameter block into
-    # the user-facing production template. Operational warnings live in Canh_bao
-    # and the run manifest.
     for row in range(10, sheet.max_row + 1):
         sheet.cell(row, 1, None)
         sheet.cell(row, 2, None)
