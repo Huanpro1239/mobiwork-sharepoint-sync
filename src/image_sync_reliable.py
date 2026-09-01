@@ -38,6 +38,25 @@ def _batch_limit() -> int:
     return value
 
 
+def _runtime_limit_seconds() -> int:
+    """Return the soft wall-clock budget used before the runner hard timeout.
+
+    The default is intentionally well below GitHub's job timeout. A single slow
+    HTTP request can still finish after the budget is reached, so the gap to the
+    runner timeout must be large enough for request retries and final checkpoint
+    writes.
+    """
+
+    raw = os.environ.get("IMAGE_SYNC_MAX_RUNTIME_SECONDS", "7200").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("IMAGE_SYNC_MAX_RUNTIME_SECONDS must be an integer") from exc
+    if not 60 <= value <= 21600:
+        raise ValueError("IMAGE_SYNC_MAX_RUNTIME_SECONDS must be between 60 and 21600")
+    return value
+
+
 def _url_digest(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:10]
 
@@ -169,6 +188,8 @@ def run_image_sync_reliable(
     started = time.monotonic()
     cfg = cfg or ImageSyncConfig.from_env()
     limit = _batch_limit()
+    runtime_limit = _runtime_limit_seconds()
+    deadline = started + runtime_limit
     result: dict[str, Any] = {
         "enabled": cfg.enabled,
         "status": "disabled" if not cfg.enabled else "running",
@@ -188,6 +209,9 @@ def run_image_sync_reliable(
         "remote_folder_list_calls": 0,
         "remote_folder_list_failures": 0,
         "batch_limit": limit,
+        "runtime_limit_seconds": runtime_limit,
+        "runtime_budget_exhausted": False,
+        "stop_reason": None,
         "deleted_month_folders": [],
     }
     if not cfg.enabled:
@@ -234,7 +258,24 @@ def run_image_sync_reliable(
     failures: list[dict[str, str]] = []
     deferred_dates: list[date] = []
 
-    for candidate in unique:
+    for index, candidate in enumerate(unique):
+        # Stop before starting more remote work when the soft wall-clock budget is
+        # exhausted. The remaining candidates are checkpointed and retried by the
+        # next run, leaving a wide safety margin for state/manifest writes before a
+        # GitHub runner can enforce its hard job timeout.
+        if time.monotonic() >= deadline:
+            remaining = unique[index:]
+            result["deferred_count"] += len(remaining)
+            deferred_dates.extend(item.image_date for item in remaining)
+            result["runtime_budget_exhausted"] = True
+            result["stop_reason"] = "runtime_budget"
+            LOG.warning(
+                "Image sync soft runtime budget exhausted after %.1fs; deferring %s targets",
+                time.monotonic() - started,
+                len(remaining),
+            )
+            break
+
         folder, provisional_path = _remote_image_path(
             cfg,
             candidate.record,
@@ -258,6 +299,8 @@ def run_image_sync_reliable(
             if result["attempted_missing_count"] >= limit:
                 result["deferred_count"] += 1
                 deferred_dates.append(candidate.image_date)
+                if result["stop_reason"] is None:
+                    result["stop_reason"] = "batch_limit"
                 continue
             result["attempted_missing_count"] += 1
 
@@ -342,6 +385,9 @@ def run_image_sync_reliable(
             "pending_remaining": result["pending_remaining"],
             "completeness_pct": result["completeness_pct"],
             "retry_from_date": retry_from_date,
+            "runtime_limit_seconds": runtime_limit,
+            "runtime_budget_exhausted": result["runtime_budget_exhausted"],
+            "stop_reason": result["stop_reason"],
         },
     )
 
