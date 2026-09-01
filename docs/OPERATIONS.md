@@ -1,19 +1,61 @@
-# Operations Runbook
+# Runbook vận hành production
 
-## Normal production schedule
+## 1. Lịch chạy bình thường
 
-`MobiWork DMS Sync` uses two automatic schedules in `Asia/Ho_Chi_Minh`:
+`MobiWork DMS Sync` có hai lịch tự động theo múi giờ `Asia/Ho_Chi_Minh`:
 
 ```text
-HH:05 every hour -> SYNC_SCOPE=today
-09:00 every day  -> SYNC_SCOPE=yesterday
+HH:05 mỗi giờ -> SYNC_SCOPE=today
+09:00 mỗi ngày -> SYNC_SCOPE=yesterday
 ```
 
-Scheduled runs use `LOOKBACK_DAYS=1` and `DRY_RUN=false`. Minute `05` reduces top-of-hour queue pressure. The shared concurrency group allows only one production writer at a time, so the 09:05 current-day run waits if the 09:00 D-1 finalization is still active.
+Các run theo lịch sử dụng `DRY_RUN=false`. Chọn phút `05` giúp giảm tải tại đúng đầu giờ.
 
-## Monthly master behavior
+Luồng production đầy đủ:
 
-Each report/month has exactly one canonical business workbook:
+```text
+Report refresh thành công
+        │
+        └─ nếu là refresh D-1 lúc 09:00
+                 ▼
+           Image reconciliation
+                 │
+                 ├─ warming_up -> tự chạy batch tiếp
+                 └─ success + pending=0 + failed=0
+                              ▼
+                       Image AI + KPI
+```
+
+Run report theo giờ `today` chỉ cập nhật monthly master, không tự chấm KPI mỗi giờ.
+
+## 2. Concurrency và queue
+
+Report production và image reconciliation dùng chung concurrency group:
+
+```text
+mobiwork-sharepoint-production
+```
+
+Cấu hình:
+
+```text
+cancel-in-progress: false
+queue: max
+```
+
+Mục tiêu là giữ các run quan trọng đang chờ thay vì để run mới thay thế pending run cũ. Các writer vẫn chạy tuần tự.
+
+KPI dùng group riêng:
+
+```text
+mobiwork-kpi-production
+```
+
+để không có hai lần publish KPI production cùng lúc.
+
+## 3. Cấu trúc monthly master
+
+Mỗi report/tháng có đúng một workbook canonical:
 
 ```text
 BaoCaoViengTham_YYYY-MM.xlsx
@@ -22,74 +64,130 @@ DonDatHang_YYYY-MM.xlsx
 DonBanHang_YYYY-MM.xlsx
 ```
 
-A hidden `_sync_date` column identifies the daily partition. Normal hourly execution downloads the existing monthly master, replaces only the target partition, uploads the same canonical filename, verifies the workbook, and leaves all other dates unchanged.
+Cột `_sync_date` xác định partition theo ngày. Mỗi lần chạy bình thường:
 
-If the canonical master is missing, that report is rebuilt from day 01 of the month through the target date. This first rebuild can take substantially longer than a normal hourly update, especially for paginated Customer data.
+1. tải monthly master hiện có;
+2. gọi MobiWork cho ngày mục tiêu;
+3. thay đúng partition `_sync_date` của ngày đó;
+4. giữ nguyên các ngày còn lại;
+5. ghi lại canonical file;
+6. upload staged;
+7. verify nội dung workbook;
+8. chỉ sau khi verify đạt mới coi run là thành công.
 
-After successful upload and semantic verification, cleanup removes only legacy files that match the same report/month:
+Nếu canonical master bị thiếu, report được rebuild từ ngày 01 của tháng đến ngày mục tiêu. Rebuild đầu tiên có thể lâu hơn đáng kể so với update theo ngày.
 
-- `Report_YYYY-MM-DD.xlsx`;
-- `Report_History_*.xlsx`;
-- orphan `__sync_tmp_*`, `__sync_backup_*`, and `__sync_failed_*` staging files.
-
-Cleanup never runs before the canonical master has been verified. The runtime no longer contains a bootstrap/history-file mode, so cleanup cannot be undone later by an old code path.
-
-## Incremental scopes
-
-```text
-today      -> current Vietnam date
-yesterday  -> previous Vietnam date
-lookback   -> previous N days, maximum 31
-```
-
-Automatic hourly runs use `today`; automatic 09:00 runs use `yesterday`. Use `lookback` only for controlled correction/backfill. All scopes use the same monthly-master implementation.
-
-## Execution policy
-
-Enabled reports run independently in this order:
+## 4. Phạm vi incremental
 
 ```text
-visit
-new_customer
-order
-bill
+today      -> ngày hiện tại theo giờ Việt Nam
+yesterday  -> ngày hôm qua theo giờ Việt Nam
+lookback   -> N ngày trước, tối đa theo giới hạn runtime hiện hành
 ```
 
-One report failure does not block later reports. Overall status is:
+Tự động:
 
-- all report executions succeed -> `success`;
-- one or more fail after others succeed -> `partial_failure` and non-zero workflow exit;
-- setup/configuration failure before report execution -> `failed`.
+- hourly dùng `today`;
+- 09:00 dùng `yesterday`.
 
-## Order/Bill line-number rule
+`lookback` chỉ nên dùng cho correction/backfill có chủ đích.
 
-`ChiTietSP` uses `ma_phieu + stt` as its business key. Historical MobiWork data can contain line items with a missing or invalid `stt`.
+## 5. Chính sách lỗi của report
 
-Production handling is conservative:
+Các report enabled chạy độc lập theo thứ tự cấu hình. Một report lỗi không chặn việc thu thập audit của các report còn lại.
 
-1. preserve every valid positive integer `stt` supplied by MobiWork;
-2. for only missing/invalid values, assign the first unused positive integer in source order;
-3. run the normal duplicate-key check after normalization;
-4. never silently repair duplicate valid source `stt` values.
+Trạng thái tổng:
 
-This prevents data loss while still surfacing genuine duplicate-key defects.
+```text
+mọi report thành công -> success
+có report lỗi         -> partial_failure + workflow exit khác 0
+lỗi setup/config      -> failed
+```
 
-## Excel upload verification
+Vì workflow report phải success mới dispatch image sync, monthly master nửa vời không được tự động đưa xuống AI/KPI.
 
-SharePoint/Office may rewrite OOXML package metadata, so `.xlsx` byte size and SHA-256 can change after upload even when worksheet data is unchanged.
+## 6. Quy tắc dòng Order/Bill
 
-For Excel, production verifies the downloaded workbook semantically using:
+`ChiTietSP` dùng `ma_phieu + stt` làm business key.
 
-- worksheet names/order;
-- every non-empty cell coordinate;
-- cell data type;
-- cell value.
+Dữ liệu lịch sử có thể thiếu hoặc sai `stt`. Xử lý production theo hướng bảo thủ:
 
-Semantic mismatch fails closed. JSON/audit files continue to use ordinary byte/size integrity checks. Existing canonical Excel files are replaced through staged upload/promotion with rollback protection.
+1. giữ mọi `stt` số nguyên dương hợp lệ từ MobiWork;
+2. chỉ dòng thiếu/sai mới được gán số nguyên dương chưa dùng theo thứ tự nguồn;
+3. chạy kiểm tra duplicate key sau normalize;
+4. không tự sửa im lặng hai `stt` hợp lệ nhưng trùng nhau.
 
-## Manual refresh
+Mục tiêu là không mất dòng nhưng vẫn phát hiện lỗi business key thật.
 
-Latest current-day data:
+## 7. Verification file Excel trên SharePoint
+
+SharePoint/Office có thể thay metadata trong OOXML nên size hoặc SHA-256 của toàn file `.xlsx` có thể khác dù dữ liệu sheet không đổi.
+
+Vì vậy production verify Excel theo semantic content:
+
+- tên và thứ tự worksheet;
+- tọa độ mọi ô có dữ liệu;
+- kiểu dữ liệu ô;
+- giá trị ô.
+
+Semantic mismatch phải fail closed.
+
+JSON/audit file dùng kiểm tra byte/size bình thường. Canonical Excel được thay qua staged upload/promotion có rollback protection.
+
+## 8. Đồng bộ ảnh
+
+Image sync đọc metadata từ monthly master `visit` trên SharePoint, không tạo một nguồn metadata độc lập khác.
+
+Thư mục ảnh:
+
+```text
+Data anh/YYYY-MM/<Nhân viên>/<Mã KH>/...
+```
+
+Identity ảnh:
+
+```text
+ngày nghiệp vụ + SHA256(URL MobiWork)
+```
+
+Cùng URL + cùng ngày được coi là một bằng chứng dù `stt_hinh` hoặc extension thay đổi. Cùng URL nhưng khác ngày phải được giữ thành hai target riêng.
+
+Image sync sử dụng:
+
+- `Data anh/_state.json`;
+- one-day overlap cho incremental state;
+- `retry_from_date` khi còn backlog;
+- batch limit;
+- soft runtime budget;
+- cached folder listing để giảm số Graph call.
+
+Trạng thái:
+
+```text
+success         -> reconcile hoàn tất
+warming_up      -> không lỗi nguồn nhưng còn target deferred
+partial_failure -> có target tải/ghi thất bại
+failed          -> lỗi setup/source/storage
+```
+
+`warming_up` không được hiểu là “ảnh đã đủ”. Workflow tự dispatch batch tiếp nếu vẫn còn pending và batch vừa rồi có tiến triển.
+
+## 9. Gate trước khi chạy KPI
+
+`mobiwork-images.yml` chỉ dispatch production KPI khi manifest thỏa đồng thời:
+
+```text
+status == success
+dry_run == false
+pending_remaining == 0
+failed_count == 0
+```
+
+Không sử dụng generic `workflow_run completed` để kích KPI, vì một workflow ảnh có thể kết thúc exit code 0 khi đang `warming_up` hoặc khi chạy dry-run.
+
+## 10. Manual production refresh
+
+### Dữ liệu hôm nay
 
 ```text
 sync_scope=today
@@ -97,7 +195,7 @@ lookback_days=1
 dry_run=false
 ```
 
-Retry/finalize previous day:
+### Chốt lại hôm qua
 
 ```text
 sync_scope=yesterday
@@ -105,7 +203,7 @@ lookback_days=1
 dry_run=false
 ```
 
-Older correction, up to 31 days:
+### Correction/backfill
 
 ```text
 sync_scope=lookback
@@ -113,73 +211,102 @@ lookback_days=N
 dry_run=false
 ```
 
-For inspection without SharePoint writes, set `dry_run=true`. Do not reintroduce `History_*.xlsx` exports for older recovery; add a reviewed monthly-master backfill capability instead if a longer horizon becomes necessary.
+Sau khi manual report production thành công, workflow không chạy image sync inline nữa. Thay vào đó nó dispatch `mobiwork-images.yml` với `from_date` phù hợp với scope vừa refresh. Nhờ vậy manual production cũng có batch/resume và gate KPI giống lịch tự động.
 
-## Production preflight vs CI
+Nếu chỉ kiểm tra không ghi SharePoint:
 
-Hourly production performs only the checks needed before runtime writes:
+```text
+dry_run=true
+```
 
-1. compile Python sources;
-2. parse `config/reports.json`;
-3. confirm at least one report is enabled;
-4. validate MobiWork credentials;
-5. validate Microsoft OIDC configuration when SharePoint writes are enabled.
+Dry-run report không dispatch image/KPI production.
 
-Full change-control CI runs on pull requests and pushes to `main`:
+## 11. KPI và image scoring
 
-- Python compilation;
-- Ruff;
-- unit tests;
-- coverage threshold.
+Production AI/KPI hiện chạy bằng `image-scoring-kpi.yml` trên GitHub-hosted Ubuntu runner.
 
-## Audit manifest
+Pipeline chấm ảnh có giới hạn số ảnh mỗi batch và soft runtime budget. Nếu AI còn backlog, trạng thái `warming_up` của KPI pipeline có thể tự dispatch batch chấm tiếp theo theo rule workflow.
 
-Every run writes `output/sync_manifest.json` and production uploads it to:
+Workbook KPI chỉ được publish sau fail-closed validation.
+
+## 12. Audit manifest
+
+Report run ghi:
+
+```text
+output/sync_manifest.json
+```
+
+và production upload audit lên:
 
 ```text
 _sync_runs/YYYY/MM/<run_id>.json
 ```
 
-Important counters:
+Các counter quan trọng:
 
-- `source_rows`: rows fetched for that target date in the current execution;
-- `master_rows`: total rows in that report's monthly master after the update;
-- `source_row_count`: sum of current-run source rows for successful report executions;
-- `master_row_count`: sum of monthly-master rows written by successful report executions.
+- `source_rows`: số dòng lấy cho ngày mục tiêu;
+- `master_rows`: tổng dòng trong monthly master sau update;
+- `source_row_count`: tổng source row của report thành công;
+- `master_row_count`: tổng dòng master đã ghi.
 
-The audit folder intentionally contains one JSON record per execution. These JSON records are operational evidence, not duplicate business Excel files.
+Image run ghi:
 
-## Failure behavior
+```text
+output/image_sync_manifest.json
+```
 
-Production fails safely for deterministic integrity problems including:
+Cần theo dõi:
+
+- `candidate_count`;
+- `unique_target_count`;
+- `skipped_existing_count`;
+- `uploaded_count`;
+- `failed_count`;
+- `deferred_count`;
+- `pending_remaining`;
+- `completeness_pct`;
+- `retry_from_date`.
+
+KPI run ghi:
+
+```text
+runtime/output/run_manifest.json
+```
+
+## 13. Failure behavior
+
+Production phải fail an toàn với các lỗi integrity xác định được, ví dụ:
 
 - MobiWork `status=false`;
-- missing/unexpected response structures;
-- incomplete pagination where API totals are configured;
-- missing configured required fields;
-- duplicate business keys;
-- invalid Excel size;
-- Graph upload failure after retries;
-- semantic workbook mismatch;
-- staged replacement/promotion failure that cannot be verified.
+- response thiếu cấu trúc mong đợi;
+- pagination thiếu dòng khi API có `total`;
+- thiếu required field;
+- duplicate business key;
+- workbook không hợp lệ;
+- Graph upload lỗi sau retry;
+- semantic verification mismatch;
+- staged promotion không verify được;
+- image source/storage lỗi;
+- KPI workbook validation lỗi.
 
-Transient timeouts, rate limits, and temporary `5xx` responses are retried automatically with backoff. Do not increase retry counts to hide deterministic schema/data errors.
+Timeout, rate limit và `5xx` tạm thời được retry có backoff. Không tăng retry chỉ để che lỗi schema/data deterministic.
 
-## Troubleshooting order
+## 14. Thứ tự xử lý khi production lỗi
 
-When a production run fails:
+1. Mở GitHub Actions Job Summary.
+2. Xác nhận workflow và scope/ngày mục tiêu.
+3. Với report: xem `report_results` và report nào failed.
+4. Mở `sync_manifest.json`.
+5. Với ảnh: mở `image_sync_manifest.json` và kiểm tra `status/pending/failed/retry_from_date`.
+6. Với KPI: mở `run_manifest.json` và kiểm tra backlog/scoring/output validation.
+7. Xem log step lỗi.
+8. Phân biệt lỗi data contract với lỗi network/API tạm thời.
+9. Chỉ kiểm tra Graph/OIDC/SharePoint sâu khi lỗi xảy ra ở giai đoạn storage/publish.
 
-1. Open the GitHub Actions Job Summary.
-2. Confirm `sync_scope` and target date.
-3. Identify failed report(s) in `report_results`.
-4. Inspect `sync_manifest.json` from the artifact or SharePoint `_sync_runs`.
-5. Inspect the failed step log.
-6. Separate MobiWork data-contract errors from transient API/network errors.
-7. Check Graph/OIDC/SharePoint only when the failure occurs after export.
+Report lỗi trước upload sẽ giữ monthly master SharePoint cũ không đổi.
 
-A report that failed before upload keeps its existing SharePoint master unchanged. Other reports can still complete successfully.
-
-## Authentication
+## 15. Authentication
 
 ```text
 GitHub Actions OIDC
@@ -189,7 +316,7 @@ GitHub Actions OIDC
     -> Microsoft Graph
 ```
 
-Required secrets:
+Secrets cần thiết:
 
 ```text
 MOBIWORK_USER
@@ -198,17 +325,19 @@ AZURE_CLIENT_ID
 AZURE_TENANT_ID
 ```
 
-## Change-control checklist
+Không ghi secret thật vào source code, `.env.example`, log hoặc artifact.
 
-Before merging a production change:
+## 16. Checklist trước khi thay production
 
-1. CI must be green.
-2. Confirm hourly schedule is `5 * * * *` with `Asia/Ho_Chi_Minh`.
-3. Confirm D-1 finalization is `0 9 * * *` with `Asia/Ho_Chi_Minh`.
-4. Confirm scheduled runs remain non-dry-run.
-5. Confirm all four expected reports remain enabled.
-6. Confirm monthly-master partition replacement tests pass.
-7. Confirm semantic verification tests pass.
-8. Confirm report-isolation tests pass.
-9. Confirm no workflow or runtime path can generate legacy daily/history business workbooks.
-10. For data-contract changes, run production validation before considering the issue closed.
+1. CI phải xanh.
+2. `mobiwork-sync.yml` vẫn có lịch hourly `5 * * * *` theo `Asia/Ho_Chi_Minh`.
+3. D-1 finalization vẫn là `0 9 * * *` theo `Asia/Ho_Chi_Minh`.
+4. Scheduled report vẫn `dry_run=false`.
+5. Các report bắt buộc vẫn enabled.
+6. Monthly partition replacement tests pass.
+7. Semantic verification tests pass.
+8. Workflow orchestration regression tests pass.
+9. Image identity/date regression tests pass.
+10. KPI không có generic `workflow_run` trigger từ image workflow.
+11. Không có đường code production tạo lại legacy daily/history workbook.
+12. Với thay đổi data contract, phải chạy validation trên dữ liệu thật trước khi coi issue là đóng.
