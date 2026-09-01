@@ -120,7 +120,12 @@ jobs:
           AI_LEGACY_SCORE_REMOTE: Chạy chương trình/KPI Assets/legacy_scores_through_2026-08-28.csv
           AI_SYNC_ASSETS: "false"
           AI_DEVICE: cpu
-          AI_PRODUCTION_MAX_PENDING_IMAGES: "4000"
+          # Keep production work bounded. The scoring layer checkpoints the result
+          # and dispatches another batch instead of risking a multi-hour hard kill.
+          AI_PRODUCTION_MAX_PENDING_IMAGES: "500"
+          AI_PRODUCTION_MAX_RUNTIME_SECONDS: "5400"
+          AI_SCORE_CHUNK_SIZE: "25"
+          AI_DOWNLOAD_WORKERS: "6"
           KPI_SHAREPOINT_ROOT: KPI
           KPI_PERIOD: ${{ github.event_name == 'workflow_dispatch' && inputs.period || '' }}
           KPI_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
@@ -153,8 +158,10 @@ jobs:
               f"- Image rows: **{scoring.get('images')}**",
               f"- Legacy URL hits: **{scoring.get('legacy_url_hits', 0)}**",
               f"- V2.3 checkpoint hits: **{scoring.get('remote_url_hits', 0)}**",
-              f"- Batch attempted: **{scoring.get('production_batch_scored_images', 0)}**",
+              f"- Batch selected: **{scoring.get('production_selected_images', 0)}**",
+              f"- Batch scored: **{scoring.get('production_batch_scored_images', 0)}**",
               f"- Backlog remaining: **{scoring.get('production_pending_remaining', 0)}**",
+              f"- Runtime budget exhausted: **{scoring.get('runtime_budget_exhausted', False)}**",
               f"- Stored images loaded: **{scoring.get('stored_images_loaded')}**",
               f"- Cache hits: **{scoring.get('cache_hits')}**",
               f"- New unique scores: **{scoring.get('new_unique_scores')}**",
