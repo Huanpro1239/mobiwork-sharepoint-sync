@@ -49,17 +49,26 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertNotIn("workflow_run:", kpi)
         self.assertIn("workflow_dispatch:", kpi)
 
-    def test_image_workflow_dispatches_kpi_only_after_complete_production_run(self):
+    def test_image_workflow_uses_controlled_degraded_kpi_gate(self):
         images = self._read("mobiwork-images.yml")
 
         self.assertIn("Trigger KPI after complete image sync", images)
-        self.assertIn("status=$(jq -r '.status // \"unknown\"' \"$path\")", images)
-        self.assertIn("dry_run=$(jq -r '.dry_run // true' \"$path\")", images)
-        self.assertIn('[ "$status" != "success" ]', images)
-        self.assertIn('[ "$dry_run" != "false" ]', images)
-        self.assertIn('[ "$pending" -ne 0 ]', images)
-        self.assertIn('[ "$failed" -ne 0 ]', images)
+        self.assertIn("IMAGE_FAIL_ON_PARTIAL: \"false\"", images)
+        self.assertIn("IMAGE_KPI_MIN_COMPLETENESS_PCT: \"99.0\"", images)
+        self.assertIn("IMAGE_KPI_MAX_FAILED_IMAGES: \"10\"", images)
+        self.assertIn("status == \"partial_failure\"", images)
+        self.assertIn("completeness >= min_completeness", images)
+        self.assertIn("failed <= max_failed", images)
+        self.assertIn("deferred == 0", images)
         self.assertIn("actions/workflows/image-scoring-kpi.yml/dispatches", images)
+
+    def test_partial_image_failure_can_continue_only_when_forward_progress_exists(self):
+        images = self._read("mobiwork-images.yml")
+
+        self.assertIn('[ "$status" != "warming_up" ] && [ "$status" != "partial_failure" ]', images)
+        self.assertIn('[ "$uploaded" -le 0 ]', images)
+        self.assertIn("keeping retry cursor for the next production pass", images)
+        self.assertIn("actions/workflows/mobiwork-images.yml/dispatches", images)
 
 
 if __name__ == "__main__":
