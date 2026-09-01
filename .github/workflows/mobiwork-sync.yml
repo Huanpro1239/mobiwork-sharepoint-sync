@@ -30,10 +30,15 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: write
 
+# Preserve every queued production run. GitHub's default concurrency behavior keeps
+# only one pending run; queue:max prevents the hourly refresh from replacing the
+# finalized-yesterday refresh or a queued image reconciliation.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false
+  queue: max
 
 jobs:
   sync:
@@ -186,8 +191,20 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_all_reports.py
 
-      # Scheduled image downloads are handled only by mobiwork-images.yml at 09:00 VN.
-      # Keep this path for an explicit manual production run if needed.
+      - name: Queue daily image sync after finalized report refresh
+        if: ${{ success() && github.event_name == 'schedule' && env.SYNC_SCOPE == 'yesterday' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n '{ref:"main",inputs:{dry_run:"false",from_date:""}}' \
+            | gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-images.yml/dispatches" \
+                --input -
+          echo "Queued image reconciliation after finalized yesterday report refresh"
+
+      # Manual production report runs can still include an inline image refresh.
       - name: Sync images from persisted SharePoint visit data
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}
         env:
