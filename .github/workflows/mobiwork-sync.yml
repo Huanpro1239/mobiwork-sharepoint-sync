@@ -191,47 +191,49 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_all_reports.py
 
-      - name: Queue daily image sync after finalized report refresh
-        if: ${{ success() && github.event_name == 'schedule' && env.SYNC_SCOPE == 'yesterday' }}
+      - name: Queue image sync after successful production report refresh
+        if: ${{ success() && ((github.event_name == 'schedule' && env.SYNC_SCOPE == 'yesterday') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)) }}
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          SYNC_SCOPE_VALUE: ${{ env.SYNC_SCOPE }}
+          LOOKBACK_DAYS_VALUE: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
         shell: bash
         run: |
           set -euo pipefail
-          jq -n '{ref:"main",inputs:{dry_run:"false",from_date:""}}' \
+          from_date=""
+
+          # Scheduled yesterday-finalization uses the persisted image state cursor.
+          # Manual production runs force the image window to cover the report scope
+          # that the operator just refreshed.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            from_date=$(python - "$SYNC_SCOPE_VALUE" "$LOOKBACK_DAYS_VALUE" <<'PY'
+          import sys
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          scope = sys.argv[1]
+          lookback = int(sys.argv[2])
+          today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+          if scope == "today":
+              target = today
+          elif scope == "yesterday":
+              target = today - timedelta(days=1)
+          elif scope == "lookback":
+              target = today - timedelta(days=lookback)
+          else:
+              raise SystemExit(f"Unsupported sync scope: {scope}")
+          print(target.isoformat())
+          PY
+            )
+          fi
+
+          jq -n --arg from_date "$from_date" \
+            '{ref:"main",inputs:{dry_run:"false",from_date:$from_date}}' \
             | gh api --method POST \
                 "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-images.yml/dispatches" \
                 --input -
-          echo "Queued image reconciliation after finalized yesterday report refresh"
-
-      # Manual production report runs can still include an inline image refresh.
-      - name: Sync images from persisted SharePoint visit data
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}
-        env:
-          PYTHONUNBUFFERED: "1"
-          LOG_LEVEL: "INFO"
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
-          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
-          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
-          SHAREPOINT_SITE_PATH: "/sites/Planning"
-          SHAREPOINT_LIBRARY: "MobiWorkDMS"
-          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-          SHAREPOINT_MAX_RETRIES: "6"
-          SHAREPOINT_TIMEOUT_SECONDS: "120"
-          IMAGE_SYNC_ENABLED: "true"
-          IMAGE_SOURCE_REPORT: "visit"
-          IMAGE_ROOT_FOLDER: "Data anh"
-          IMAGE_URL_FIELD: "hinh_anh"
-          IMAGE_DATE_FIELD: "ngay"
-          IMAGE_EMPLOYEE_FIELD: "ten_nhan_vien"
-          IMAGE_CUSTOMER_FIELD: "ma_kh"
-          IMAGE_SEQUENCE_FIELD: "stt_hinh"
-          IMAGE_REQUIRE_GHI_TON: "false"
-          IMAGE_REQUEST_TIMEOUT_SECONDS: "30"
-          IMAGE_MAX_DOWNLOAD_RETRIES: "2"
-          IMAGE_FAIL_ON_PARTIAL: "false"
-          DRY_RUN: "false"
-        run: python src/run_images.py
+          echo "Queued reliable image reconciliation from ${from_date:-state cursor}"
 
       - name: Publish run summary
         if: ${{ always() }}
@@ -283,28 +285,6 @@ jobs:
                       if item.get("error"):
                           lines.append(f"|  | ↳ error |  |  |  |  | `{item['error']}` |")
 
-          image_path = Path("output/image_sync_manifest.json")
-          if image_path.exists():
-              data = json.loads(image_path.read_text(encoding="utf-8"))
-              image = data.get("image_sync", {})
-              lines.extend([
-                  "",
-                  "## Image Sync from SharePoint",
-                  "",
-                  f"- Status: **{data.get('status', 'unknown')}**",
-                  f"- Source mode: `{data.get('source_mode', '')}`",
-                  f"- Scan range: `{image.get('from_date', '')}` → `{image.get('to_date', '')}`",
-                  f"- Source files: **{len(image.get('source_files', []))}**",
-                  f"- Records scanned: **{int(image.get('records_scanned', 0)):,}**",
-                  f"- Image links found: **{int(image.get('candidate_count', 0)):,}**",
-                  f"- Uploaded: **{int(image.get('uploaded_count', 0)):,}**",
-                  f"- Already existed: **{int(image.get('skipped_existing_count', 0)):,}**",
-                  f"- Failed: **{int(image.get('failed_count', 0)):,}**",
-                  f"- Retained months: `{', '.join(image.get('retained_months', []))}`",
-              ])
-              if data.get("error"):
-                  lines.append(f"- Image error: `{data['error']}`")
-
           if lines:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
                   handle.write("\n".join(lines) + "\n")
@@ -315,9 +295,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: mobiwork-sync-manifests-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            output/sync_manifest.json
-            output/image_sync_manifest.json
+          path: output/sync_manifest.json
           if-no-files-found: ignore
           retention-days: 14
 
