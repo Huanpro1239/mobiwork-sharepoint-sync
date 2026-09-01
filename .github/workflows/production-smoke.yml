@@ -14,6 +14,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: write
 
 concurrency:
   group: mobiwork-production-smoke
@@ -22,7 +23,7 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -83,7 +84,9 @@ jobs:
           fi
           echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
 
-      - name: Compare MobiWork with SharePoint production data
+      - name: Initial MobiWork to SharePoint consistency check
+        id: initial_smoke
+        continue-on-error: true
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -101,8 +104,159 @@ jobs:
           SMOKE_TARGET_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_date || '' }}
         run: python src/production_smoke.py
 
-      - name: Publish smoke summary
+      - name: Preserve initial failure evidence
+        if: ${{ steps.initial_smoke.outcome == 'failure' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f output/production_smoke_manifest.json ]; then
+            cp output/production_smoke_manifest.json output/production_smoke_initial.json
+          fi
+
+      - name: Build bounded recovery plan
+        id: recovery_plan
+        if: ${{ steps.initial_smoke.outcome == 'failure' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f output/production_smoke_manifest.json ]; then
+            mkdir -p output
+            cat > output/recovery_plan.json <<'JSON'
+          {
+            "eligible": false,
+            "reason": "initial smoke failed before producing a manifest",
+            "report_repair": false,
+            "image_repair": false,
+            "lookback_days": 0,
+            "from_date": "",
+            "repair_attempt_budget": 1,
+            "unrepairable_failures": ["smoke_manifest_missing"]
+          }
+          JSON
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "report_repair=false" >> "$GITHUB_OUTPUT"
+            echo "image_repair=false" >> "$GITHUB_OUTPUT"
+            echo "lookback_days=0" >> "$GITHUB_OUTPUT"
+            echo "from_date=" >> "$GITHUB_OUTPUT"
+            echo "reason=initial smoke failed before producing a manifest" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python src/production_recovery.py
+
+      - name: Attempt one-shot production recovery
+        id: recovery
+        if: ${{ always() && steps.recovery_plan.outcome == 'success' && steps.recovery_plan.outputs.eligible == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_REPAIR: ${{ steps.recovery_plan.outputs.report_repair }}
+          IMAGE_REPAIR: ${{ steps.recovery_plan.outputs.image_repair }}
+          LOOKBACK_DAYS: ${{ steps.recovery_plan.outputs.lookback_days }}
+          FROM_DATE: ${{ steps.recovery_plan.outputs.from_date }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          list_dispatch_ids() {
+            local workflow="$1"
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&event=workflow_dispatch&per_page=50" \
+              --jq '.workflow_runs[].id' || true
+          }
+
+          wait_for_new_run() {
+            local workflow="$1"
+            local baseline="$2"
+            local label="$3"
+            local ids id
+            for _ in $(seq 1 90); do
+              ids=$(list_dispatch_ids "$workflow")
+              for id in $ids; do
+                if ! grep -qx "$id" <<< "$baseline"; then
+                  echo "$id"
+                  return 0
+                fi
+              done
+              sleep 10
+            done
+            echo "::error::Timed out waiting for $label workflow run to appear" >&2
+            return 1
+          }
+
+          sync_before=$(list_dispatch_ids "mobiwork-sync.yml")
+          image_before=$(list_dispatch_ids "mobiwork-images.yml")
+
+          if [ "$REPORT_REPAIR" = "true" ]; then
+            echo "Dispatching bounded report reconciliation for D-1..D-${LOOKBACK_DAYS}"
+            gh workflow run mobiwork-sync.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref main \
+              -f sync_scope=lookback \
+              -f lookback_days="$LOOKBACK_DAYS" \
+              -f dry_run=false
+
+            sync_id=$(wait_for_new_run "mobiwork-sync.yml" "$sync_before" "report recovery")
+            echo "Recovery report run: $sync_id"
+            gh run watch "$sync_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --exit-status \
+              --interval 10
+
+            # A successful production report dispatch queues image reconciliation.
+            image_id=$(wait_for_new_run "mobiwork-images.yml" "$image_before" "image recovery")
+            echo "Recovery image run: $image_id"
+            gh run watch "$image_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --exit-status \
+              --interval 10
+          elif [ "$IMAGE_REPAIR" = "true" ]; then
+            echo "Dispatching image-only reconciliation from $FROM_DATE"
+            gh workflow run mobiwork-images.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref main \
+              -f dry_run=false \
+              -f from_date="$FROM_DATE"
+
+            image_id=$(wait_for_new_run "mobiwork-images.yml" "$image_before" "image recovery")
+            echo "Recovery image run: $image_id"
+            gh run watch "$image_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --exit-status \
+              --interval 10
+          else
+            echo "::error::Recovery plan was eligible but contained no repair action"
+            exit 1
+          fi
+
+      - name: Verify production after recovery
+        id: recovery_verify
+        if: ${{ always() && steps.recovery.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+          MOBIWORK_MAX_RETRIES: "6"
+          MOBIWORK_TIMEOUT_SECONDS: "120"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          SMOKE_TARGET_DATE: ${{ steps.recovery_plan.outputs.from_date }}
+        run: python src/production_smoke.py
+
+      - name: Publish smoke and recovery summary
         if: ${{ always() }}
+        env:
+          INITIAL_OUTCOME: ${{ steps.initial_smoke.outcome }}
+          RECOVERY_PLAN_OUTCOME: ${{ steps.recovery_plan.outcome }}
+          RECOVERY_OUTCOME: ${{ steps.recovery.outcome }}
+          RECOVERY_VERIFY_OUTCOME: ${{ steps.recovery_verify.outcome }}
         shell: bash
         run: |
           python - <<'PY'
@@ -121,36 +275,79 @@ jobs:
               f"- Target date: **{data.get('target_date', '')}**",
               f"- Reports passed: **{data.get('successful_report_count', 0)}**",
               f"- Reports failed: **{data.get('failed_report_count', 0)}**",
+              f"- Repairable failures: **{data.get('repairable_failure_count', 0)}**",
+              f"- Initial check outcome: **{os.environ.get('INITIAL_OUTCOME', 'unknown')}**",
               "",
-              "| Report | Status | Source rows | Compared rows |",
-              "|---|---|---:|---:|",
+              "| Report | Status | Stage | Repairable | Source rows | Compared rows |",
+              "|---|---|---|---|---:|---:|",
           ]
           for item in data.get("reports", []):
               lines.append(
                   f"| {item.get('report', '')} | {item.get('status', '')} | "
+                  f"{item.get('failure_stage', '')} | {item.get('repairable', False)} | "
                   f"{int(item.get('source_rows', 0)):,} | {int(item.get('compared_rows', 0)):,} |"
               )
               if item.get("error"):
-                  lines.append(f"| ↳ error | `{item['error']}` |  |  |")
+                  lines.append(f"| ↳ error | `{item['error']}` |  |  |  |  |")
+
           image = data.get("image_state", {})
           lines.extend([
               "",
               "### Image state",
+              f"- Status: **{image.get('status', 'unknown')}**",
+              f"- Failure stage: `{image.get('failure_stage', '')}`",
+              f"- Repairable: **{image.get('repairable', False)}**",
               f"- Last completed: `{image.get('last_completed_sync_date', '')}`",
               f"- Failed count: **{image.get('failed_count', 0)}**",
               f"- Retry from: `{image.get('retry_from_date') or ''}`",
           ])
           if image.get("error"):
               lines.append(f"- Error: `{image['error']}`")
+
+          plan_path = Path("output/recovery_plan.json")
+          if plan_path.exists():
+              plan = json.loads(plan_path.read_text(encoding="utf-8"))
+              lines.extend([
+                  "",
+                  "### One-shot self-healing",
+                  f"- Eligible: **{plan.get('eligible', False)}**",
+                  f"- Reason: `{plan.get('reason', '')}`",
+                  f"- Report repair: **{plan.get('report_repair', False)}**",
+                  f"- Image repair: **{plan.get('image_repair', False)}**",
+                  f"- Lookback days: **{plan.get('lookback_days', 0)}**",
+                  f"- Recovery step: **{os.environ.get('RECOVERY_OUTCOME', 'skipped')}**",
+                  f"- Verification step: **{os.environ.get('RECOVERY_VERIFY_OUTCOME', 'skipped')}**",
+                  "- Repair budget: **1 attempt**",
+              ])
+
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
           PY
 
-      - name: Upload smoke manifest
+      - name: Upload smoke and recovery manifests
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: production-smoke-${{ github.run_id }}-${{ github.run_attempt }}
-          path: output/production_smoke_manifest.json
+          path: output/*.json
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Enforce final production consistency
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("output/production_smoke_manifest.json")
+          if not path.exists():
+              raise SystemExit("Production smoke did not produce a final manifest")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          if data.get("status") != "success":
+              raise SystemExit(
+                  "Production consistency is still unhealthy after the bounded recovery policy"
+              )
+          print("Production consistency verified")
+          PY

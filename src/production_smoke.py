@@ -65,11 +65,7 @@ def compare_report_frames(
             )
 
         extra_columns = [col for col in actual_partition.columns if col not in expected_partition.columns]
-        stale_extra = [
-            col
-            for col in extra_columns
-            if not actual_partition[col].isna().all()
-        ]
+        stale_extra = [col for col in extra_columns if not actual_partition[col].isna().all()]
         if stale_extra:
             raise AssertionError(
                 f"Sheet {sheet_name}: target partition contains stale extra values in {stale_extra}"
@@ -116,11 +112,35 @@ def evaluate_image_state(state: dict[str, Any] | None, target_date: date) -> dic
         )
 
     return {
+        "status": "success",
         "last_completed_sync_date": completed.isoformat(),
         "last_successful_sync_date": state.get("last_successful_sync_date"),
         "failed_count": failed_count,
         "retry_from_date": retry_from,
+        "repairable": False,
     }
+
+
+def _failure_text(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"[:4000]
+
+
+def _mark_report_failure(
+    item: dict[str, Any],
+    *,
+    stage: str,
+    exc: Exception,
+    repairable: bool,
+) -> str:
+    item.update(
+        {
+            "status": "failed",
+            "failure_stage": stage,
+            "repairable": repairable,
+            "error": _failure_text(exc),
+        }
+    )
+    return f"{item.get('report', '?')}: {item['error']}"
 
 
 def _write_manifest(payload: dict[str, Any]) -> Path:
@@ -150,44 +170,148 @@ def run_smoke(target_date: date | None = None) -> dict[str, Any]:
 
     failures: list[str] = []
     for cfg in reports:
-        item: dict[str, Any] = {"report": cfg.key, "status": "running"}
+        item: dict[str, Any] = {
+            "report": cfg.key,
+            "status": "running",
+            "repairable": False,
+        }
         manifest["reports"].append(item)
+
         try:
             records = mobiwork.fetch_report(cfg, target)
-            remote_folder = f"{cfg.folder}/{target:%Y}/{target:%m}"
-            remote_path = f"{remote_folder}/{master_filename(cfg.name, target)}"
-            content = sharepoint.download_file_bytes(drive_id, remote_path)
-            if content is None:
-                raise AssertionError(f"SharePoint monthly master is missing: {remote_path}")
-
-            actual = read_master(content, cfg.export_mode)
-            expected = _roundtrip_expected_frames(cfg, target, records)
-            comparison = compare_report_frames(actual, expected, target)
-            item.update(
-                {
-                    "status": "success",
-                    "source_rows": len(records),
-                    "remote_path": remote_path,
-                    **comparison,
-                }
-            )
+            item["source_rows"] = len(records)
         except Exception as exc:
-            item["status"] = "failed"
-            item["error"] = f"{type(exc).__name__}: {exc}"[:4000]
-            failures.append(f"{cfg.key}: {item['error']}")
-            LOG.exception("Production smoke failed for report=%s", cfg.key)
+            failures.append(
+                _mark_report_failure(
+                    item,
+                    stage="mobiwork_fetch",
+                    exc=exc,
+                    repairable=False,
+                )
+            )
+            LOG.exception("Production smoke source fetch failed for report=%s", cfg.key)
+            continue
+
+        remote_folder = f"{cfg.folder}/{target:%Y}/{target:%m}"
+        remote_path = f"{remote_folder}/{master_filename(cfg.name, target)}"
+        item["remote_path"] = remote_path
+        try:
+            content = sharepoint.download_file_bytes(drive_id, remote_path)
+        except Exception as exc:
+            failures.append(
+                _mark_report_failure(
+                    item,
+                    stage="sharepoint_read",
+                    exc=exc,
+                    repairable=False,
+                )
+            )
+            LOG.exception("Production smoke SharePoint read failed for report=%s", cfg.key)
+            continue
+
+        if content is None:
+            exc = AssertionError(f"SharePoint monthly master is missing: {remote_path}")
+            failures.append(
+                _mark_report_failure(
+                    item,
+                    stage="master_missing",
+                    exc=exc,
+                    repairable=True,
+                )
+            )
+            LOG.error("Production smoke monthly master is missing for report=%s", cfg.key)
+            continue
+
+        try:
+            actual = read_master(content, cfg.export_mode)
+        except Exception as exc:
+            failures.append(
+                _mark_report_failure(
+                    item,
+                    stage="master_invalid",
+                    exc=exc,
+                    repairable=False,
+                )
+            )
+            LOG.exception("Production smoke could not read monthly master for report=%s", cfg.key)
+            continue
+
+        try:
+            expected = _roundtrip_expected_frames(cfg, target, records)
+        except Exception as exc:
+            failures.append(
+                _mark_report_failure(
+                    item,
+                    stage="expected_transform",
+                    exc=exc,
+                    repairable=False,
+                )
+            )
+            LOG.exception("Production smoke could not build expected frames for report=%s", cfg.key)
+            continue
+
+        try:
+            comparison = compare_report_frames(actual, expected, target)
+        except AssertionError as exc:
+            failures.append(
+                _mark_report_failure(
+                    item,
+                    stage="data_mismatch",
+                    exc=exc,
+                    repairable=True,
+                )
+            )
+            LOG.exception("Production smoke data mismatch for report=%s", cfg.key)
+            continue
+        except Exception as exc:
+            failures.append(
+                _mark_report_failure(
+                    item,
+                    stage="comparison_error",
+                    exc=exc,
+                    repairable=False,
+                )
+            )
+            LOG.exception("Production smoke comparison failed for report=%s", cfg.key)
+            continue
+
+        item.update(
+            {
+                "status": "success",
+                "repairable": False,
+                **comparison,
+            }
+        )
 
     try:
-        manifest["image_state"] = evaluate_image_state(
-            sharepoint.download_json(drive_id, "Data anh/_state.json"),
-            target,
-        )
+        image_state_payload = sharepoint.download_json(drive_id, "Data anh/_state.json")
     except Exception as exc:
         manifest["image_state"] = {
             "status": "failed",
-            "error": f"{type(exc).__name__}: {exc}"[:4000],
+            "failure_stage": "image_state_read",
+            "repairable": False,
+            "error": _failure_text(exc),
         }
         failures.append(f"images: {manifest['image_state']['error']}")
+    else:
+        try:
+            manifest["image_state"] = evaluate_image_state(image_state_payload, target)
+        except AssertionError as exc:
+            manifest["image_state"] = {
+                "status": "failed",
+                "failure_stage": "image_state_consistency",
+                "repairable": True,
+                "error": _failure_text(exc),
+            }
+            failures.append(f"images: {manifest['image_state']['error']}")
+        except Exception as exc:
+            manifest["image_state"] = {
+                "status": "failed",
+                "failure_stage": "image_state_invalid",
+                "repairable": False,
+                "error": _failure_text(exc),
+            }
+            failures.append(f"images: {manifest['image_state']['error']}")
 
     manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
     manifest["successful_report_count"] = sum(
@@ -195,6 +319,13 @@ def run_smoke(target_date: date | None = None) -> dict[str, Any]:
     )
     manifest["failed_report_count"] = sum(
         item.get("status") == "failed" for item in manifest["reports"]
+    )
+    manifest["repairable_failure_count"] = sum(
+        item.get("status") == "failed" and item.get("repairable") is True
+        for item in manifest["reports"]
+    ) + int(
+        manifest.get("image_state", {}).get("status") == "failed"
+        and manifest.get("image_state", {}).get("repairable") is True
     )
     manifest["status"] = "success" if not failures else "failed"
     if failures:
