@@ -13,6 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from rich.console import Console
 
 from kpi.manual_labels import labels_from_sheet, load_manual_labels, safe_text
+from kpi.output_contract import validate_workbook, validate_workbook_file
 from kpi.workbook_formulas import (
     START_ROW,
     replace_customer_rows,
@@ -45,6 +46,8 @@ DETAIL_HEADERS = {
     12: "Căn Cứ Nhận Diện",
     13: "Nội Dung Chữ OCR",
     14: "Mở Ảnh DMS",
+    15: "Mở File Cục Bộ",
+    16: "Kết Quả Khách Hàng",
 }
 
 AUDIT_COLUMNS = (
@@ -66,6 +69,8 @@ AUDIT_COLUMNS = (
 
 
 def _validate_template(workbook) -> None:
+    """Validate only the immutable parts needed to safely transform the template."""
+
     if tuple(workbook.sheetnames) != REQUIRED_SHEETS:
         raise ValueError(
             f"Workbook mẫu không đúng hợp đồng 5 sheet: cần {REQUIRED_SHEETS}, "
@@ -84,9 +89,11 @@ def _validate_template(workbook) -> None:
         safe_text(workbook[ALERT_SHEET].cell(row, 1).value).strip()
         for row in range(1, workbook[ALERT_SHEET].max_row + 1)
     ]
+    if not any(value.startswith("1. DANH SÁCH DÒNG ĐƠN HÀNG") for value in alert_values):
+        raise ValueError(f"Workbook mẫu thiếu mục 1 trong {ALERT_SHEET}")
     if not any(value.startswith("2. DANH SÁCH ẢNH") for value in alert_values):
         raise ValueError(f"Workbook mẫu thiếu vùng cảnh báo ảnh trong {ALERT_SHEET}")
-    if not any(value.startswith("3. ") for value in alert_values):
+    if not any(value.startswith("3. BÁO CÁO PHÂN BỔ") for value in alert_values):
         raise ValueError(f"Workbook mẫu thiếu mục 3 trong {ALERT_SHEET}")
 
 
@@ -96,6 +103,32 @@ def _copy_style(source, target) -> None:
     target.number_format = source.number_format
     target.alignment = copy(source.alignment)
     target.protection = copy(source.protection)
+
+
+def _period_label(period: pd.Timestamp) -> str:
+    return f"Tháng {period:%m/%Y}"
+
+
+def _apply_titles(workbook, period: pd.Timestamp) -> None:
+    workbook[SUMMARY_SHEET]["A1"] = "BẢNG TỔNG HỢP CHẤM CÔNG & TÍNH TIỀN THƯỞNG KPI (CÔNG THỨC SỐNG)"
+    workbook[SUMMARY_SHEET]["A2"] = (
+        f"Áp dụng: {_period_label(period)} | Đơn vị: Công ty Cổ phần Nước khoáng Khánh Hòa | "
+        "Mọi số liệu tự động nhảy theo sheet Chi_tiet_Khach_hang & Chi_tiet_Anh_Checkin"
+    )
+    workbook[CUSTOMER_SHEET]["A1"] = "DANH SÁCH CHI TIẾT ĐÁNH GIÁ TỪNG KHÁCH HÀNG (CÔNG THỨC SỐNG)"
+    workbook[CUSTOMER_SHEET]["A2"] = (
+        "Quy trình 4 bước: B1 Phân loại KH | B2 Đơn hàng (>= 3 KTB) | B3 Ghi tồn | "
+        "B4 Chấm ảnh (KH mới: Biển hiệu + Trưng bày) | Sửa nhãn bên sheet Chi_tiet_Anh_Checkin tự nhảy kết quả"
+    )
+    workbook[DETAIL_SHEET]["A1"] = "BẢNG NHẬT KÝ ẢNH CHECK-IN ĐÃ PHÂN LOẠI (HỖ TRỢ SỬA TAY)"
+    workbook[DETAIL_SHEET]["A2"] = (
+        "Gõ nhãn vào cột 'Nhãn Sửa Tay' (ô màu vàng nhạt) để đổi nhãn -> "
+        "Toàn bộ bảng công và thưởng sẽ tự động tính lại"
+    )
+    workbook[ALERT_SHEET]["A1"] = "BẢNG CẢNH BÁO RỦI RO & BẤT THƯỜNG DỮ LIỆU KPI"
+    workbook[ALERT_SHEET]["A2"] = (
+        f"{_period_label(period)} | Liệt kê các dòng thiếu đơn vị tính, khách phụ thuộc ảnh biên và bất thường doanh số"
+    )
 
 
 class KPIExporter:
@@ -112,6 +145,7 @@ class KPIExporter:
             manual_label_source_path if manual_label_source_path is not None else output_path
         )
         self.announce = announce
+        self.last_validation: dict[str, object] | None = None
 
     def export_full_workbook(
         self,
@@ -133,20 +167,37 @@ class KPIExporter:
             template_labels = labels_from_sheet(workbook[DETAIL_SHEET], self.template_path)
             manual_labels = template_labels.overlay(prior_labels)
             period = pd.Timestamp(period_start).normalize()
+            _apply_titles(workbook, period)
             write_parameters(workbook[PARAM_SHEET], period, kpi_warnings)
             customer_end = replace_customer_rows(workbook[CUSTOMER_SHEET], customer_frame)
             self._replace_detail_rows(
                 workbook[DETAIL_SHEET], df_results, manual_labels, customer_end
             )
-            update_customer_image_formulas(workbook[CUSTOMER_SHEET], len(df_results))
+            update_customer_image_formulas(
+                workbook[CUSTOMER_SHEET], len(df_results), df_results
+            )
             replace_summary_rows(workbook[SUMMARY_SHEET], customer_frame, customer_end)
             self._update_review_alerts(workbook[ALERT_SHEET], df_results)
             workbook.calculation.calcMode = "auto"
             workbook.calculation.fullCalcOnLoad = True
             workbook.calculation.forceFullCalc = True
+            # Validate in memory before touching even the temporary output.
+            self.last_validation = validate_workbook(
+                workbook,
+                expected_customers=len(customer_frame),
+                expected_images=len(df_results),
+            )
             workbook.save(temporary)
         finally:
             workbook.close()
+
+        # Re-open the serialized XLSX. This catches broken relationships/formulas
+        # introduced during save before production SharePoint can be overwritten.
+        self.last_validation = validate_workbook_file(
+            temporary,
+            expected_customers=len(customer_frame),
+            expected_images=len(df_results),
+        )
         os.replace(temporary, self.output_path)
         if self.announce:
             console.print(f"[bold green]Workbook KPI đã xuất: {self.output_path}[/bold green]")
@@ -160,10 +211,10 @@ class KPIExporter:
         header_style = copy(sheet.cell(4, min(14, sheet.max_column))._style)
         if sheet.max_row >= START_ROW:
             sheet.delete_rows(START_ROW, sheet.max_row - START_ROW + 1)
+        for column, header in DETAIL_HEADERS.items():
+            sheet.cell(4, column, header)._style = copy(header_style)
         for column, header, _ in AUDIT_COLUMNS:
             sheet.cell(4, column, header)._style = copy(header_style)
-        if sheet.cell(4, 16).value is None:
-            sheet.cell(4, 16, "Kết Quả Khách Hàng")._style = copy(header_style)
 
         records = frame.reset_index(drop=True).to_dict(orient="records")
         lookup_end = max(START_ROW, customer_end_row)
@@ -228,6 +279,9 @@ class KPIExporter:
                     fill=PatternFill("solid", fgColor="F4CCCC"),
                 ),
             )
+        # Keep the operational audit columns J:M hidden as in the approved file.
+        for column in ("J", "K", "L", "M"):
+            sheet.column_dimensions[column].hidden = True
         sheet.freeze_panes = "A5"
         sheet.auto_filter.ref = f"A4:{openpyxl.utils.get_column_letter(max_column)}{end_row}"
 
