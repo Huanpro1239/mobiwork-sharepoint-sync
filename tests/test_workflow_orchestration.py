@@ -41,8 +41,8 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         images = self._read("mobiwork-images.yml")
 
         self.assertIn("Trigger KPI after complete image sync", images)
-        self.assertIn('status=$(jq -r \' .status // "unknown"\' "$path")'.replace("' ", "'"), images)
-        self.assertIn('dry_run=$(jq -r \' .dry_run // true\' "$path")'.replace("' ", "'"), images)
+        self.assertIn("status=$(jq -r '.status // \"unknown\"' \"$path\")", images)
+        self.assertIn("dry_run=$(jq -r '.dry_run // true' \"$path\")", images)
         self.assertIn('[ "$status" != "success" ]', images)
         self.assertIn('[ "$dry_run" != "false" ]', images)
         self.assertIn('[ "$pending" -ne 0 ]', images)
