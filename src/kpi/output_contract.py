@@ -115,7 +115,6 @@ def _formula_errors(workbook: Any) -> list[str]:
 
 def validate_workbook(workbook: Any, *, expected_customers: int | None = None, expected_images: int | None = None) -> dict[str, object]:
     """Validate structure and live-formula wiring before SharePoint can be overwritten."""
-
     if tuple(workbook.sheetnames) != REQUIRED_SHEETS:
         raise ValueError(f"KPI workbook sheet contract mismatch: {tuple(workbook.sheetnames)!r}")
 
@@ -127,7 +126,7 @@ def validate_workbook(workbook: Any, *, expected_customers: int | None = None, e
     for sheet_name, expected in checks:
         actual = _headers(workbook[sheet_name], len(expected))
         if actual != expected:
-            for index, (left, right) in enumerate(zip(actual, expected), start=1):
+            for index, (left, right) in enumerate(zip(actual, expected, strict=True), start=1):
                 if left != right:
                     raise ValueError(
                         f"KPI workbook header mismatch {sheet_name}!{openpyxl.utils.get_column_letter(index)}4: "
