@@ -22,14 +22,26 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             self.assertIn("cancel-in-progress: false", workflow)
             self.assertIn("queue: max", workflow)
 
-    def test_daily_images_are_dispatched_after_finalized_report_refresh(self):
+    def test_images_are_dispatched_after_successful_production_report_refresh(self):
         report = self._read("mobiwork-sync.yml")
         images = self._read("mobiwork-images.yml")
 
-        self.assertIn("Queue daily image sync after finalized report refresh", report)
+        self.assertIn("Queue image sync after successful production report refresh", report)
         self.assertIn("env.SYNC_SCOPE == 'yesterday'", report)
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.dry_run == false", report)
         self.assertIn("actions/workflows/mobiwork-images.yml/dispatches", report)
+        self.assertNotIn("run: python src/run_images.py", report)
         self.assertNotIn("\n  schedule:\n", images)
+
+    def test_manual_report_refresh_forces_image_window_for_same_scope(self):
+        report = self._read("mobiwork-sync.yml")
+
+        self.assertIn('if [ "$EVENT_NAME" = "workflow_dispatch" ]', report)
+        self.assertIn('if scope == "today":', report)
+        self.assertIn('elif scope == "yesterday":', report)
+        self.assertIn('elif scope == "lookback":', report)
+        self.assertIn('today - timedelta(days=lookback)', report)
+        self.assertIn("--arg from_date \"$from_date\"", report)
 
     def test_kpi_is_not_triggered_by_generic_workflow_completion(self):
         kpi = self._read("image-scoring-kpi.yml")
