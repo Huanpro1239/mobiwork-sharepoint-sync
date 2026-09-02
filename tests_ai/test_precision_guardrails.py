@@ -166,7 +166,7 @@ class PrecisionGuardrailTests(unittest.TestCase):
         self.assertEqual(score.decision.label, "Khong_dat")
         self.assertEqual(score.decision.status, "TIER0_AUTO_FAIL_FRAUD")
 
-    def test_severely_dark_image_cannot_make_automatic_decision(self):
+    def test_severely_dark_image_cannot_make_ordinary_automatic_decision(self):
         dark = np.zeros((480, 640, 3), dtype=np.uint8)
         score = score_decoded_image_with_classification(
             dark,
@@ -177,6 +177,28 @@ class PrecisionGuardrailTests(unittest.TestCase):
         )
         self.assertEqual(score.decision.label, "Can_duyet")
         self.assertEqual(score.decision.status, "REVIEW_IMAGE_QUALITY")
+        self.assertTrue(any("IMAGE_QUALITY" in warning for warning in score.audit_warnings))
+
+    def test_hard_fraud_is_not_rescued_by_severe_image_quality(self):
+        dark = np.zeros((480, 640, 3), dtype=np.uint8)
+        score = score_decoded_image_with_classification(
+            dark,
+            _classification(
+                "Bien_hieu",
+                pass_probability=0.20,
+                similarity=0.90,
+                fraud_probability=0.92,
+                neighbors=(
+                    _neighbor("Khong Dat/doi pho", 0.93),
+                    _neighbor("Khong Dat/doi pho", 0.89),
+                ),
+            ),
+            _YOLO(),
+            _OCR(),
+            _Face(),
+        )
+        self.assertEqual(score.decision.label, "Khong_dat")
+        self.assertEqual(score.decision.status, "TIER0_AUTO_FAIL_FRAUD")
         self.assertTrue(any("IMAGE_QUALITY" in warning for warning in score.audit_warnings))
 
 
