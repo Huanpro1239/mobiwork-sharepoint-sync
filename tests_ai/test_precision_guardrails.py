@@ -22,6 +22,11 @@ class _YOLO:
         }
 
 
+class _MustNotRunYOLO:
+    def detect(self, _image):
+        raise AssertionError("detector must not run for deterministic decision")
+
+
 class _OCR:
     def __init__(self, *, brand=False, store=False, text=""):
         self.brand = brand
@@ -38,9 +43,19 @@ class _OCR:
         return self.store
 
 
+class _MustNotRunOCR:
+    def extract_text(self, _image, _boxes=None):
+        raise AssertionError("OCR must not run for deterministic decision")
+
+
 class _Face:
     def has_face(self, _image):
         return False
+
+
+class _MustNotRunFace:
+    def has_face(self, _image):
+        raise AssertionError("face audit must not run for deterministic decision")
 
 
 def _neighbor(subcategory: str, similarity: float):
@@ -220,6 +235,66 @@ class PrecisionGuardrailTests(unittest.TestCase):
         self.assertEqual(score.decision.label, "Khong_dat")
         self.assertEqual(score.decision.status, "TIER0_AUTO_FAIL_FRAUD")
         self.assertTrue(any("IMAGE_QUALITY" in warning for warning in score.audit_warnings))
+
+    def test_tier0_fraud_skips_all_expensive_evidence_inference(self):
+        score = score_decoded_image_with_classification(
+            _normal_image(),
+            _classification(
+                "Trung_bay",
+                pass_probability=0.15,
+                similarity=0.90,
+                fraud_probability=0.92,
+                neighbors=(
+                    _neighbor("Khong Dat/doi pho", 0.91),
+                    _neighbor("Khong Dat/doi pho", 0.88),
+                ),
+            ),
+            _MustNotRunYOLO(),
+            _MustNotRunOCR(),
+            _MustNotRunFace(),
+        )
+        self.assertEqual(score.decision.status, "TIER0_AUTO_FAIL_FRAUD")
+        self.assertTrue(
+            any("EVIDENCE_SKIPPED_DETERMINISTIC" in item for item in score.audit_warnings)
+        )
+
+    def test_tier1_human_consensus_skips_expensive_evidence_inference(self):
+        score = score_decoded_image_with_classification(
+            _normal_image(),
+            _classification(
+                "Bien_hieu",
+                pass_probability=0.90,
+                similarity=0.90,
+                neighbors=(
+                    _neighbor("Dat/Bien hieu", 0.92),
+                    _neighbor("Dat/Bien hieu", 0.88),
+                ),
+            ),
+            _MustNotRunYOLO(),
+            _MustNotRunOCR(),
+            _MustNotRunFace(),
+        )
+        self.assertEqual(score.decision.status, "TIER1_HIGH_PASS")
+        self.assertEqual(score.decision.label, "Bien_hieu")
+
+    def test_moderate_consensus_still_runs_full_evidence_path(self):
+        score = score_decoded_image_with_classification(
+            _normal_image(),
+            _classification(
+                "Trung_bay",
+                pass_probability=0.55,
+                similarity=0.86,
+                neighbors=(
+                    _neighbor("Dat/Trung bay", 0.88),
+                    _neighbor("Dat/Trung bay", 0.84),
+                ),
+            ),
+            _YOLO(bottle=True),
+            _OCR(),
+            _Face(),
+        )
+        self.assertEqual(score.decision.status, "TIER2_EVIDENCE_PASS")
+        self.assertTrue(score.evidence.has_bottle_or_pack)
 
 
 if __name__ == "__main__":
