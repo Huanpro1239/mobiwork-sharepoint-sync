@@ -157,13 +157,26 @@ def annotate_review_workflow(
     reasons.loc[resolved_mask] = "Đã có nhãn sửa tay hợp lệ và sẽ được bảo toàn qua lần xuất sau."
 
     unresolved = is_review & ~has_manual
-    fraud_mask = unresolved & is_fraud_review
+    split_operational_scope = period_start is not None
+    fraud_mask = (
+        unresolved & is_fraud_review
+        if split_operational_scope
+        else pd.Series(False, index=enriched.index, dtype="bool")
+    )
     scopes.loc[fraud_mask] = SCOPE_FRAUD_AUDIT
     priorities.loc[fraud_mask] = "CAO"
     reasons.loc[fraud_mask] = "Có tín hiệu gian lận/đối phó; giữ riêng cho audit, không trộn với review KPI thông thường."
 
-    current_unresolved = unresolved & is_current & ~is_fraud_review
-    historical_mask = unresolved & ~is_current & ~is_fraud_review
+    current_unresolved = (
+        unresolved & is_current & ~is_fraud_review
+        if split_operational_scope
+        else unresolved & is_current
+    )
+    historical_mask = (
+        unresolved & ~is_current & ~is_fraud_review
+        if split_operational_scope
+        else unresolved & ~is_current
+    )
     scopes.loc[historical_mask] = SCOPE_HISTORICAL
     priorities.loc[historical_mask] = "THẤP"
     reasons.loc[historical_mask] = "Ảnh thuộc tháng trước; không chặn KPI tháng hiện tại."
