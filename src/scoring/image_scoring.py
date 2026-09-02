@@ -8,7 +8,12 @@ from typing import Any, Mapping, Sequence
 import cv2
 import numpy as np
 
-from scoring.config import (
+from scoring.decision_policy import (
+    DetectorEvidence,
+    ScoringDecision,
+    apply_detector_evidence,
+)
+from scoring.evidence_policy import (
     DISPLAY_AUTO_PASS_MIN,
     DISPLAY_REFERENCE_SIMILARITY_MIN,
     QUALITY_BLUR_LAPLACIAN_MIN,
@@ -17,11 +22,6 @@ from scoring.config import (
     QUALITY_MIN_DIMENSION,
     SIGN_AUTO_PASS_MIN,
     SIGN_REFERENCE_SIMILARITY_MIN,
-)
-from scoring.decision_policy import (
-    DetectorEvidence,
-    ScoringDecision,
-    apply_detector_evidence,
 )
 
 
@@ -32,6 +32,7 @@ class ImageScore:
     ocr_text: str
     evidence: DetectorEvidence
     decision: ScoringDecision
+    store_keyword: bool = False
     audit_warnings: tuple[str, ...] = ()
 
 
@@ -66,8 +67,18 @@ def _quality_issue(image_bgr) -> str | None:
     return None
 
 
-def _apply_precision_guardrail(decision, classification, quality_issue: str | None):
-    """Downgrade uncertain automatic outcomes instead of guessing."""
+def _apply_precision_guardrail(
+    decision: ScoringDecision,
+    classification,
+    evidence: DetectorEvidence,
+    quality_issue: str | None,
+) -> ScoringDecision:
+    """Downgrade uncertain automatic outcomes instead of guessing.
+
+    The validated V2.3 model remains untouched.  This production layer is stricter:
+    generic objects may resolve scene context, but only brand-specific sign evidence
+    and sufficiently strong model/reference support may become AUTO_PASS.
+    """
 
     if quality_issue and decision.status.startswith("AUTO_"):
         return replace(
@@ -83,9 +94,26 @@ def _apply_precision_guardrail(decision, classification, quality_issue: str | No
 
     scores = classification.scores
     if decision.scene == "Bien_hieu":
+        if not (evidence.has_signboard and evidence.has_brand_keyword):
+            return replace(
+                decision,
+                label="Can_duyet",
+                status="REVIEW_MISSING_BRAND_EVIDENCE",
+                score=0.0,
+                reasons=decision.reasons
+                + ("Biển hiệu chưa có bằng chứng Vikoda/Đảnh Thạnh đủ rõ",),
+            )
         pass_min = SIGN_AUTO_PASS_MIN
         similarity_min = SIGN_REFERENCE_SIMILARITY_MIN
     else:
+        if not evidence.has_bottle_or_pack:
+            return replace(
+                decision,
+                label="Can_duyet",
+                status="REVIEW_MISSING_EVIDENCE",
+                score=0.0,
+                reasons=decision.reasons + ("Thiếu bằng chứng chai/thùng trưng bày",),
+            )
         pass_min = DISPLAY_AUTO_PASS_MIN
         similarity_min = DISPLAY_REFERENCE_SIMILARITY_MIN
 
@@ -142,9 +170,14 @@ def score_decoded_image_with_classification(
             if hasattr(ocr, "has_brand_keyword"):
                 has_brand_keyword = bool(ocr.has_brand_keyword(text))
             else:
-                has_brand_keyword = bool(ocr.has_brand_or_store_keyword(text))
+                # Compatibility with an older OCR adapter: broad text can help
+                # scene review, but cannot satisfy the new brand-specific auto-pass
+                # because has_brand_keyword remains false in that mode.
+                has_brand_keyword = False
             if hasattr(ocr, "has_store_keyword"):
                 has_store_keyword = bool(ocr.has_store_keyword(text))
+            elif hasattr(ocr, "has_brand_or_store_keyword"):
+                has_store_keyword = bool(ocr.has_brand_or_store_keyword(text))
         except Exception as error:
             audit_warnings.append(_audit_warning("OCR", error))
 
@@ -157,23 +190,22 @@ def score_decoded_image_with_classification(
     evidence = DetectorEvidence(
         has_signboard=bool(detections["signboards"]),
         has_brand_keyword=has_brand_keyword,
-        has_store_keyword=has_store_keyword,
         has_bottle_or_pack=bool(detections["bottles"] or detections["packs"]),
         has_face=has_face,
     )
 
     resolved_classification = classification
     if classification.decision.status == "REVIEW_SCENE":
-        # Store text can help decide that this is a signboard scene, but only a
-        # real brand keyword can later confirm an automatic sign pass.
+        # Store text may identify a signboard scene, but only true brand OCR can
+        # later confirm a sign AUTO_PASS.
         sign_strong = evidence.has_signboard and (
-            evidence.has_brand_keyword or evidence.has_store_keyword
+            evidence.has_brand_keyword or has_store_keyword
         )
         display_strong = (
             evidence.has_bottle_or_pack
             and not evidence.has_signboard
             and not evidence.has_brand_keyword
-            and not evidence.has_store_keyword
+            and not has_store_keyword
         )
         if sign_strong and classifier is not None:
             resolved_classification = classifier.resolve_scene(
@@ -189,7 +221,12 @@ def score_decoded_image_with_classification(
             )
 
     decision = apply_detector_evidence(resolved_classification.decision, evidence)
-    decision = _apply_precision_guardrail(decision, resolved_classification, quality_issue)
+    decision = _apply_precision_guardrail(
+        decision,
+        resolved_classification,
+        evidence,
+        quality_issue,
+    )
     if quality_issue:
         audit_warnings.append(f"IMAGE_QUALITY {quality_issue}")
 
@@ -199,6 +236,7 @@ def score_decoded_image_with_classification(
         ocr_text=text,
         evidence=evidence,
         decision=decision,
+        store_keyword=has_store_keyword,
         audit_warnings=tuple(audit_warnings),
     )
 
