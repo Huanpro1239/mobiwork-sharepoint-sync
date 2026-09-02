@@ -70,9 +70,17 @@ def _apply_image_quality_guardrail(
     decision: ScoringDecision,
     quality_issue: str | None,
 ) -> ScoringDecision:
-    """Never make an automatic KPI decision from a severely unusable image."""
+    """Review unusable images unless Tier-0 fraud evidence is already decisive.
+
+    The local human-reference project orders hard fraud rejection before all other
+    uncertainty handling.  Severe blur/darkness may block an ordinary pass/fail,
+    but it must not rescue a decision already supported by the fraud head and/or a
+    close ``doi pho`` human reference.  The quality problem remains in audit output.
+    """
 
     if not quality_issue or decision.label == "Can_duyet":
+        return decision
+    if decision.status == "TIER0_AUTO_FAIL_FRAUD":
         return decision
     return replace(
         decision,
