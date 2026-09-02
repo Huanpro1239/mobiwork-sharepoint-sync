@@ -3,7 +3,7 @@ import easyocr
 import torch
 import unicodedata
 
-from scoring.config import BRAND_OCR_KEYWORDS, STORE_OCR_KEYWORDS
+from scoring.evidence_policy import BRAND_OCR_KEYWORDS, STORE_OCR_KEYWORDS
 
 
 def _normalize_text(text):
