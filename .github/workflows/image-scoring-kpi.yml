@@ -28,7 +28,6 @@ permissions:
 concurrency:
   group: mobiwork-kpi-production
   cancel-in-progress: true
-  queue: max
 
 jobs:
   score-kpi:
