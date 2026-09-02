@@ -9,6 +9,29 @@ import pandas as pd
 from kpi.manual_labels import ManualLabelIndex, safe_text
 
 
+_TIERED_AUTO_PASS_STATUSES = frozenset(
+    {
+        "TIER1_HIGH_PASS",
+        "TIER2_EVIDENCE_PASS",
+        "TIER2_CONSENSUS_PASS",
+        "TIER4_WEIGHTED_PASS",
+    }
+)
+_TIERED_AUTO_FAIL_STATUSES = frozenset(
+    {
+        "TIER0_AUTO_FAIL_FRAUD",
+        "TIER3_CLEAR_FAIL",
+        "TIER4_WEIGHTED_FAIL",
+    }
+)
+_TIERED_REVIEW_STATUSES = frozenset(
+    {
+        "TIER0_REVIEW_FRAUD",
+        "TIER4_WEIGHTED_REVIEW",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ReviewPartitions:
     """Disjoint queues that must not be combined in the review workbook."""
@@ -34,6 +57,28 @@ def _records_with_manual_labels(
     return enriched
 
 
+def _normalised_statuses(frame: pd.DataFrame) -> pd.Series:
+    return frame.get(
+        "Trạng Thái Quyết Định",
+        pd.Series("", index=frame.index, dtype="object"),
+    ).map(lambda value: safe_text(value).strip().upper())
+
+
+def _decision_masks(statuses: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Return review/auto-pass/auto-fail masks for legacy and tiered policies."""
+
+    is_review = statuses.str.startswith("REVIEW_", na=False) | statuses.isin(
+        _TIERED_REVIEW_STATUSES
+    )
+    is_auto_pass = statuses.str.startswith("AUTO_PASS", na=False) | statuses.isin(
+        _TIERED_AUTO_PASS_STATUSES
+    )
+    is_auto_fail = statuses.str.startswith("AUTO_FAIL", na=False) | statuses.isin(
+        _TIERED_AUTO_FAIL_STATUSES
+    )
+    return is_review, is_auto_pass, is_auto_fail
+
+
 def partition_review_rows(
     frame: pd.DataFrame,
     manual_labels: ManualLabelIndex,
@@ -46,12 +91,9 @@ def partition_review_rows(
     """
 
     enriched = _records_with_manual_labels(frame, manual_labels)
-    statuses = enriched.get(
-        "Trạng Thái Quyết Định",
-        pd.Series("", index=enriched.index, dtype="object"),
-    ).map(lambda value: safe_text(value).strip().upper())
+    statuses = _normalised_statuses(enriched)
     has_manual = enriched["_manual_label"].map(bool)
-    is_review = statuses.str.startswith("REVIEW_", na=False)
+    is_review, _, _ = _decision_masks(statuses)
 
     return ReviewPartitions(
         manual_required=enriched.loc[is_review & ~has_manual].copy(),
@@ -92,13 +134,8 @@ def summarize_review_rows(
     """Return row/unique counts with pending and technical rows excluded from rates."""
 
     partitions = partition_review_rows(frame, manual_labels)
-    statuses = frame.get(
-        "Trạng Thái Quyết Định",
-        pd.Series("", index=frame.index, dtype="object"),
-    ).map(lambda value: safe_text(value).strip().upper())
-    is_review = statuses.str.startswith("REVIEW_", na=False)
-    is_auto_pass = statuses.str.startswith("AUTO_PASS", na=False)
-    is_auto_fail = statuses.str.startswith("AUTO_FAIL", na=False)
+    statuses = _normalised_statuses(frame)
+    is_review, is_auto_pass, is_auto_fail = _decision_masks(statuses)
     is_scored = is_review | is_auto_pass | is_auto_fail
 
     scored_count = int(is_scored.sum())
