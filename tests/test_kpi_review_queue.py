@@ -95,6 +95,62 @@ class KPIReviewQueueTests(unittest.TestCase):
         self.assertAlmostEqual(summary["manual_review_rate"], 0.5)
         self.assertAlmostEqual(summary["auto_pass_rate"], 0.25)
 
+    def test_tiered_statuses_feed_metrics_and_manual_review_queue(self):
+        tiered = pd.DataFrame(
+            [
+                {
+                    "record_id": "tier-pass-1",
+                    "Phân Loại AI": "Bien_hieu",
+                    "Trạng Thái Quyết Định": "TIER1_HIGH_PASS",
+                    "hinh_anh": "https://example/tier-pass-1.jpg",
+                },
+                {
+                    "record_id": "tier-pass-2",
+                    "Phân Loại AI": "Trung_bay",
+                    "Trạng Thái Quyết Định": "TIER2_CONSENSUS_PASS",
+                    "hinh_anh": "https://example/tier-pass-2.jpg",
+                },
+                {
+                    "record_id": "tier-fail-1",
+                    "Phân Loại AI": "Khong_dat",
+                    "Trạng Thái Quyết Định": "TIER0_AUTO_FAIL_FRAUD",
+                    "hinh_anh": "https://example/tier-fail-1.jpg",
+                },
+                {
+                    "record_id": "tier-fail-2",
+                    "Phân Loại AI": "Khong_dat",
+                    "Trạng Thái Quyết Định": "TIER4_WEIGHTED_FAIL",
+                    "hinh_anh": "https://example/tier-fail-2.jpg",
+                },
+                {
+                    "record_id": "tier-review-fraud",
+                    "Phân Loại AI": "Can_duyet",
+                    "Trạng Thái Quyết Định": "TIER0_REVIEW_FRAUD",
+                    "hinh_anh": "https://example/tier-review-fraud.jpg",
+                },
+                {
+                    "record_id": "tier-review-weighted",
+                    "Phân Loại AI": "Can_duyet",
+                    "Trạng Thái Quyết Định": "TIER4_WEIGHTED_REVIEW",
+                    "hinh_anh": "https://example/tier-review-weighted.jpg",
+                },
+            ]
+        )
+
+        summary = summarize_review_rows(tiered, ManualLabelIndex.empty())
+        partitions = partition_review_rows(tiered, ManualLabelIndex.empty())
+
+        self.assertEqual(summary["scored_decision_count"], 6)
+        self.assertEqual(summary["auto_pass_count"], 2)
+        self.assertEqual(summary["auto_fail_count"], 2)
+        self.assertEqual(summary["manual_review_decision_count"], 2)
+        self.assertAlmostEqual(summary["auto_pass_rate"], 2 / 6)
+        self.assertAlmostEqual(summary["manual_review_rate"], 2 / 6)
+        self.assertEqual(
+            partitions.manual_required["record_id"].tolist(),
+            ["tier-review-fraud", "tier-review-weighted"],
+        )
+
     def test_operational_unique_counts_prefer_url_over_shared_image_bytes(self):
         technical = pd.DataFrame(
             [
