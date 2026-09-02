@@ -8,7 +8,7 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 from openpyxl.formatting.rule import FormulaRule
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 from rich.console import Console
 
@@ -18,7 +18,15 @@ from kpi.manual_labels import (
     load_manual_labels,
     safe_text,
 )
-from kpi.review_queue import partition_review_rows, summarize_review_rows
+from kpi.review_queue import (
+    SCOPE_CURRENT_KPI,
+    SCOPE_DEFERRED,
+    SCOPE_FRAUD_AUDIT,
+    SCOPE_HISTORICAL,
+    annotate_review_workflow,
+    partition_review_rows,
+    summarize_review_rows,
+)
 from kpi.workbook_formulas import (
     START_ROW,
     replace_customer_rows,
@@ -69,6 +77,24 @@ AUDIT_COLUMNS = (
     (29, "Source Index", "_source_index"),
     (30, "Ảnh SHA256", "image_sha256"),
 )
+WORKFLOW_COLUMNS = (
+    (31, "Nhóm Xử Lý", "_review_scope"),
+    (32, "Ưu Tiên Duyệt", "_review_priority"),
+    (33, "Hướng Dẫn Xử Lý", "_review_action_reason"),
+)
+DETAIL_EXTRA_COLUMNS = AUDIT_COLUMNS + WORKFLOW_COLUMNS
+
+_DARK_BLUE = "1F4E78"
+_BLUE = "5B9BD5"
+_LIGHT_BLUE = "D9EAF7"
+_GREEN = "E2F0D9"
+_YELLOW = "FFF2CC"
+_ORANGE = "FCE4D6"
+_RED = "F4CCCC"
+_GREY = "E7E6E6"
+_DARK_GREY = "7F8C8D"
+_TEAL = "DDEBF7"
+_WHITE = "FFFFFF"
 
 
 def _validate_template(workbook) -> None:
@@ -102,6 +128,23 @@ def _copy_style(source, target) -> None:
     target.number_format = source.number_format
     target.alignment = copy(source.alignment)
     target.protection = copy(source.protection)
+
+
+def _set_widths(sheet, widths: dict[str, float]) -> None:
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+
+
+def _style_header_range(sheet, cell_range: str, fill: str) -> None:
+    for row in sheet[cell_range]:
+        for cell in row:
+            cell.fill = PatternFill("solid", fgColor=fill)
+            cell.font = Font(color=_WHITE, bold=True)
+            cell.alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+                wrap_text=True,
+            )
 
 
 class KPIExporter:
@@ -140,25 +183,39 @@ class KPIExporter:
             _validate_template(workbook)
             template_labels = labels_from_sheet(workbook[DETAIL_SHEET], self.template_path)
             manual_labels = template_labels.overlay(prior_labels)
+            period = pd.Timestamp(period_start).normalize()
+            annotated = annotate_review_workflow(
+                df_results,
+                manual_labels,
+                period_start=period,
+            )
             self.review_summary = summarize_review_rows(
                 df_results,
                 manual_labels,
                 current_pipeline_signature=current_pipeline_signature,
+                period_start=period,
             )
             warning_values = tuple(
                 dict.fromkeys((*kpi_warnings, *self.review_summary.get("warnings", [])))
             )
-            period = pd.Timestamp(period_start).normalize()
             write_parameters(workbook[PARAM_SHEET], period, warning_values)
             customer_end = replace_customer_rows(workbook[CUSTOMER_SHEET], customer_frame)
             self._replace_detail_rows(
-                workbook[DETAIL_SHEET], df_results, manual_labels, customer_end
+                workbook[DETAIL_SHEET], annotated, manual_labels, customer_end
             )
-            update_customer_image_formulas(workbook[CUSTOMER_SHEET], len(df_results))
+            update_customer_image_formulas(
+                workbook[CUSTOMER_SHEET],
+                len(annotated),
+                detail_frame=annotated,
+            )
             replace_summary_rows(workbook[SUMMARY_SHEET], customer_frame, customer_end)
             self._update_review_alerts(
-                workbook[ALERT_SHEET], df_results, manual_labels
+                workbook[ALERT_SHEET],
+                annotated,
+                manual_labels,
+                period_start=period,
             )
+            self._polish_workbook(workbook, period, annotated)
             workbook.calculation.calcMode = "auto"
             workbook.calculation.fullCalcOnLoad = True
             workbook.calculation.forceFullCalc = True
@@ -171,14 +228,14 @@ class KPIExporter:
         return self.output_path
 
     def _replace_detail_rows(self, sheet, frame, manual_labels, customer_end_row: int) -> None:
-        max_column = AUDIT_COLUMNS[-1][0]
+        max_column = DETAIL_EXTRA_COLUMNS[-1][0]
         style_row = START_ROW if sheet.max_row >= START_ROW else 4
         source_styles = [copy(sheet.cell(style_row, col)._style) for col in range(1, 17)]
         source_formats = [sheet.cell(style_row, col).number_format for col in range(1, 17)]
         header_style = copy(sheet.cell(4, min(14, sheet.max_column))._style)
         if sheet.max_row >= START_ROW:
             sheet.delete_rows(START_ROW, sheet.max_row - START_ROW + 1)
-        for column, header, _ in AUDIT_COLUMNS:
+        for column, header, _ in DETAIL_EXTRA_COLUMNS:
             sheet.cell(4, column, header)._style = copy(header_style)
         if sheet.cell(4, 16).value is None:
             sheet.cell(4, 16, "Kết Quả Khách Hàng")._style = copy(header_style)
@@ -216,9 +273,12 @@ class KPIExporter:
             if values[14]:
                 sheet.cell(row, 14).hyperlink = url
                 sheet.cell(row, 14).style = "Hyperlink"
-            for column, _, key in AUDIT_COLUMNS:
+            for column, _, key in DETAIL_EXTRA_COLUMNS:
                 target = sheet.cell(row, column, record.get(key, ""))
-                reference = sheet.cell(row, 12 if column in (23, 24, 26, 27, 28, 30) else 10)
+                reference = sheet.cell(
+                    row,
+                    12 if column in (23, 24, 26, 27, 28, 30, 33) else 10,
+                )
                 _copy_style(reference, target)
 
         end_row = max(START_ROW, START_ROW + len(records) - 1)
@@ -236,24 +296,28 @@ class KPIExporter:
                 f"G{START_ROW}:G{end_row}",
                 FormulaRule(
                     formula=[f'G{START_ROW}="Can_duyet"'],
-                    fill=PatternFill("solid", fgColor="FFF2CC"),
+                    fill=PatternFill("solid", fgColor=_YELLOW),
                 ),
             )
             sheet.conditional_formatting.add(
                 f"G{START_ROW}:G{end_row}",
                 FormulaRule(
                     formula=[f'G{START_ROW}="Khong_the_cham"'],
-                    fill=PatternFill("solid", fgColor="F4CCCC"),
+                    fill=PatternFill("solid", fgColor=_RED),
                 ),
             )
-        sheet.freeze_panes = "A5"
-        sheet.auto_filter.ref = f"A4:{openpyxl.utils.get_column_letter(max_column)}{end_row}"
+        sheet.freeze_panes = "F5"
+        sheet.auto_filter.ref = (
+            f"A4:{openpyxl.utils.get_column_letter(max_column)}{end_row}"
+        )
 
     @staticmethod
     def _update_review_alerts(
         sheet,
         frame: pd.DataFrame,
         manual_labels: ManualLabelIndex,
+        *,
+        period_start=None,
     ) -> None:
         section_row = next(
             (
@@ -285,29 +349,57 @@ class KPIExporter:
         if next_section > section_row + 1:
             sheet.delete_rows(section_row + 1, next_section - section_row - 1)
 
-        partitions = partition_review_rows(frame, manual_labels)
+        partitions = partition_review_rows(
+            frame,
+            manual_labels,
+            period_start=period_start,
+        )
         pending_limit = max(
             1,
             int(os.environ.get("KPI_PENDING_ALERT_SAMPLE_LIMIT", "100")),
         )
         sections = (
             (
-                "2A. ẢNH THẬT SỰ CẦN DUYỆT TAY "
+                "2A. CẦN DUYỆT KPI THÁNG HIỆN TẠI "
                 f"({len(partitions.manual_required):,})",
                 partitions.manual_required,
-                "Không có ảnh nào đang chờ người duyệt.",
+                "Không có ảnh nào đang chờ duyệt để xác định KPI tháng hiện tại.",
+                _YELLOW,
             ),
             (
-                "2B. LỖI KỸ THUẬT — KHÔNG PHẢI DUYỆT NHÃN "
+                "2B. AUDIT NGHI GIAN LẬN / ĐỐI PHÓ "
+                f"({len(partitions.fraud_audit):,})",
+                partitions.fraud_audit,
+                "Không có ảnh nghi gian lận đang chờ audit.",
+                _RED,
+            ),
+            (
+                "2C. ĐÃ ĐỦ BẰNG CHỨNG — CÓ THỂ ĐỂ SAU "
+                f"({len(partitions.deferred_review):,})",
+                partitions.deferred_review,
+                "Không có review dư thừa theo KPI.",
+                _LIGHT_BLUE,
+            ),
+            (
+                "2D. REVIEW LỊCH SỬ — KHÔNG CHẶN KPI THÁNG HIỆN TẠI "
+                f"({len(partitions.historical_review):,})",
+                partitions.historical_review,
+                "Không có review lịch sử tồn đọng.",
+                _GREY,
+            ),
+            (
+                "2E. LỖI KỸ THUẬT — KHÔNG ĐƯỢC SỬA NHÃN "
                 f"({len(partitions.technical):,})",
                 partitions.technical,
                 "Không có lỗi kỹ thuật bị chặn.",
+                _ORANGE,
             ),
             (
-                "2C. CHỜ CHẤM AI — KHÔNG PHẢI DUYỆT NHÃN "
+                "2F. CHỜ CHẤM AI — HỆ THỐNG TỰ XỬ LÝ "
                 f"({len(partitions.pending):,}; hiển thị tối đa {pending_limit:,})",
                 partitions.pending.head(pending_limit),
                 "Không còn ảnh chờ chấm AI.",
+                _TEAL,
             ),
         )
         headers = (
@@ -317,18 +409,21 @@ class KPIExporter:
             "Tên KH",
             "Nhãn AI",
             "Độ Tin Cậy",
-            "Lý Do Cần Duyệt",
+            "Lý Do / Hướng Dẫn",
             "Tên File",
-            "Cảnh Báo",
+            "Trạng Thái",
         )
         insert_at = section_row + 1
-        total_rows = sum(2 + max(1, len(data)) for _, data, _ in sections)
+        total_rows = sum(2 + max(1, len(data)) for _, data, _, _ in sections)
         sheet.insert_rows(insert_at, amount=total_rows)
 
         cursor = insert_at
-        for title, data, empty_message in sections:
+        for title, data, empty_message, section_fill in sections:
             for col in range(1, 10):
-                sheet.cell(cursor, col)._style = copy(heading_style[col - 1])
+                cell = sheet.cell(cursor, col)
+                cell._style = copy(heading_style[col - 1])
+                cell.fill = PatternFill("solid", fgColor=section_fill)
+                cell.font = Font(bold=True, color="000000")
             sheet.cell(cursor, 1, title)
             cursor += 1
 
@@ -353,7 +448,8 @@ class KPIExporter:
                     record.get("ten_kh", ""),
                     record.get("Phân Loại AI", ""),
                     record.get("Độ Tin Cậy AI"),
-                    record.get("Căn Cứ Nhận Diện", ""),
+                    record.get("_review_action_reason")
+                    or record.get("Căn Cứ Nhận Diện", ""),
                     record.get("Tên File", ""),
                     record.get("Trạng Thái Quyết Định", ""),
                 )
@@ -361,3 +457,148 @@ class KPIExporter:
                     target = sheet.cell(row, col, value)
                     target._style = copy(data_style[col - 1])
             cursor += len(data)
+
+    def _polish_workbook(
+        self,
+        workbook,
+        period: pd.Timestamp,
+        detail_frame: pd.DataFrame,
+    ) -> None:
+        """Apply a clean operator-first view without changing the five-sheet contract."""
+
+        summary = workbook[SUMMARY_SHEET]
+        customer = workbook[CUSTOMER_SHEET]
+        detail = workbook[DETAIL_SHEET]
+        alerts = workbook[ALERT_SHEET]
+        params = workbook[PARAM_SHEET]
+
+        for sheet in (summary, customer, detail, alerts, params):
+            sheet.sheet_view.showGridLines = False
+
+        summary.sheet_properties.tabColor = _DARK_BLUE
+        customer.sheet_properties.tabColor = _BLUE
+        detail.sheet_properties.tabColor = "ED7D31"
+        alerts.sheet_properties.tabColor = "C00000"
+        params.sheet_properties.tabColor = _DARK_GREY
+
+        required = int(self.review_summary.get("manual_review_required_count", 0) or 0)
+        fraud = int(self.review_summary.get("fraud_audit_required_count", 0) or 0)
+        historical = int(self.review_summary.get("historical_review_count", 0) or 0)
+        pending = int(self.review_summary.get("pending_score_count", 0) or 0)
+        summary["A2"] = (
+            f"KPI {period:%m/%Y} | Cần duyệt KPI: {required:,} | "
+            f"Audit fraud: {fraud:,} | Review lịch sử: {historical:,} | "
+            f"Chờ AI: {pending:,}"
+        )
+        summary["A2"].font = Font(bold=True, color=_DARK_BLUE)
+        summary["A2"].alignment = Alignment(vertical="center", wrap_text=True)
+        summary.row_dimensions[2].height = 30
+        summary.freeze_panes = "A5"
+        summary.row_dimensions[4].height = 36
+        _style_header_range(summary, "A4:Q4", _DARK_BLUE)
+        _set_widths(
+            summary,
+            {
+                "A": 6, "B": 24, "C": 15, "D": 14, "E": 14, "F": 16,
+                "G": 17, "H": 17, "I": 18, "J": 14, "K": 17, "L": 14,
+                "M": 19, "N": 14, "O": 20, "P": 22, "Q": 42,
+            },
+        )
+        summary_end = max(START_ROW, summary.max_row)
+        for row in range(START_ROW, summary_end + 1):
+            summary.cell(row, 9).number_format = "0.0%"
+            for column in (13, 15, 16):
+                summary.cell(row, column).number_format = '#,##0 "VNĐ"'
+
+        customer.freeze_panes = "E5"
+        customer.row_dimensions[4].height = 36
+        _style_header_range(customer, "A4:R4", _BLUE)
+        _set_widths(
+            customer,
+            {
+                "A": 6, "B": 22, "C": 16, "D": 32, "E": 16, "F": 12,
+                "G": 16, "H": 18, "I": 14, "J": 15, "K": 13, "L": 13,
+                "M": 13, "N": 14, "O": 17, "P": 15, "Q": 46, "R": 12,
+            },
+        )
+
+        detail.row_dimensions[4].height = 40
+        _style_header_range(detail, "A4:G4", _DARK_BLUE)
+        _style_header_range(detail, "H4:I4", "C55A11")
+        _style_header_range(detail, "J4:R4", _BLUE)
+        _style_header_range(detail, "S4:AD4", _DARK_GREY)
+        _style_header_range(detail, "AE4:AG4", "2F75B5")
+        _set_widths(
+            detail,
+            {
+                "A": 6, "B": 22, "C": 12, "D": 16, "E": 32, "F": 8,
+                "G": 15, "H": 24, "I": 17, "J": 12, "K": 24, "L": 55,
+                "M": 28, "N": 12, "O": 3, "P": 16, "Q": 24, "R": 14,
+                "AE": 22, "AF": 14, "AG": 58,
+            },
+        )
+        for column in range(19, 31):
+            detail.column_dimensions[openpyxl.utils.get_column_letter(column)].hidden = True
+        detail.freeze_panes = "F5"
+        detail_end = max(START_ROW, START_ROW + len(detail_frame) - 1)
+        detail.auto_filter.ref = f"A4:AG{detail_end}"
+        for row in range(START_ROW, detail_end + 1):
+            detail.cell(row, 8).fill = PatternFill("solid", fgColor=_YELLOW)
+            detail.cell(row, 8).alignment = Alignment(vertical="top", wrap_text=True)
+            detail.cell(row, 33).alignment = Alignment(vertical="top", wrap_text=True)
+        if len(detail_frame):
+            detail.conditional_formatting.add(
+                f"G{START_ROW}:G{detail_end}",
+                FormulaRule(
+                    formula=[f'OR(G{START_ROW}="Bien_hieu",G{START_ROW}="Trung_bay")'],
+                    fill=PatternFill("solid", fgColor=_GREEN),
+                ),
+            )
+            detail.conditional_formatting.add(
+                f"G{START_ROW}:G{detail_end}",
+                FormulaRule(
+                    formula=[f'G{START_ROW}="Khong_dat"'],
+                    fill=PatternFill("solid", fgColor=_RED),
+                ),
+            )
+            detail.conditional_formatting.add(
+                f"AE{START_ROW}:AE{detail_end}",
+                FormulaRule(
+                    formula=[f'AE{START_ROW}="{SCOPE_CURRENT_KPI}"'],
+                    fill=PatternFill("solid", fgColor=_YELLOW),
+                ),
+            )
+            detail.conditional_formatting.add(
+                f"AE{START_ROW}:AE{detail_end}",
+                FormulaRule(
+                    formula=[f'AE{START_ROW}="{SCOPE_FRAUD_AUDIT}"'],
+                    fill=PatternFill("solid", fgColor=_RED),
+                ),
+            )
+            detail.conditional_formatting.add(
+                f"AE{START_ROW}:AE{detail_end}",
+                FormulaRule(
+                    formula=[f'AE{START_ROW}="{SCOPE_HISTORICAL}"'],
+                    fill=PatternFill("solid", fgColor=_GREY),
+                ),
+            )
+            detail.conditional_formatting.add(
+                f"AE{START_ROW}:AE{detail_end}",
+                FormulaRule(
+                    formula=[f'AE{START_ROW}="{SCOPE_DEFERRED}"'],
+                    fill=PatternFill("solid", fgColor=_LIGHT_BLUE),
+                ),
+            )
+
+        alerts.freeze_panes = "A2"
+        _set_widths(
+            alerts,
+            {
+                "A": 7, "B": 22, "C": 16, "D": 32, "E": 15,
+                "F": 13, "G": 58, "H": 26, "I": 26, "J": 12,
+            },
+        )
+        for row in range(1, alerts.max_row + 1):
+            alerts.cell(row, 7).alignment = Alignment(vertical="top", wrap_text=True)
+
+        _set_widths(params, {"A": 42, "B": 18})
