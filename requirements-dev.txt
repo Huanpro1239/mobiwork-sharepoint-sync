@@ -3,3 +3,4 @@ coverage[toml]>=7.6,<8
 ruff>=0.9,<1
 scikit-learn>=1.5,<2
 Pillow>=10,<13
+opencv-python-headless>=4.10,<4.12
