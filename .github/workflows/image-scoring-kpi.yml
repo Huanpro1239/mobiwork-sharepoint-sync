@@ -23,17 +23,17 @@ permissions:
   id-token: write
   actions: write
 
-# KPI runs are dispatched only by the guarded image workflow (or explicitly by an
-# operator/marker). Preserve every queued scoring batch while backlog is draining.
+# Catch-up is checkpointed between bounded batches. Prefer the newest runtime over
+# a stale queued/running batch so old scoring code cannot publish after main moves.
 concurrency:
   group: mobiwork-kpi-production
-  cancel-in-progress: false
+  cancel-in-progress: true
   queue: max
 
 jobs:
   score-kpi:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
     env:
       PYTHONPATH: src
       HF_HUB_DISABLE_TELEMETRY: "1"
@@ -121,7 +121,9 @@ jobs:
           AI_LEGACY_SCORE_REMOTE: Chạy chương trình/KPI Assets/legacy_scores_through_2026-08-28.csv
           AI_SYNC_ASSETS: "false"
           AI_DEVICE: cpu
-          AI_PRODUCTION_MAX_PENDING_IMAGES: "4000"
+          # 4,000 CPU images can exceed the workflow window. Checkpoint smaller
+          # batches and self-dispatch the next batch instead of monopolizing a runner.
+          AI_PRODUCTION_MAX_PENDING_IMAGES: "500"
           AI_PRODUCTION_MAX_TECHNICAL_RETRIES: "3"
           KPI_SHAREPOINT_ROOT: KPI
           KPI_PERIOD: ${{ github.event_name == 'workflow_dispatch' && inputs.period || '' }}
