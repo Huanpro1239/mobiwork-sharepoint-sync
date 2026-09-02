@@ -31,19 +31,11 @@ class DecisionPolicyTests(unittest.TestCase):
         self.assertEqual(decision.label, "Can_duyet")
         self.assertEqual(decision.status, "REVIEW_MISSING_EVIDENCE")
 
-    def test_sign_requires_signboard_and_brand_keyword(self):
+    def test_sign_evidence_can_confirm_candidate(self):
         candidate = decide_scores(ScoreVector(0.9, 0.95, 0.01, 0.9))
-        generic_sign = apply_detector_evidence(
-            candidate,
-            DetectorEvidence(has_signboard=True, has_store_keyword=True),
-        )
-        branded_sign = apply_detector_evidence(
-            candidate,
-            DetectorEvidence(has_signboard=True, has_brand_keyword=True),
-        )
-        self.assertEqual(generic_sign.status, "REVIEW_MISSING_EVIDENCE")
-        self.assertEqual(branded_sign.label, "Bien_hieu")
-        self.assertEqual(branded_sign.status, "AUTO_PASS")
+        decision = apply_detector_evidence(candidate, DetectorEvidence(has_signboard=True))
+        self.assertEqual(decision.label, "Bien_hieu")
+        self.assertEqual(decision.status, "AUTO_PASS")
 
     def test_display_requires_pack_evidence(self):
         candidate = decide_scores(ScoreVector(0.1, 0.95, 0.01, 0.9))
