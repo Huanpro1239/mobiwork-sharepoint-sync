@@ -6,7 +6,10 @@ from datetime import datetime
 from typing import Iterable, Mapping, Sequence
 
 
-LEGACY_AUTO_FINAL_LABELS = frozenset({"bien_hieu", "trung_bay", "khong_dat"})
+# Precision-first migration policy: legacy AI auto-finals are no longer trusted as
+# current-model decisions. Manual labels are preserved separately in the workbook;
+# every legacy AI label must pass through the current runtime once.
+LEGACY_AUTO_FINAL_LABELS: frozenset[str] = frozenset()
 LEGACY_RESCORE_LABELS = frozenset({"", "can_duyet", "khong_the_cham"})
 LEGACY_RESCORE_STATUSES = frozenset(
     {"LEGACY_REVIEW", "TECHNICAL_FAILURE", "PENDING_SCORE"}
@@ -18,7 +21,12 @@ def _text(value: object) -> str:
 
 
 def legacy_requires_rescore(row: Mapping[str, object]) -> bool:
-    """Return whether a legacy payload must pass through the current model."""
+    """Return whether a legacy payload must pass through the current model.
+
+    V2.4 precision-first deliberately returns True for every legacy AI outcome.
+    Human corrections are not lost: they live in the workbook manual-label index
+    and remain authoritative after the fresh AI score is produced.
+    """
 
     label = _text(row.get("Phân Loại AI")).casefold()
     status = _text(
