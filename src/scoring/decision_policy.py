@@ -1,8 +1,8 @@
 """Pure decision policy for converting model scores into auditable labels.
 
-The model proposes a decision first; detector/OCR evidence may confirm an
-automatic pass or downgrade it to review, but can never manufacture a pass or
-failure.
+This module deliberately has no dependency on computer-vision runtimes.  The
+model proposes a decision first; detector/OCR evidence may confirm an automatic
+pass or downgrade it to review, but can never manufacture a pass or failure.
 """
 
 from dataclasses import dataclass, replace
@@ -66,7 +66,6 @@ class ScoreVector:
 class DetectorEvidence:
     has_signboard: bool = False
     has_brand_keyword: bool = False
-    has_store_keyword: bool = False
     has_bottle_or_pack: bool = False
     has_face: bool = False
 
@@ -88,7 +87,12 @@ def decide_scores(
     policy: DecisionPolicy = DEFAULT_POLICY,
     scene_override: str | None = None,
 ) -> ScoringDecision:
-    """Apply conservative thresholds to calibrated model probabilities."""
+    """Apply conservative thresholds to calibrated model probabilities.
+
+    ``scene_override`` is reserved for a separately-audited scene resolver.  It
+    may choose which validity head is evaluated, but it never bypasses novelty,
+    fraud, validity thresholds, or quality gates.
+    """
 
     if scene_override not in (None, "Bien_hieu", "Trung_bay"):
         raise ValueError("scene_override must be Bien_hieu, Trung_bay, or None")
@@ -166,22 +170,15 @@ def apply_detector_evidence(
     decision: ScoringDecision,
     evidence: DetectorEvidence,
 ) -> ScoringDecision:
-    """Confirm a pass candidate only with scene-specific business evidence."""
+    """Confirm a pass candidate or send it to review when evidence is absent."""
 
     if decision.status != "PASS_CANDIDATE":
         return decision
 
     if decision.scene == "Bien_hieu":
-        # A generic signboard or words like "tạp hóa" are not evidence that the
-        # sign belongs to Vikoda/Đảnh Thạnh. Require both signboard geometry and
-        # an actual brand keyword.
-        supported = evidence.has_signboard and evidence.has_brand_keyword
-        missing_reason = "Thiếu biển hiệu có nhận diện Vikoda/Đảnh Thạnh"
+        supported = evidence.has_signboard or evidence.has_brand_keyword
     else:
-        # Bottle/pack evidence is only a first-stage support check. A stricter
-        # model-similarity guard is applied afterwards in image_scoring.py.
         supported = evidence.has_bottle_or_pack
-        missing_reason = "Thiếu bằng chứng chai/thùng trưng bày"
 
     if supported:
         return replace(decision, status="AUTO_PASS")
@@ -190,8 +187,7 @@ def apply_detector_evidence(
         decision,
         label="Can_duyet",
         status="REVIEW_MISSING_EVIDENCE",
-        score=0.0,
-        reasons=decision.reasons + (missing_reason,),
+        reasons=decision.reasons + ("Thiếu bằng chứng detector/OCR",),
     )
 
 
