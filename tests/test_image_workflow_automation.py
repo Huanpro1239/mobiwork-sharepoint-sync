@@ -22,7 +22,7 @@ class ImageWorkflowAutomationTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         trigger = text.split("- name: Trigger KPI after complete image sync", maxsplit=1)[1]
         self.assertIn('if has("dry_run") then (.dry_run | tostring)', trigger)
-        self.assertIn('"$pending" -ne 0', trigger)
+        self.assertIn("pending == 0", trigger)
         self.assertIn("image-scoring-kpi.yml/dispatches", trigger)
 
 

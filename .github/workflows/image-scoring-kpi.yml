@@ -17,22 +17,21 @@ on:
         required: true
         type: boolean
         default: true
-  workflow_run:
-    workflows: ["MobiWork Daily Image Sync"]
-    types: [completed]
 
 permissions:
   contents: read
   id-token: write
   actions: write
 
+# KPI runs are dispatched only by the guarded image workflow (or explicitly by an
+# operator/marker). Preserve every queued scoring batch while backlog is draining.
 concurrency:
   group: mobiwork-kpi-production
   cancel-in-progress: false
+  queue: max
 
 jobs:
   score-kpi:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
