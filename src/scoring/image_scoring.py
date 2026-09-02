@@ -91,6 +91,76 @@ def _apply_image_quality_guardrail(
     )
 
 
+def _empty_detections() -> dict[str, list]:
+    return {"bottles": [], "packs": [], "signboards": []}
+
+
+def _empty_evidence() -> DetectorEvidence:
+    return DetectorEvidence(
+        has_signboard=False,
+        has_brand_keyword=False,
+        has_bottle_or_pack=False,
+        has_face=False,
+    )
+
+
+def _normalise_reference_subcategory(value: object) -> str:
+    text = str(value or "").casefold().replace("\\", "/").replace("_", " ")
+    return " ".join(text.split())
+
+
+def _first_two_references_are_fail(neighbors: Sequence[Any]) -> bool:
+    values = [
+        _normalise_reference_subcategory(
+            getattr(neighbor, "effective_subcategory", "")
+        )
+        for neighbor in tuple(neighbors or ())[:2]
+    ]
+    return len(values) == 2 and all(value.startswith("khong dat") for value in values)
+
+
+def _deterministic_reference_decision(classification) -> ScoringDecision | None:
+    """Return a decision only when detector/OCR/face cannot change the outcome.
+
+    This fast path is deliberately narrower than the full policy. It skips costly
+    evidence inference only for tiers whose ordering makes evidence irrelevant, or
+    where the two nearest human-labelled references already supply the exact scene
+    support required by the tier. Ambiguous scenes, Tier-2 and Tier-4 decisions
+    always continue through the full evidence path.
+    """
+
+    scores = getattr(classification, "scores", None)
+    if scores is None or classification.decision.status == "REVIEW_SCENE":
+        return None
+
+    decision = decide_reference_tiered_scores(
+        scores,
+        _empty_evidence(),
+        getattr(classification, "neighbors", ()),
+        store_keyword=False,
+        pass_gate_passed=bool(getattr(classification, "quality_gate_passed", False)),
+        auto_fail_gate_passed=bool(
+            getattr(classification, "auto_fail_gate_passed", False)
+        ),
+        scene_override=classification.decision.scene,
+        scene_ambiguous=False,
+    )
+    if decision.status in {
+        "TIER0_AUTO_FAIL_FRAUD",
+        "TIER0_REVIEW_FRAUD",
+        "REVIEW_NOVELTY",
+        # With empty physical evidence, Tier-1 can only pass because the two
+        # nearest positive human references already confirm the scene.
+        "TIER1_HIGH_PASS",
+    }:
+        return decision
+    if decision.status == "TIER3_CLEAR_FAIL" and _first_two_references_are_fail(
+        getattr(classification, "neighbors", ())
+    ):
+        return decision
+    return None
+
+
 def _ocr_flags(ocr, text: str) -> tuple[bool, bool]:
     has_brand_keyword = False
     has_store_keyword = False
@@ -152,6 +222,23 @@ def score_decoded_image_with_classification(
 
     _validate_image_bgr(image_bgr)
     quality_issue = _quality_issue(image_bgr)
+
+    deterministic = _deterministic_reference_decision(classification)
+    if deterministic is not None:
+        decision = _apply_image_quality_guardrail(deterministic, quality_issue)
+        audit_warnings = [f"EVIDENCE_SKIPPED_DETERMINISTIC {deterministic.status}"]
+        if quality_issue:
+            audit_warnings.append(f"IMAGE_QUALITY {quality_issue}")
+        return ImageScore(
+            classification=classification,
+            detections=_empty_detections(),
+            ocr_text="",
+            evidence=_empty_evidence(),
+            decision=decision,
+            store_keyword=False,
+            audit_warnings=tuple(audit_warnings),
+        )
+
     if image_rgb is None:
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
