@@ -71,6 +71,8 @@ class KPIReviewQueueTests(unittest.TestCase):
         self.assertEqual(partitions.manual_resolved["record_id"].tolist(), ["reviewed"])
         self.assertEqual(partitions.pending["record_id"].tolist(), ["pending"])
         self.assertEqual(partitions.technical["record_id"].tolist(), ["technical"])
+        self.assertTrue(partitions.fraud_audit.empty)
+        self.assertTrue(partitions.historical_review.empty)
 
     def test_manual_label_excludes_review_row_from_required_queue(self):
         partitions = partition_review_rows(self.frame, self.labels)
@@ -94,6 +96,73 @@ class KPIReviewQueueTests(unittest.TestCase):
         self.assertEqual(summary["auto_fail_count"], 1)
         self.assertAlmostEqual(summary["manual_review_rate"], 0.5)
         self.assertAlmostEqual(summary["auto_pass_rate"], 0.25)
+
+    def test_period_scope_removes_historical_and_redundant_review_from_current_kpi_queue(self):
+        frame = pd.DataFrame(
+            [
+                {
+                    "record_id": "historical-review",
+                    "ngay": "2026-08-31",
+                    "ma_kh": "OLD",
+                    "Loại Cảnh": "Bien_hieu",
+                    "Phân Loại AI": "Can_duyet",
+                    "Trạng Thái Quyết Định": "TIER4_WEIGHTED_REVIEW",
+                    "hinh_anh": "https://example/historical.jpg",
+                },
+                {
+                    "record_id": "current-review",
+                    "ngay": "2026-09-02",
+                    "ma_kh": "CUR",
+                    "Loại Cảnh": "Trung_bay",
+                    "Phân Loại AI": "Can_duyet",
+                    "Trạng Thái Quyết Định": "TIER4_WEIGHTED_REVIEW",
+                    "hinh_anh": "https://example/current.jpg",
+                },
+                {
+                    "record_id": "fraud-review",
+                    "ngay": "2026-09-02",
+                    "ma_kh": "FRAUD",
+                    "Loại Cảnh": "Trung_bay",
+                    "Phân Loại AI": "Can_duyet",
+                    "Trạng Thái Quyết Định": "TIER0_REVIEW_FRAUD",
+                    "hinh_anh": "https://example/fraud.jpg",
+                },
+                {
+                    "record_id": "scene-pass",
+                    "ngay": "2026-09-02",
+                    "ma_kh": "REDUNDANT",
+                    "Loại Cảnh": "Bien_hieu",
+                    "Phân Loại AI": "Bien_hieu",
+                    "Trạng Thái Quyết Định": "TIER1_HIGH_PASS",
+                    "hinh_anh": "https://example/pass.jpg",
+                },
+                {
+                    "record_id": "redundant-review",
+                    "ngay": "2026-09-02",
+                    "ma_kh": "REDUNDANT",
+                    "Loại Cảnh": "Bien_hieu",
+                    "Phân Loại AI": "Can_duyet",
+                    "Trạng Thái Quyết Định": "REVIEW_NOVELTY",
+                    "hinh_anh": "https://example/redundant.jpg",
+                },
+            ]
+        )
+        empty = ManualLabelIndex.empty()
+        period = pd.Timestamp("2026-09-01")
+        partitions = partition_review_rows(frame, empty, period_start=period)
+        summary = summarize_review_rows(frame, empty, period_start=period)
+
+        self.assertEqual(partitions.manual_required["record_id"].tolist(), ["current-review"])
+        self.assertEqual(partitions.fraud_audit["record_id"].tolist(), ["fraud-review"])
+        self.assertEqual(partitions.deferred_review["record_id"].tolist(), ["redundant-review"])
+        self.assertEqual(partitions.historical_review["record_id"].tolist(), ["historical-review"])
+        self.assertEqual(summary["manual_review_decision_count"], 4)
+        self.assertEqual(summary["manual_review_required_count"], 1)
+        self.assertEqual(summary["fraud_audit_required_count"], 1)
+        self.assertEqual(summary["deferred_review_count"], 1)
+        self.assertEqual(summary["historical_review_count"], 1)
+        self.assertEqual(summary["current_period_scored_count"], 4)
+        self.assertAlmostEqual(summary["current_period_operational_review_rate"], 0.5)
 
     def test_tiered_statuses_feed_metrics_and_manual_review_queue(self):
         tiered = pd.DataFrame(
@@ -175,7 +244,7 @@ class KPIReviewQueueTests(unittest.TestCase):
 
         self.assertEqual(summary["technical_failure_unique"], 2)
 
-    def test_alert_sheet_renders_three_separate_operational_sections(self):
+    def test_alert_sheet_renders_six_operational_sections(self):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Canh_bao"
@@ -192,8 +261,11 @@ class KPIReviewQueueTests(unittest.TestCase):
             if sheet.cell(row, 1).value
         }
         review_heading = next(key for key in headings if key.startswith("2A."))
-        technical_heading = next(key for key in headings if key.startswith("2B."))
-        pending_heading = next(key for key in headings if key.startswith("2C."))
+        fraud_heading = next(key for key in headings if key.startswith("2B."))
+        deferred_heading = next(key for key in headings if key.startswith("2C."))
+        history_heading = next(key for key in headings if key.startswith("2D."))
+        technical_heading = next(key for key in headings if key.startswith("2E."))
+        pending_heading = next(key for key in headings if key.startswith("2F."))
         section_three = next(key for key in headings if key.startswith("3."))
 
         def employee_names(start_heading: str, end_heading: str) -> list[str]:
@@ -202,7 +274,7 @@ class KPIReviewQueueTests(unittest.TestCase):
                 for row in range(headings[start_heading] + 1, headings[end_heading])
             ]
 
-        review_names = employee_names(review_heading, technical_heading)
+        review_names = employee_names(review_heading, fraud_heading)
         technical_names = employee_names(technical_heading, pending_heading)
         pending_names = employee_names(pending_heading, section_three)
 
@@ -212,13 +284,15 @@ class KPIReviewQueueTests(unittest.TestCase):
         self.assertNotIn("NV TECHNICAL", review_names)
         self.assertIn("NV TECHNICAL", technical_names)
         self.assertIn("NV PENDING", pending_names)
+        self.assertLess(headings[fraud_heading], headings[deferred_heading])
+        self.assertLess(headings[deferred_heading], headings[history_heading])
         workbook.close()
 
     def test_rescore_changes_ai_column_but_preserves_manual_override_formula(self):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Chi_tiet_Anh_Checkin"
-        for column in range(1, 31):
+        for column in range(1, 34):
             sheet.cell(4, column, f"H{column}")
             sheet.cell(5, column, "")
         exporter = object.__new__(KPIExporter)
@@ -238,6 +312,8 @@ class KPIReviewQueueTests(unittest.TestCase):
         self.assertEqual(sheet["G5"].value, "Bien_hieu")
         self.assertEqual(sheet["H5"].value, "Khong_dat")
         self.assertEqual(sheet["I5"].value, '=IF(H5<>"",H5,G5)')
+        self.assertEqual(sheet["AE4"].value, "Nhóm Xử Lý")
+        self.assertEqual(sheet["AG4"].value, "Hướng Dẫn Xử Lý")
         workbook.close()
 
 
