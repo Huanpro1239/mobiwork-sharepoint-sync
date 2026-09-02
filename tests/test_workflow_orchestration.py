@@ -13,14 +13,14 @@ class WorkflowOrchestrationTests(unittest.TestCase):
     def _read(name: str) -> str:
         return (WORKFLOWS / name).read_text(encoding="utf-8")
 
-    def test_shared_production_queue_preserves_pending_runs(self):
+    def test_shared_production_lock_uses_supported_concurrency_keys(self):
         report = self._read("mobiwork-sync.yml")
         images = self._read("mobiwork-images.yml")
 
         for workflow in (report, images):
             self.assertIn("group: mobiwork-sharepoint-production", workflow)
             self.assertIn("cancel-in-progress: false", workflow)
-            self.assertIn("queue: max", workflow)
+            self.assertNotIn("queue: max", workflow)
 
     def test_images_are_dispatched_after_successful_production_report_refresh(self):
         report = self._read("mobiwork-sync.yml")
