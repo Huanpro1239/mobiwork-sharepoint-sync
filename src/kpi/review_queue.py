@@ -159,7 +159,7 @@ def annotate_review_workflow(
     unresolved = is_review & ~has_manual
     split_operational_scope = period_start is not None
     fraud_mask = (
-        unresolved & is_fraud_review
+        unresolved & is_fraud_review & is_current
         if split_operational_scope
         else pd.Series(False, index=enriched.index, dtype="bool")
     )
@@ -172,11 +172,7 @@ def annotate_review_workflow(
         if split_operational_scope
         else unresolved & is_current
     )
-    historical_mask = (
-        unresolved & ~is_current & ~is_fraud_review
-        if split_operational_scope
-        else unresolved & ~is_current
-    )
+    historical_mask = unresolved & ~is_current
     scopes.loc[historical_mask] = SCOPE_HISTORICAL
     priorities.loc[historical_mask] = "THẤP"
     reasons.loc[historical_mask] = "Ảnh thuộc tháng trước; không chặn KPI tháng hiện tại."
