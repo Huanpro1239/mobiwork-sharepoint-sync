@@ -170,8 +170,9 @@ class CloudScoringAutomationTests(unittest.TestCase):
             "https://example/review.jpg",
         )
 
-    def test_legacy_review_is_rescored_once_per_unique_url_and_fanned_out(self):
+    def test_legacy_ai_results_enter_current_rescore_queue_by_unique_url(self):
         review_url = "https://example/review.jpg"
+        auto_url = "https://example/auto.jpg"
         new_url = "https://example/new.jpg"
         legacy = {
             review_url: {
@@ -179,8 +180,8 @@ class CloudScoringAutomationTests(unittest.TestCase):
                 "Phân Loại AI": "Can_duyet",
                 "Quyết Định": "LEGACY_REVIEW",
             },
-            "https://example/auto.jpg": {
-                "hinh_anh": "https://example/auto.jpg",
+            auto_url: {
+                "hinh_anh": auto_url,
                 "Phân Loại AI": "Bien_hieu",
                 "Quyết Định": "LEGACY_AUTO_REUSED",
             },
@@ -188,7 +189,7 @@ class CloudScoringAutomationTests(unittest.TestCase):
         rows = [
             {"hinh_anh": review_url, "ngay": "2026-08-01", "stt_hinh": 1},
             {"hinh_anh": review_url, "ngay": "2026-08-02", "stt_hinh": 2},
-            {"hinh_anh": "https://example/auto.jpg", "ngay": "2026-08-03", "stt_hinh": 3},
+            {"hinh_anh": auto_url, "ngay": "2026-08-03", "stt_hinh": 3},
             {"hinh_anh": new_url, "ngay": "2026-08-04", "stt_hinh": 4},
         ]
 
@@ -207,13 +208,15 @@ class CloudScoringAutomationTests(unittest.TestCase):
         self.assertEqual(review_rows["Phân Loại AI"].tolist(), ["Bien_hieu", "Bien_hieu"])
         self.assertEqual(review_rows["image_sha256"].nunique(), 1)
         self.assertEqual(len(FakeService.seen_contents), 1)
-        self.assertEqual(stats["legacy_rescore_candidates_unique"], 1)
-        self.assertEqual(stats["legacy_auto_reused_unique"], 1)
+        self.assertEqual(stats["legacy_rescore_candidates_unique"], 2)
+        self.assertEqual(stats["legacy_auto_reused_unique"], 0)
         self.assertEqual(stats["production_batch_scored_images"], 2)
         self.assertEqual(stats["production_batch_scored_unique"], 1)
-        self.assertEqual(stats["production_pending_remaining_unique"], 1)
-        pending = frame.loc[frame["hinh_anh"].eq(new_url)].iloc[0]
-        self.assertEqual(pending["Trạng Thái Quyết Định"], "PENDING_SCORE")
+        self.assertEqual(stats["production_pending_remaining_unique"], 2)
+        auto_pending = frame.loc[frame["hinh_anh"].eq(auto_url)].iloc[0]
+        new_pending = frame.loc[frame["hinh_anh"].eq(new_url)].iloc[0]
+        self.assertEqual(auto_pending["Trạng Thái Quyết Định"], "PENDING_SCORE")
+        self.assertEqual(new_pending["Trạng Thái Quyết Định"], "PENDING_SCORE")
 
     def test_duplicate_group_tries_later_occurrence_when_first_path_is_missing(self):
         url = "https://example/duplicate.jpg"
