@@ -20,10 +20,10 @@ class ProductionQueueTests(unittest.TestCase):
 
         self.assertTrue(all(legacy_requires_rescore(row) for row in cases))
 
-    def test_legacy_auto_final_labels_can_be_reused_during_migration(self):
+    def test_legacy_auto_final_labels_are_rescored_under_precision_policy(self):
         for label in ("Bien_hieu", "Trung_bay", "Khong_dat"):
             with self.subTest(label=label):
-                self.assertFalse(
+                self.assertTrue(
                     legacy_requires_rescore(
                         {
                             "Phân Loại AI": label,
