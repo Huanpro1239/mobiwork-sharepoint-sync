@@ -1,7 +1,7 @@
 """Version the complete scoring runtime, not only the trained classifier bundle.
 
 The classifier bundle signature intentionally describes trained weights/reference data.
-Production decisions also depend on detector/OCR/quality/evidence code.  If that code
+Production decisions also depend on detector/OCR/quality/evidence code. If that code
 changes while the bundle stays constant, old SHA-based scores must not be reused.
 """
 from __future__ import annotations
@@ -12,8 +12,7 @@ from pathlib import Path
 
 SCORING_RUNTIME_VERSION = "2.4.0-precision-first"
 _RUNTIME_FILES = (
-    "config.py",
-    "decision_policy.py",
+    "evidence_policy.py",
     "image_scoring.py",
     "yolo_verifier.py",
     "ocr_engine.py",
