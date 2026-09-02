@@ -1,8 +1,9 @@
-"""Image-scoring configuration.
+"""Image-scoring V2.3 configuration.
 
-The trained V2.3 bundle remains compatible, while production evidence policy is
-versioned separately by :mod:`scoring.runtime_signature` so detector/OCR changes
-invalidate cached decisions without forcing a model retrain.
+The thresholds are intentionally versioned and conservative. Runtime paths are
+centralized in :mod:`project_paths`; model assets are never committed to Git.
+This module intentionally avoids importing heavy CV runtimes so policy/model
+unit tests stay lightweight.
 """
 from __future__ import annotations
 
@@ -25,8 +26,6 @@ CLIP_MODEL_REVISION = "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
 CACHE_SCHEMA_VERSION = 4
 CLIP_INFERENCE_BATCH_SIZE = 16
 
-# Trained-model decision thresholds. Keep these stable until the reference bundle
-# is deliberately rebuilt and OOF-validated.
 AUTO_PASS_MIN = 0.88
 AUTO_FAIL_MAX = 0.05
 FRAUD_AUTO_FAIL_MIN = 0.975
@@ -39,18 +38,6 @@ QUALITY_GATE_MIN_PRECISION = 0.99
 QUALITY_GATE_MIN_AUTO_PASS_COVERAGE = 0.20
 QUALITY_GATE_MIN_GROUPS_PER_SUBCATEGORY = 3
 QUALITY_GATE_MIN_AUTO_FAIL_SAMPLES = 10
-
-# Production precision guardrails. These are intentionally stricter than the
-# trained-model candidate thresholds: an automatic pass needs both model
-# confidence and scene-specific business evidence. Otherwise it becomes review.
-SIGN_AUTO_PASS_MIN = 0.92
-SIGN_REFERENCE_SIMILARITY_MIN = 0.78
-DISPLAY_AUTO_PASS_MIN = 0.95
-DISPLAY_REFERENCE_SIMILARITY_MIN = 0.82
-QUALITY_MIN_DIMENSION = 180
-QUALITY_DARK_MEAN_MAX = 22.0
-QUALITY_BRIGHT_MEAN_MIN = 245.0
-QUALITY_BLUR_LAPLACIAN_MIN = 18.0
 
 REFERENCE_CATEGORIES = {
     "Dat/Bien hieu": "Bien_hieu",
@@ -71,20 +58,9 @@ YOLO_CLASSES = [
 ]
 YOLO_CONFIDENCE = 0.25
 FACE_CONFIDENCE = 0.5
-
-# Only these words are brand evidence. Store-type text is useful for resolving a
-# signboard scene but must never be treated as Vikoda/Đảnh Thạnh brand evidence.
-BRAND_OCR_KEYWORDS = [
-    "vikoda",
-    "đảnh thạnh",
-    "danh thanh",
-    "đảnh thạnh vikoda",
-]
-STORE_OCR_KEYWORDS = [
-    "khánh hòa", "khanh hoa",
+OCR_KEYWORDS = [
+    "vikoda", "đảnh thạnh", "danh thanh", "khánh hòa", "khanh hoa",
     "tạp hóa", "tap hoa", "cửa hàng", "cua hang", "siêu thị", "sieu thi",
     "đại lý", "dai ly", "nhà hàng", "nha hang", "quán", "quan",
     "store", "mart", "market", "bách hóa", "bach hoa",
 ]
-# Backward-compatible union for callers that only need general OCR vocabulary.
-OCR_KEYWORDS = [*BRAND_OCR_KEYWORDS, *STORE_OCR_KEYWORDS]
