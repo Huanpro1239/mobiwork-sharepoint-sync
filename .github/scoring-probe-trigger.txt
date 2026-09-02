@@ -1,0 +1,3 @@
+Scoring V2.4 real-image validation trigger.
+Purpose: execute the trusted main-context bounded SharePoint sample after PR #52.
+Date: 2026-09-02
