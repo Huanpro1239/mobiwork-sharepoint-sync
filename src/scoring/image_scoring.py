@@ -1,8 +1,7 @@
-"""Shared inference path with explicit image color and evidence contracts."""
-
+"""Shared inference path driven by model scores and human-reference evidence."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping, Sequence
 
 import cv2
@@ -13,6 +12,16 @@ from scoring.decision_policy import (
     ScoringDecision,
     apply_detector_evidence,
 )
+from scoring.evidence_policy import (
+    QUALITY_BLUR_LAPLACIAN_MIN,
+    QUALITY_BRIGHT_MEAN_MIN,
+    QUALITY_DARK_MEAN_MAX,
+    QUALITY_MIN_DIMENSION,
+)
+from scoring.reference_decision_policy import (
+    decide_reference_tiered_scores,
+    neighbor_scene_consensus,
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +31,7 @@ class ImageScore:
     ocr_text: str
     evidence: DetectorEvidence
     decision: ScoringDecision
+    store_keyword: bool = False
     audit_warnings: tuple[str, ...] = ()
 
 
@@ -36,6 +46,99 @@ def _validate_image_bgr(image_bgr) -> None:
         raise ValueError("image_bgr must be a non-empty HxWx3 array")
 
 
+def _quality_issue(image_bgr) -> str | None:
+    """Return only severe quality problems that make automatic grading unsafe."""
+
+    height, width = image_bgr.shape[:2]
+    if min(height, width) < QUALITY_MIN_DIMENSION:
+        return f"Ảnh quá nhỏ ({width}x{height})"
+
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    mean_luma = float(np.mean(gray))
+    if mean_luma <= QUALITY_DARK_MEAN_MAX:
+        return f"Ảnh quá tối (brightness={mean_luma:.1f})"
+    if mean_luma >= QUALITY_BRIGHT_MEAN_MIN:
+        return f"Ảnh quá sáng (brightness={mean_luma:.1f})"
+
+    laplacian_variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    if laplacian_variance < QUALITY_BLUR_LAPLACIAN_MIN:
+        return f"Ảnh quá mờ (sharpness={laplacian_variance:.1f})"
+    return None
+
+
+def _apply_image_quality_guardrail(
+    decision: ScoringDecision,
+    quality_issue: str | None,
+) -> ScoringDecision:
+    """Review unusable images unless Tier-0 fraud evidence is already decisive.
+
+    The local human-reference project orders hard fraud rejection before all other
+    uncertainty handling.  Severe blur/darkness may block an ordinary pass/fail,
+    but it must not rescue a decision already supported by the fraud head and/or a
+    close ``doi pho`` human reference.  The quality problem remains in audit output.
+    """
+
+    if not quality_issue or decision.label == "Can_duyet":
+        return decision
+    if decision.status == "TIER0_AUTO_FAIL_FRAUD":
+        return decision
+    return replace(
+        decision,
+        label="Can_duyet",
+        status="REVIEW_IMAGE_QUALITY",
+        score=0.0,
+        reasons=decision.reasons + (quality_issue,),
+    )
+
+
+def _ocr_flags(ocr, text: str) -> tuple[bool, bool]:
+    has_brand_keyword = False
+    has_store_keyword = False
+    if hasattr(ocr, "has_brand_keyword"):
+        has_brand_keyword = bool(ocr.has_brand_keyword(text))
+    if hasattr(ocr, "has_store_keyword"):
+        has_store_keyword = bool(ocr.has_store_keyword(text))
+    elif hasattr(ocr, "has_brand_or_store_keyword"):
+        # Old local adapters expose one broad helper.  Treat it as scene/store
+        # evidence rather than claiming it is necessarily a Vikoda brand hit.
+        has_store_keyword = bool(ocr.has_brand_or_store_keyword(text))
+    return has_brand_keyword, has_store_keyword
+
+
+def _resolve_ambiguous_scene(
+    classification,
+    classifier,
+    evidence: DetectorEvidence,
+    store_keyword: bool,
+):
+    """Resolve only scene ambiguity using physical or human-reference consensus."""
+
+    if classification.decision.status != "REVIEW_SCENE" or classifier is None:
+        return classification
+    if not hasattr(classifier, "resolve_scene"):
+        return classification
+
+    sign_evidence = bool(
+        evidence.has_signboard or evidence.has_brand_keyword or store_keyword
+    )
+    display_evidence = bool(evidence.has_bottle_or_pack and not sign_evidence)
+    reference_hint = neighbor_scene_consensus(getattr(classification, "neighbors", ()))
+
+    if sign_evidence:
+        scene = "Bien_hieu"
+        reason = "Scene mơ hồ được xác nhận bởi biển/tên cửa hàng"
+    elif display_evidence:
+        scene = "Trung_bay"
+        reason = "Scene mơ hồ được xác nhận bởi cảnh có sản phẩm"
+    elif reference_hint:
+        scene = reference_hint
+        reason = "Scene mơ hồ được xác nhận bởi hai mẫu người chấm gần nhất"
+    else:
+        return classification
+
+    return classifier.resolve_scene(classification, scene, reason)
+
+
 def score_decoded_image_with_classification(
     image_bgr,
     classification,
@@ -45,9 +148,10 @@ def score_decoded_image_with_classification(
     image_rgb=None,
     classifier=None,
 ) -> ImageScore:
-    """Apply detector/OCR/face evidence to an already computed CLIP classification."""
+    """Combine frozen model output with detector/OCR and human-reference neighbours."""
 
     _validate_image_bgr(image_bgr)
+    quality_issue = _quality_issue(image_bgr)
     if image_rgb is None:
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
@@ -55,24 +159,27 @@ def score_decoded_image_with_classification(
     required_detection_keys = {"bottles", "packs", "signboards"}
     missing = required_detection_keys - set(detections)
     if missing:
-        raise ValueError(f"YOLO result is missing keys: {', '.join(sorted(missing))}")
+        raise ValueError("YOLO result is missing keys: " + ", ".join(sorted(missing)))
 
     audit_warnings: list[str] = []
     text = ""
     has_brand_keyword = False
+    has_store_keyword = False
     if (
         classification.decision.scene == "Bien_hieu"
         or classification.decision.status == "REVIEW_SCENE"
     ):
         try:
             text = ocr.extract_text(image_bgr, detections["signboards"])
-            has_brand_keyword = ocr.has_brand_or_store_keyword(text)
+            has_brand_keyword, has_store_keyword = _ocr_flags(ocr, text)
         except Exception as error:
             audit_warnings.append(_audit_warning("OCR", error))
 
     try:
         has_face = face.has_face(image_rgb)
     except Exception as error:
+        # Face remains audit-only.  A face is common in valid field photos and
+        # cannot by itself prove either validity or fraud.
         has_face = False
         audit_warnings.append(_audit_warning("FACE", error))
 
@@ -83,34 +190,46 @@ def score_decoded_image_with_classification(
         has_face=has_face,
     )
 
-    resolved_classification = classification
-    if classification.decision.status == "REVIEW_SCENE":
-        sign_strong = evidence.has_signboard and evidence.has_brand_keyword
-        display_strong = (
-            evidence.has_bottle_or_pack
-            and not evidence.has_signboard
-            and not evidence.has_brand_keyword
+    resolved_classification = _resolve_ambiguous_scene(
+        classification,
+        classifier,
+        evidence,
+        has_store_keyword,
+    )
+    scores = getattr(resolved_classification, "scores", None)
+    if scores is not None:
+        pass_gate_passed = bool(
+            getattr(resolved_classification, "quality_gate_passed", False)
         )
-        if sign_strong and classifier is not None:
-            resolved_classification = classifier.resolve_scene(
-                classification,
-                "Bien_hieu",
-                "Scene mơ hồ được xác nhận bởi signboard + OCR keyword",
-            )
-        elif display_strong and classifier is not None:
-            resolved_classification = classifier.resolve_scene(
-                classification,
-                "Trung_bay",
-                "Scene mơ hồ được xác nhận bởi bottle/pack và không có bằng chứng biển hiệu",
-            )
+        auto_fail_gate_passed = bool(
+            getattr(classifier, "auto_fail_gate_passed", pass_gate_passed)
+        )
+        decision = decide_reference_tiered_scores(
+            scores,
+            evidence,
+            getattr(resolved_classification, "neighbors", ()),
+            store_keyword=has_store_keyword,
+            pass_gate_passed=pass_gate_passed,
+            auto_fail_gate_passed=auto_fail_gate_passed,
+            scene_override=resolved_classification.decision.scene,
+            scene_ambiguous=(resolved_classification.decision.status == "REVIEW_SCENE"),
+        )
+    else:
+        # Compatibility path for old lightweight adapters that do not expose the
+        # learned score vector/reference neighbours.
+        decision = apply_detector_evidence(resolved_classification.decision, evidence)
 
-    decision = apply_detector_evidence(resolved_classification.decision, evidence)
+    decision = _apply_image_quality_guardrail(decision, quality_issue)
+    if quality_issue:
+        audit_warnings.append(f"IMAGE_QUALITY {quality_issue}")
+
     return ImageScore(
         classification=resolved_classification,
         detections=detections,
         ocr_text=text,
         evidence=evidence,
         decision=decision,
+        store_keyword=has_store_keyword,
         audit_warnings=tuple(audit_warnings),
     )
 
@@ -122,7 +241,7 @@ def score_decoded_images(
     ocr,
     face,
 ) -> list[ImageScore | Exception]:
-    """Score a batch with batched CLIP and per-image evidence isolation."""
+    """Score a batch with batched CLIP and isolated detector/OCR failures."""
 
     if not images_bgr:
         return []

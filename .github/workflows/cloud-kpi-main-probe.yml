@@ -1,5 +1,5 @@
 name: Cloud KPI Main-Context Sample Run
-# strict-v23-real-image-verified: run 33369085050
+# trusted real-image smoke must execute the triggering main commit
 
 on:
   push:
@@ -44,10 +44,8 @@ jobs:
       TOKENIZERS_PARALLELISM: 'false'
 
     steps:
-      - name: Checkout feature implementation
+      - name: Checkout triggering main commit
         uses: actions/checkout@v7
-        with:
-          ref: feature/image-scoring-kpi-v24
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -129,12 +127,16 @@ jobs:
               raise SystemExit('KPI manifest missing')
           manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
           if str(manifest.get('scoring_pipeline_version')) != '2.3.0':
-              raise SystemExit(f"Unexpected scoring pipeline: {manifest.get('scoring_pipeline_version')!r}")
+              raise SystemExit(f"Unexpected trained scoring pipeline: {manifest.get('scoring_pipeline_version')!r}")
+          signature = str(manifest.get('pipeline_signature') or '')
+          if len(signature) != 64:
+              raise SystemExit(f'Unexpected scoring runtime signature: {signature!r}')
           scoring = manifest.get('scoring') or {}
           stored = int(scoring.get('stored_images_loaded') or 0)
           new_scores = int(scoring.get('new_unique_scores') or 0)
           attempted = int(scoring.get('sample_scored_pending_images') or 0)
           failed = int(scoring.get('missing_or_failed_images') or 0)
+          print(f'pipeline_signature={signature}')
           print(f'sample_pending_selection={scoring.get("sample_pending_selection")}')
           print(f'stored_images_loaded={stored}')
           print(f'new_unique_scores={new_scores}')
@@ -147,6 +149,13 @@ jobs:
           if attempted > 0 and failed >= attempted:
               raise SystemExit('Strict E2E failed: all sampled pending images failed')
           PY
+
+      - name: Export scored sample images for visual audit
+        run: |
+          python src/export_sample_images.py \
+            --period 2026-08 \
+            --detail runtime/output/Ket_qua_Chi_tiet_Anh.csv \
+            --output runtime/output/sample_images
 
       - name: Publish validated SAMPLE files to MobiWorkDMS
         run: |
@@ -195,7 +204,7 @@ jobs:
           manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
           manifest['sample_publish'] = True
           manifest['sample_run_id'] = sample_id
-          manifest['model_bundle_note'] = 'strict V2.3 versioned bundle reference_bundle_v23_33357852900.pkl'
+          manifest['model_bundle_note'] = 'validated V2.3 model bundle + current production evidence runtime'
           manifest['sample_pending_limit'] = int(os.environ.get('AI_SAMPLE_MAX_PENDING_IMAGES', '0'))
           manifest_remote = f'{folder}/run_manifest_SAMPLE_{sample_id}.json'
           client.upload_json(drive_id, manifest_remote, manifest)

@@ -1,0 +1,4 @@
+Scoring V2.5 fraud-first visual-audit validation trigger.
+Purpose: rerun the same bounded SharePoint sample and include the exact scored images in the private GitHub artifact for human visual review.
+Verified previous fraud-first result: 12 pass, 11 fail, 1 review.
+Date: 2026-09-02

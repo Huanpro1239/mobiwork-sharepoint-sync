@@ -52,6 +52,12 @@ jobs:
           from pathlib import Path
 
           now = datetime.now(timezone.utc)
+          # GitHub scheduled workflows are best-effort and can start materially
+          # later than their cron slot. The report sync is hourly, so allow up to
+          # four hours (several delayed/missed slots) before declaring an outage.
+          # A fresh queued/in-progress run also suppresses a stale-success alert.
+          SYNC_STALE_MINUTES = 240
+          ACTIVE_RUN_GRACE_MINUTES = 90
 
           def parse_time(value):
               if not value:
@@ -69,6 +75,19 @@ jobs:
                       continue
                   ages.append((now - finished).total_seconds() / 60.0)
               return sorted(ages)
+
+          def latest_active_age(path):
+              payload = json.loads(Path(path).read_text(encoding="utf-8"))
+              active_statuses = {"queued", "in_progress", "pending", "waiting", "requested"}
+              ages = []
+              for run in payload.get("workflow_runs", []):
+                  if str(run.get("status") or "").casefold() not in active_statuses:
+                      continue
+                  started = parse_time(run.get("created_at") or run.get("updated_at"))
+                  if started is None:
+                      continue
+                  ages.append((now - started).total_seconds() / 60.0)
+              return min(ages) if ages else None
 
           def latest_completed(path):
               payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -97,16 +116,23 @@ jobs:
               return (now - created).total_seconds() / 60.0
 
           sync_ages = successful_ages("sync-runs.json")
+          sync_active_age = latest_active_age("sync-runs.json")
           image_ages = successful_ages("image-runs.json")
           smoke_run = latest_completed("smoke-runs.json")
           definition_age = smoke_definition_age_minutes()
           reasons = []
 
+          has_fresh_active_sync = (
+              sync_active_age is not None
+              and sync_active_age <= ACTIVE_RUN_GRACE_MINUTES
+          )
           if not sync_ages:
-              reasons.append("No successful MobiWork DMS Sync run was found in recent history.")
-          elif sync_ages[0] > 150:
+              if not has_fresh_active_sync:
+                  reasons.append("No successful MobiWork DMS Sync run was found in recent history.")
+          elif sync_ages[0] > SYNC_STALE_MINUTES and not has_fresh_active_sync:
               reasons.append(
-                  f"Latest successful MobiWork DMS Sync is {sync_ages[0]:.0f} minutes old (>150)."
+                  "Latest successful MobiWork DMS Sync is "
+                  f"{sync_ages[0]:.0f} minutes old (>{SYNC_STALE_MINUTES})."
               )
 
           if not image_ages:
@@ -146,6 +172,9 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
               handle.write(f"state={state}\n")
               handle.write(f"sync_age_minutes={(sync_ages[0] if sync_ages else -1):.1f}\n")
+              handle.write(
+                  f"sync_active_age_minutes={(sync_active_age if sync_active_age is not None else -1):.1f}\n"
+              )
               handle.write(f"image_age_minutes={(image_ages[0] if image_ages else -1):.1f}\n")
               handle.write(f"smoke_age_minutes={smoke_age:.1f}\n")
               handle.write(f"smoke_conclusion={smoke_conclusion}\n")
@@ -154,6 +183,12 @@ jobs:
               )
 
           print(f"health={state}")
+          print(
+              "sync="
+              f"last_success_age={(sync_ages[0] if sync_ages else -1):.1f}m "
+              f"active_age={(sync_active_age if sync_active_age is not None else -1):.1f}m "
+              f"stale_limit={SYNC_STALE_MINUTES}m"
+          )
           for reason in reasons:
               print(f"- {reason}")
           raise SystemExit(0 if healthy else 1)
@@ -231,6 +266,7 @@ jobs:
         env:
           STATE: ${{ steps.evaluate.outputs.state }}
           SYNC_AGE: ${{ steps.evaluate.outputs.sync_age_minutes }}
+          SYNC_ACTIVE_AGE: ${{ steps.evaluate.outputs.sync_active_age_minutes }}
           IMAGE_AGE: ${{ steps.evaluate.outputs.image_age_minutes }}
           SMOKE_AGE: ${{ steps.evaluate.outputs.smoke_age_minutes }}
           SMOKE_CONCLUSION: ${{ steps.evaluate.outputs.smoke_conclusion }}
@@ -242,6 +278,7 @@ jobs:
             echo
             echo "- State: **${STATE:-unknown}**"
             echo "- Latest successful report sync age: **${SYNC_AGE:-unknown} min**"
+            echo "- Active report sync age: **${SYNC_ACTIVE_AGE:-unknown} min**"
             echo "- Latest successful image sync age: **${IMAGE_AGE:-unknown} min**"
             echo "- Latest production smoke: **${SMOKE_CONCLUSION:-unknown}**, age **${SMOKE_AGE:-unknown} min**"
             echo "- Smoke workflow definition age: **${SMOKE_DEFINITION_AGE:-unknown} min**"

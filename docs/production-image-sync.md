@@ -19,7 +19,7 @@ The persisted SharePoint monthly workbook is the metadata source of truth. The i
 
 - Idempotent deterministic destination paths; an existing non-empty image is skipped.
 - Only current and previous calendar month folders are retained.
-- Image URLs are accepted only from `IMAGE_ALLOWED_HOSTS` (default `dmsimages.mobiwork.vn`).
+- Image URLs are accepted only from `IMAGE_ALLOWED_HOSTS` (default `dmsimages.mobiwork.vn`). The production workflow also allows the trusted redirect host `image2.mobiwork.vn`.
 - Redirect targets are validated against the same allow-list.
 - Images are downloaded as streams and rejected when they exceed `IMAGE_MAX_BYTES` (default 20 MB).
 - Empty or non-image payloads are rejected.

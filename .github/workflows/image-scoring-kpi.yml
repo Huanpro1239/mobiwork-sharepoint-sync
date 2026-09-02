@@ -23,15 +23,16 @@ permissions:
   id-token: write
   actions: write
 
+# Catch-up is checkpointed between bounded batches. Prefer the newest runtime over
+# a stale queued/running batch so old scoring code cannot publish after main moves.
 concurrency:
   group: mobiwork-kpi-production
-  cancel-in-progress: false
-  queue: max
+  cancel-in-progress: true
 
 jobs:
   score-kpi:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
     env:
       PYTHONPATH: src
       HF_HUB_DISABLE_TELEMETRY: "1"
@@ -81,8 +82,10 @@ jobs:
       - name: Compile AI/KPI sources
         run: python -m compileall -q src/scoring src/kpi src/score_kpi_pipeline.py src/run_score_kpi_cloud.py tests_ai
 
-      - name: Run V2.3 policy/model tests
-        run: python -m unittest discover -s tests_ai -v
+      - name: Run unit and V2.3 policy/model tests
+        run: |
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests_ai -v
 
       - name: Azure login with GitHub OIDC
         uses: azure/login@v3
@@ -117,12 +120,10 @@ jobs:
           AI_LEGACY_SCORE_REMOTE: Chạy chương trình/KPI Assets/legacy_scores_through_2026-08-28.csv
           AI_SYNC_ASSETS: "false"
           AI_DEVICE: cpu
-          # Keep production work bounded. The scoring layer checkpoints the result
-          # and dispatches another batch instead of risking a multi-hour hard kill.
+          # 4,000 CPU images can exceed the workflow window. Checkpoint smaller
+          # batches and self-dispatch the next batch instead of monopolizing a runner.
           AI_PRODUCTION_MAX_PENDING_IMAGES: "500"
-          AI_PRODUCTION_MAX_RUNTIME_SECONDS: "5400"
-          AI_SCORE_CHUNK_SIZE: "25"
-          AI_DOWNLOAD_WORKERS: "6"
+          AI_PRODUCTION_MAX_TECHNICAL_RETRIES: "3"
           KPI_SHAREPOINT_ROOT: KPI
           KPI_PERIOD: ${{ github.event_name == 'workflow_dispatch' && inputs.period || '' }}
           KPI_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
@@ -152,16 +153,18 @@ jobs:
               f"- Status: **{data.get('status')}**",
               f"- Dry run: **{data.get('dry_run')}**",
               f"- KPI period: **{data.get('period')}**",
-              f"- Image rows: **{scoring.get('images')}**",
-              f"- Legacy URL hits: **{scoring.get('legacy_url_hits', 0)}**",
-              f"- V2.3 checkpoint hits: **{scoring.get('remote_url_hits', 0)}**",
-              f"- Batch selected: **{scoring.get('production_selected_images', 0)}**",
-              f"- Batch scored: **{scoring.get('production_batch_scored_images', 0)}**",
-              f"- Backlog remaining: **{scoring.get('production_pending_remaining', 0)}**",
-              f"- Runtime budget exhausted: **{scoring.get('runtime_budget_exhausted', False)}**",
-              f"- Stored images loaded: **{scoring.get('stored_images_loaded')}**",
+              f"- Image rows / unique URLs: **{scoring.get('images')} / {scoring.get('unique_images', 0)}**",
+              f"- Legacy auto reused (unique): **{scoring.get('legacy_auto_reused_unique', 0)}**",
+              f"- Legacy queued for V2.3 rescore (unique): **{scoring.get('legacy_rescore_candidates_unique', 0)}**",
+              f"- V2.3 checkpoint hits (unique): **{scoring.get('current_model_reused_unique', 0)}**",
+              f"- Batch attempted (unique): **{scoring.get('production_batch_scored_unique', 0)}**",
+              f"- Backlog remaining (unique): **{scoring.get('production_pending_remaining_unique', 0)}**",
+              f"- Stored image rows / unique URLs loaded: **{scoring.get('stored_images_loaded')} / {scoring.get('stored_images_loaded_unique', 0)}**",
               f"- Cache hits: **{scoring.get('cache_hits')}**",
               f"- New unique scores: **{scoring.get('new_unique_scores')}**",
+              f"- Manual review required / resolved: **{scoring.get('manual_review_required_count', 0)} / {scoring.get('manual_review_resolved_count', 0)}**",
+              f"- Pending AI / technical failures: **{scoring.get('pending_score_count', 0)} / {scoring.get('technical_failure_count', 0)}**",
+              f"- Current-model auto-pass rate: **{scoring.get('current_model_auto_pass_rate', 0):.2%}**",
               f"- KPI customers: **{data.get('customers_in_kpi')}**",
               f"- KPI employees: **{data.get('employees_in_kpi')}**",
               f"- Pipeline signature: `{data.get('pipeline_signature')}`",
@@ -178,10 +181,11 @@ jobs:
           path="runtime/output/run_manifest.json"
           [ -f "$path" ] || exit 0
           status=$(jq -r '.status // ""' "$path")
-          dry_run=$(jq -r '.dry_run // true' "$path")
-          loaded=$(jq -r '.scoring.stored_images_loaded // 0' "$path")
+          # jq's // treats boolean false as absent; preserve an explicit false.
+          dry_run=$(jq -r 'if has("dry_run") then (.dry_run | tostring) else "true" end' "$path")
+          pending=$(jq -r '.scoring.production_pending_remaining_unique // .scoring.production_pending_remaining // 0' "$path")
           period=$(jq -r '.period // ""' "$path")
-          if [ "$status" = "warming_up" ] && [ "$dry_run" = "false" ] && [ "$loaded" -gt 0 ]; then
+          if [ "$status" = "warming_up" ] && [ "$dry_run" = "false" ] && [ "$pending" -gt 0 ]; then
             echo "Queueing next production scoring batch for $period"
             jq -n --arg period "$period" '{ref:"main",inputs:{period:$period,dry_run:"false"}}' \
               | gh api --method POST \

@@ -189,7 +189,8 @@ jobs:
           IMAGE_REQUEST_TIMEOUT_SECONDS: "30"
           IMAGE_MAX_DOWNLOAD_RETRIES: "4"
           IMAGE_MAX_BYTES: "20971520"
-          IMAGE_ALLOWED_HOSTS: "dmsimages.mobiwork.vn"
+          # MobiWork may redirect legacy image links to this CDN host.
+          IMAGE_ALLOWED_HOSTS: "dmsimages.mobiwork.vn,image2.mobiwork.vn"
           IMAGE_FORCE_FROM_DATE: ${{ env.IMAGE_FORCE_FROM_DATE }}
           IMAGE_SYNC_MAX_UPLOADS_PER_RUN: "1500"
           # A small number of bad source-image URLs must not make the whole workflow
@@ -317,7 +318,8 @@ jobs:
           fi
 
           status=$(jq -r '.status // "unknown"' "$path")
-          dry_run=$(jq -r '.dry_run // true' "$path")
+          # jq's // operator treats boolean false as absent; preserve explicit false.
+          dry_run=$(jq -r 'if has("dry_run") then (.dry_run | tostring) else "true" end' "$path")
           pending=$(jq -r '.image_sync.pending_remaining // 0' "$path")
           failed=$(jq -r '.image_sync.failed_count // 0' "$path")
           deferred=$(jq -r '.image_sync.deferred_count // 0' "$path")
