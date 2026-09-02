@@ -1,4 +1,4 @@
-Scoring V2.5 human-reference real-image validation trigger.
-Purpose: compare the local-human-reference tiered policy against the same bounded SharePoint sample used by V2.4.
-Baseline V2.4: 24 scored, 0 auto-pass, 0 auto-fail, 24 review.
+Scoring V2.5 fraud-first human-reference real-image validation trigger.
+Purpose: verify Tier0 fraud remains final even when a suspicious image is dark/blurry, using the same bounded SharePoint sample.
+Baseline human-reference V2.5 before fraud-first fix: 12 pass, 5 fail, 7 review.
 Date: 2026-09-02
