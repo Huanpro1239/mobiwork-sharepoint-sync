@@ -150,6 +150,13 @@ jobs:
               raise SystemExit('Strict E2E failed: all sampled pending images failed')
           PY
 
+      - name: Export scored sample images for visual audit
+        run: |
+          python src/export_sample_images.py \
+            --period 2026-08 \
+            --detail runtime/output/Ket_qua_Chi_tiet_Anh.csv \
+            --output runtime/output/sample_images
+
       - name: Publish validated SAMPLE files to MobiWorkDMS
         run: |
           python - <<'PY'
