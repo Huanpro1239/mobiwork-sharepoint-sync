@@ -1,8 +1,8 @@
 # Online Tiered Image Scoring Design
 
-**Date:** 2026-09-02  
-**Status:** Draft for review  
-**Target:** `mobiwork-sharepoint-sync`  
+**Date:** 2026-09-02
+**Status:** Draft for review
+**Target:** `mobiwork-sharepoint-sync`
 **Reference behavior:** `D:\DMS cham anh`
 
 ## 1. Objective
