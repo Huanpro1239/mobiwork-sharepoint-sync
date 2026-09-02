@@ -43,7 +43,21 @@ class _Face:
         return False
 
 
-def _classification(scene: str, *, pass_probability: float, similarity: float):
+def _neighbor(subcategory: str, similarity: float):
+    return SimpleNamespace(
+        effective_subcategory=subcategory,
+        similarity=similarity,
+    )
+
+
+def _classification(
+    scene: str,
+    *,
+    pass_probability: float,
+    similarity: float,
+    fraud_probability: float = 0.01,
+    neighbors=(),
+):
     sign_probability = 0.95 if scene == "Bien_hieu" else 0.05
     decision = ScoringDecision(
         label=scene,
@@ -55,12 +69,13 @@ def _classification(scene: str, *, pass_probability: float, similarity: float):
     scores = ScoreVector(
         sign_probability=sign_probability,
         pass_probability=pass_probability,
-        fraud_probability=0.01,
+        fraud_probability=fraud_probability,
         reference_similarity=similarity,
     )
     return SimpleNamespace(
         decision=decision,
         scores=scores,
+        neighbors=tuple(neighbors),
         quality_gate_passed=True,
         sign_pass_probability=pass_probability,
         display_pass_probability=pass_probability,
@@ -73,48 +88,91 @@ def _normal_image():
 
 
 class PrecisionGuardrailTests(unittest.TestCase):
-    def test_generic_store_sign_is_not_brand_auto_pass(self):
+    def test_generic_store_sign_can_pass_when_human_model_support_is_strong(self):
+        """Ground truth contains valid generic store signs without Vikoda brand text."""
+
         score = score_decoded_image_with_classification(
             _normal_image(),
-            _classification("Bien_hieu", pass_probability=0.97, similarity=0.90),
+            _classification("Bien_hieu", pass_probability=0.85, similarity=0.88),
             _YOLO(signboard=True),
-            _OCR(store=True, text="Tạp hóa Minh"),
+            _OCR(store=True, text="Bách hóa tổng hợp Cô Bảy"),
             _Face(),
         )
-        self.assertEqual(score.decision.label, "Can_duyet")
-        self.assertEqual(score.decision.status, "REVIEW_MISSING_BRAND_EVIDENCE")
+        self.assertEqual(score.decision.label, "Bien_hieu")
+        self.assertEqual(score.decision.status, "TIER1_HIGH_PASS")
         self.assertTrue(score.store_keyword)
         self.assertFalse(score.evidence.has_brand_keyword)
 
-    def test_branded_sign_can_auto_pass_when_model_support_is_strong(self):
+    def test_branded_sign_remains_valid_support_but_is_not_required(self):
         score = score_decoded_image_with_classification(
             _normal_image(),
-            _classification("Bien_hieu", pass_probability=0.97, similarity=0.90),
+            _classification("Bien_hieu", pass_probability=0.85, similarity=0.88),
             _YOLO(signboard=True),
             _OCR(brand=True, text="Vikoda Đảnh Thạnh"),
             _Face(),
         )
         self.assertEqual(score.decision.label, "Bien_hieu")
-        self.assertEqual(score.decision.status, "AUTO_PASS")
+        self.assertEqual(score.decision.status, "TIER1_HIGH_PASS")
 
-    def test_display_object_detection_alone_is_not_enough(self):
+    def test_product_detection_cannot_rescue_a_weak_display_model_score(self):
+        """A close-up Vikoda carton is human-labelled invalid display evidence."""
+
         score = score_decoded_image_with_classification(
             _normal_image(),
-            _classification("Trung_bay", pass_probability=0.93, similarity=0.90),
+            _classification("Trung_bay", pass_probability=0.35, similarity=0.85),
             _YOLO(bottle=True),
             _OCR(),
             _Face(),
         )
         self.assertEqual(score.decision.label, "Can_duyet")
-        self.assertEqual(score.decision.status, "REVIEW_EVIDENCE_STRENGTH")
+        self.assertEqual(score.decision.status, "TIER4_WEIGHTED_REVIEW")
 
-    def test_severely_dark_image_cannot_auto_pass(self):
+    def test_two_close_human_display_references_can_confirm_moderate_score(self):
+        score = score_decoded_image_with_classification(
+            _normal_image(),
+            _classification(
+                "Trung_bay",
+                pass_probability=0.55,
+                similarity=0.86,
+                neighbors=(
+                    _neighbor("Dat/Trung bay", 0.88),
+                    _neighbor("Dat/Trung bay", 0.84),
+                ),
+            ),
+            _YOLO(),
+            _OCR(),
+            _Face(),
+        )
+        self.assertEqual(score.decision.label, "Trung_bay")
+        self.assertEqual(score.decision.status, "TIER2_CONSENSUS_PASS")
+
+    def test_doi_pho_neighbor_strengthens_fraud_rejection(self):
+        score = score_decoded_image_with_classification(
+            _normal_image(),
+            _classification(
+                "Trung_bay",
+                pass_probability=0.80,
+                similarity=0.86,
+                fraud_probability=0.72,
+                neighbors=(
+                    _neighbor("Khong Dat/doi pho", 0.91),
+                    _neighbor("Dat/Trung bay", 0.76),
+                ),
+            ),
+            _YOLO(bottle=True),
+            _OCR(),
+            _Face(),
+        )
+        self.assertEqual(score.decision.label, "Khong_dat")
+        self.assertEqual(score.decision.status, "TIER0_AUTO_FAIL_FRAUD")
+
+    def test_severely_dark_image_cannot_make_automatic_decision(self):
         dark = np.zeros((480, 640, 3), dtype=np.uint8)
         score = score_decoded_image_with_classification(
             dark,
-            _classification("Bien_hieu", pass_probability=0.99, similarity=0.95),
+            _classification("Bien_hieu", pass_probability=0.90, similarity=0.90),
             _YOLO(signboard=True),
-            _OCR(brand=True, text="Vikoda"),
+            _OCR(store=True, text="Tạp hóa Minh"),
             _Face(),
         )
         self.assertEqual(score.decision.label, "Can_duyet")

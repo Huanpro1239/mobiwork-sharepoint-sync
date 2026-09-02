@@ -1,8 +1,9 @@
 """Version the complete scoring runtime, not only the trained classifier bundle.
 
 The classifier bundle signature intentionally describes trained weights/reference data.
-Production decisions also depend on detector/OCR/quality/evidence code. If that code
-changes while the bundle stays constant, old SHA-based scores must not be reused.
+Production decisions also depend on the human-reference tiered policy, detector/OCR,
+quality rules and service code.  Any change to those files must invalidate old
+SHA-based scores so cloud runs never reuse decisions made by a stale policy.
 """
 from __future__ import annotations
 
@@ -10,9 +11,10 @@ import hashlib
 from pathlib import Path
 
 
-SCORING_RUNTIME_VERSION = "2.4.0-precision-first"
+SCORING_RUNTIME_VERSION = "2.5.0-human-reference-tiered"
 _RUNTIME_FILES = (
     "evidence_policy.py",
+    "reference_decision_policy.py",
     "image_scoring.py",
     "yolo_verifier.py",
     "ocr_engine.py",
