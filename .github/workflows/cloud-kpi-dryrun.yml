@@ -3,6 +3,12 @@ name: Cloud KPI Dry Run Probe
 on:
   pull_request:
     branches: [main]
+    paths:
+      - 'src/scoring/**'
+      - 'src/score_kpi_pipeline.py'
+      - 'src/run_score_kpi_cloud.py'
+      - 'requirements-ai.txt'
+      - '.github/workflows/cloud-kpi-dryrun.yml'
 
 permissions:
   contents: read
@@ -13,7 +19,6 @@ concurrency:
 
 jobs:
   dry-run:
-    if: ${{ github.event.pull_request.head.ref == 'feature/image-scoring-kpi-v24' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
