@@ -101,11 +101,62 @@ def _checkpoint_frame(
         return result_frame.copy()
     signature = result_frame.get("pipeline_signature", pd.Series(dtype=str)).astype(str)
     image_sha = result_frame.get("image_sha256", pd.Series(dtype=str)).astype(str)
-    mask = signature.eq(pipeline_signature) & image_sha.str.strip().ne("")
+    status = result_frame.get(
+        "Trạng Thái Quyết Định",
+        pd.Series("", index=result_frame.index, dtype=str),
+    ).astype(str).str.strip().str.upper()
+    retryable = status.isin(("PENDING_SCORE", "TECHNICAL_FAILURE"))
+    mask = (
+        signature.eq(pipeline_signature)
+        & image_sha.str.strip().ne("")
+        & ~retryable
+    )
     checkpoint = result_frame.loc[mask].copy()
     if "hinh_anh" in checkpoint.columns:
         checkpoint = checkpoint.drop_duplicates(subset=["hinh_anh"], keep="last")
     return checkpoint
+
+
+def _determine_run_status(
+    *,
+    dry_run: bool,
+    pending_remaining: int,
+    technical_failures: int,
+) -> str:
+    """Choose publish state without treating human review as a blocker."""
+
+    if dry_run:
+        return "success"
+    if pending_remaining > 0:
+        return "warming_up"
+    if technical_failures > 0:
+        return "success_with_errors"
+    return "success"
+
+
+def _cleanup_scoring_checkpoints(
+    client,
+    drive_id: str,
+    remote_paths: tuple[str, ...],
+) -> int:
+    """Remove transient checkpoints without invalidating a completed publish."""
+
+    removed = 0
+    for remote_path in remote_paths:
+        try:
+            deleted = client.delete_path(drive_id, remote_path)
+        except Exception as error:
+            LOG.warning(
+                "Canonical KPI is published but checkpoint cleanup failed for %s: %s: %s",
+                remote_path,
+                type(error).__name__,
+                error,
+            )
+            continue
+        if deleted:
+            removed += 1
+            LOG.info("Removed completed scoring checkpoint: %s", remote_path)
+    return removed
 
 
 def _download_previous_kpi(client, drive_id: str, remote_path: str) -> Path | None:
@@ -343,15 +394,30 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
         customer_frame=kpi_result.customers,
         period_start=kpi_result.period_start,
         kpi_warnings=all_warnings,
+        current_pipeline_signature=pipeline_signature,
     )
+    review_summary = dict(exporter.review_summary)
+    scoring_stats.update(review_summary)
+    review_warnings = review_summary.get("warnings", [])
+    if isinstance(review_warnings, list):
+        all_warnings = tuple(dict.fromkeys((*all_warnings, *review_warnings)))
 
     detail_csv = OUTPUT_DIR / "Ket_qua_Chi_tiet_Anh.csv"
     result_frame.to_csv(detail_csv, index=False, encoding="utf-8-sig")
 
-    pending_remaining = int(scoring_stats.get("production_pending_remaining") or 0)
-    run_status = "warming_up" if not dry_run and pending_remaining > 0 else "success"
+    pending_remaining = int(
+        scoring_stats.get("production_pending_remaining_unique")
+        or scoring_stats.get("production_pending_remaining")
+        or 0
+    )
+    technical_failures = int(scoring_stats.get("technical_failure_unique") or 0)
+    run_status = _determine_run_status(
+        dry_run=dry_run,
+        pending_remaining=pending_remaining,
+        technical_failures=technical_failures,
+    )
     manifest = {
-        "schema_version": 4,
+        "schema_version": 5,
         "status": run_status,
         "period": period_start.strftime("%Y-%m"),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -389,7 +455,13 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
     }
     if run_status == "warming_up":
         manifest["warnings"].append(
-            f"AI production catch-up còn {pending_remaining:,} ảnh; KPI chính chưa bị ghi đè."
+            f"AI production catch-up còn {pending_remaining:,} URL ảnh; "
+            "KPI chính chưa bị ghi đè."
+        )
+    elif run_status == "success_with_errors":
+        manifest["warnings"].append(
+            f"Đã xuất KPI với {technical_failures:,} URL lỗi kỹ thuật sau khi "
+            "dùng hết số lần thử; các lỗi này không được tính là duyệt tay."
         )
 
     manifest_path = OUTPUT_DIR / "run_manifest.json"
@@ -430,6 +502,11 @@ def run(period: str | None = None, dry_run: bool = False) -> PipelineRunResult:
                 "text/csv; charset=utf-8",
             )
             client.upload_json(drive_id, remote_manifest, manifest)
+            _cleanup_scoring_checkpoints(
+                client,
+                drive_id,
+                (remote_checkpoint, remote_checkpoint_manifest),
+            )
 
     return PipelineRunResult(
         manifest_path=manifest_path,

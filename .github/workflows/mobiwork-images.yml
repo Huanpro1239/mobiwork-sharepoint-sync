@@ -13,6 +13,9 @@ on:
         required: false
         type: string
         default: ""
+  schedule:
+    - cron: "0 9 * * *"
+      timezone: "Asia/Ho_Chi_Minh"
   push:
     branches:
       - main
@@ -25,12 +28,10 @@ permissions:
   actions: write
 
 # Image writes share the same production lock as the report pipeline so Data anh
-# is never modified concurrently with SharePoint monthly master updates. Queue all
-# pending production runs instead of allowing GitHub to replace an older pending run.
+# is never modified concurrently with SharePoint monthly master updates.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false
-  queue: max
 
 jobs:
   sync-images:
@@ -81,9 +82,8 @@ jobs:
             )
             mode="full-retained-reconcile"
           else
-            # Scheduled production is dispatched by mobiwork-sync.yml only after the
-            # finalized yesterday report refresh succeeds. Catch-up batches reuse
-            # Data anh/_state.json and honor retry_from_date.
+            # Scheduled production runs use Data anh/_state.json. The reconciler
+            # overlaps one day and honors retry_from_date after failures/deferred work.
             force_from_date=""
             mode="incremental-state"
           fi
@@ -189,13 +189,13 @@ jobs:
           IMAGE_REQUEST_TIMEOUT_SECONDS: "30"
           IMAGE_MAX_DOWNLOAD_RETRIES: "4"
           IMAGE_MAX_BYTES: "20971520"
-          IMAGE_ALLOWED_HOSTS: "dmsimages.mobiwork.vn"
+          # MobiWork may redirect legacy image links to this CDN host.
+          IMAGE_ALLOWED_HOSTS: "dmsimages.mobiwork.vn,image2.mobiwork.vn"
           IMAGE_FORCE_FROM_DATE: ${{ env.IMAGE_FORCE_FROM_DATE }}
           IMAGE_SYNC_MAX_UPLOADS_PER_RUN: "1500"
-          # A small number of bad source-image URLs must not make the whole workflow
-          # fail before the recovery/KPI gate can classify them. The manifest remains
-          # authoritative and still records every failed image plus retry_from_date.
-          IMAGE_FAIL_ON_PARTIAL: "false"
+          # Persistent source failures fail the run; bounded backlog is warming_up,
+          # checkpointed in Data anh/_state.json, and automatically continued.
+          IMAGE_FAIL_ON_PARTIAL: "true"
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_images.py
 
@@ -266,23 +266,12 @@ jobs:
           retry_from=$(jq -r '.image_sync.retry_from_date // ""' "$path")
 
           echo "Image catch-up: status=$status uploaded=$uploaded pending=$pending retry_from=$retry_from"
-          if [ "$status" != "warming_up" ] && [ "$status" != "partial_failure" ]; then
-            exit 0
-          fi
-          if [ "$pending" -le 0 ]; then
+          if { [ "$status" != "warming_up" ] && [ "$status" != "partial_failure" ]; } || [ "$pending" -le 0 ] || [ "$uploaded" -le 0 ]; then
             exit 0
           fi
           if [ -z "$retry_from" ] || [ "$retry_from" = "null" ]; then
-            echo "::error::$status manifest has pending work but no retry_from_date"
+            echo "::error::warming_up manifest has no retry_from_date"
             exit 1
-          fi
-
-          # Continue immediately only while the previous batch made forward progress.
-          # A persistent broken URL with zero uploads is left checkpointed for the next
-          # normal production pass instead of creating an infinite dispatch loop.
-          if [ "$uploaded" -le 0 ]; then
-            echo "No forward image progress in this batch; keeping retry cursor for the next production pass."
-            exit 0
           fi
 
           python - "$retry_from" > /tmp/image-dispatch.json <<'PY'
@@ -303,72 +292,27 @@ jobs:
           echo "Requested next image catch-up batch from $retry_from"
 
       - name: Trigger KPI after complete image sync
-        if: ${{ always() && !cancelled() }}
+        if: ${{ success() }}
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_KPI_MIN_COMPLETENESS_PCT: "99.0"
-          IMAGE_KPI_MAX_FAILED_IMAGES: "10"
         shell: bash
         run: |
           set -euo pipefail
           path="output/image_sync_manifest.json"
-          if [ ! -f "$path" ]; then
-            exit 0
-          fi
-
+          [ -f "$path" ] || exit 0
           status=$(jq -r '.status // "unknown"' "$path")
-          dry_run=$(jq -r '.dry_run // true' "$path")
+          dry_run=$(jq -r 'if has("dry_run") then (.dry_run | tostring) else "true" end' "$path")
           pending=$(jq -r '.image_sync.pending_remaining // 0' "$path")
-          failed=$(jq -r '.image_sync.failed_count // 0' "$path")
-          deferred=$(jq -r '.image_sync.deferred_count // 0' "$path")
-          completeness=$(jq -r '.image_sync.completeness_pct // 0' "$path")
-
-          echo "KPI gate: status=$status dry_run=$dry_run pending=$pending failed=$failed deferred=$deferred completeness=$completeness"
-          if [ "$dry_run" != "false" ]; then
-            echo "KPI dispatch skipped for dry-run image sync."
+          period=$(jq -r '.period // ""' "$path")
+          if [ "$status" != "success" ] || [ "$dry_run" != "false" ] || [ "$pending" -ne 0 ]; then
+            echo "KPI gate: status=$status dry_run=$dry_run pending=$pending; not dispatching"
             exit 0
           fi
-
-          gate_mode=$(python - "$status" "$pending" "$failed" "$deferred" "$completeness" <<'PY'
-          import os
-          import sys
-
-          status = sys.argv[1]
-          pending = int(sys.argv[2])
-          failed = int(sys.argv[3])
-          deferred = int(sys.argv[4])
-          completeness = float(sys.argv[5])
-          min_completeness = float(os.environ["IMAGE_KPI_MIN_COMPLETENESS_PCT"])
-          max_failed = int(os.environ["IMAGE_KPI_MAX_FAILED_IMAGES"])
-
-          if status == "success" and pending == 0 and failed == 0 and deferred == 0:
-              print("complete")
-          elif (
-              status == "partial_failure"
-              and deferred == 0
-              and 0 < failed <= max_failed
-              and completeness >= min_completeness
-          ):
-              print("degraded")
-          else:
-              print("blocked")
-          PY
-          )
-
-          if [ "$gate_mode" = "blocked" ]; then
-            echo "KPI dispatch blocked: image reconciliation is below the controlled completeness threshold."
-            exit 0
-          fi
-
-          if [ "$gate_mode" = "degraded" ]; then
-            echo "::warning::KPI allowed with $failed failed image(s) because completeness is ${completeness}% (minimum ${IMAGE_KPI_MIN_COMPLETENESS_PCT}%). Failed URLs remain checkpointed for later repair."
-          fi
-
-          jq -n '{ref:"main",inputs:{period:"",dry_run:"false"}}' \
+          jq -n --arg period "$period" '{ref:"main",inputs:{period:$period,dry_run:"false"}}' \
             | gh api --method POST \
                 "repos/${GITHUB_REPOSITORY}/actions/workflows/image-scoring-kpi.yml/dispatches" \
                 --input -
-          echo "Queued production KPI after image reconciliation gate mode=$gate_mode"
+          echo "Requested KPI scoring for period $period"
 
       - name: Upload daily image sync manifest
         if: ${{ always() }}
