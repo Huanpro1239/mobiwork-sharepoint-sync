@@ -84,6 +84,7 @@ class ClassificationResult:
     scores: ScoreVector
     neighbors: tuple[NeighborEvidence, ...]
     quality_gate_passed: bool
+    auto_fail_gate_passed: bool
     sign_pass_probability: float
     display_pass_probability: float
 
@@ -414,6 +415,7 @@ class SceneClassifier:
                     scores=scores,
                     neighbors=neighbors,
                     quality_gate_passed=self.quality_gate_passed,
+                    auto_fail_gate_passed=self.auto_fail_gate_passed,
                     sign_pass_probability=float(
                         model_scores.sign_pass_probability[row_index]
                     ),
@@ -467,6 +469,7 @@ class SceneClassifier:
             scores=resolved_scores,
             neighbors=classification.neighbors,
             quality_gate_passed=classification.quality_gate_passed,
+            auto_fail_gate_passed=classification.auto_fail_gate_passed,
             sign_pass_probability=classification.sign_pass_probability,
             display_pass_probability=classification.display_pass_probability,
         )

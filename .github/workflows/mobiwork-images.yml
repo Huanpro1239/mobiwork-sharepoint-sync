@@ -25,12 +25,11 @@ permissions:
   actions: write
 
 # Image writes share the same production lock as the report pipeline so Data anh
-# is never modified concurrently with SharePoint monthly master updates. Queue all
-# pending production runs instead of allowing GitHub to replace an older pending run.
+# is never modified concurrently with SharePoint monthly master updates. Active
+# runs are not cancelled; resumable checkpoints preserve unfinished image work.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false
-  queue: max
 
 jobs:
   sync-images:

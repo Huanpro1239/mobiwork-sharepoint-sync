@@ -1,6 +1,6 @@
 # MobiWork → SharePoint → Image AI → Sales KPI
 
-Production-oriented Python pipeline for **MobiWork DMS → Microsoft SharePoint → Image Scoring V2.3 → Sales KPI V2.4**.
+Production-oriented Python pipeline for **MobiWork DMS → Microsoft SharePoint → tiered Image Scoring → Sales KPI V2.4**.
 
 The existing report/image sync remains lightweight and can run on GitHub-hosted workers. Heavy AI inference runs on a persistent Windows self-hosted runner labeled `dms-ai`.
 
@@ -16,7 +16,7 @@ MobiWork Open API
                                   │
                   ┌───────────────┴────────────────┐
                   ▼                                ▼
-          Image Scoring V2.3                 Sales KPI V2.4
+          Tiered Image Scoring               Sales KPI V2.4
         CLIP + YOLO + OCR               Visit/order M-1 + M
         evidence + quality gates        stock + image evidence
                   │                                │
@@ -51,7 +51,7 @@ MobiWork Open API
 ```text
 src/
 ├─ mobiwork.py / sharepoint.py / image_sync.py   existing sync stack
-├─ scoring/                                      Image Scoring V2.3
+├─ scoring/                                      Tiered image scoring
 │  ├─ classifier.py / modeling.py
 │  ├─ decision_policy.py / image_scoring.py
 │  ├─ yolo_verifier.py / ocr_engine.py / face_detector.py
@@ -69,21 +69,26 @@ src/
 └─ bootstrap_model_assets.py
 ```
 
-## Image Scoring V2.3
+## Tiered Image Scoring
 
-V2.3 uses four calibrated heads: scene, sign validity, display validity and fraud. Conservative defaults are:
+The immutable V2.3 bundle supplies four calibrated heads (scene, sign validity,
+display validity and fraud) plus the three nearest human-labelled references.
+Production then resolves the result with the same TIER0–TIER4 cascade used by
+the local reference project:
 
-| Gate | Default |
-|---|---:|
-| auto pass | `>= 0.88` |
-| auto fail validity | `<= 0.05` |
-| fraud review | `>= 0.60` |
-| fraud auto-fail candidate | `>= 0.975` |
-| reference similarity | `>= 0.70` |
-| scene ambiguity margin | `0.08` |
-| OOF auto-decision precision gate | `>= 99%` |
+| Tier | Decision |
+|---|---|
+| TIER0 | strong fraud fail or suspicious-fraud review |
+| novelty/scene | out-of-domain or unresolved scene review |
+| TIER1 | high-confidence pass with physical/reference support |
+| TIER2 | moderate pass with detector/OCR or two-reference consensus |
+| TIER3 | clear low-score failure without relevant support |
+| TIER4 | weighted pass/fail with an explicit review band |
 
-YOLO/OCR evidence can confirm a candidate or resolve an ambiguous scene, but cannot bypass novelty, fraud, validity or quality gates.
+Every automatic pass and automatic fail must pass its corresponding OOF quality
+gate. YOLO/OCR/face output is supporting audit evidence and cannot bypass model,
+novelty, fraud or quality-gate checks. Score caches are invalidated whenever the
+complete decision-time runtime changes.
 
 ## Sales KPI V2.4
 

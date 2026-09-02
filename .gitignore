@@ -99,6 +99,7 @@ venv.bak/
 .pypirc
 
 # IDE / editor
+.worktrees/
 .spyderproject
 .spyproject
 .ropeproject

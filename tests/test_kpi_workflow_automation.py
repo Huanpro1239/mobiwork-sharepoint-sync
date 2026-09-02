@@ -5,6 +5,9 @@ from pathlib import Path
 
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "image-scoring-kpi.yml"
+PROBE_WORKFLOW = (
+    Path(__file__).resolve().parents[1] / ".github" / "workflows" / "cloud-kpi-main-probe.yml"
+)
 
 
 class KPIWorkflowAutomationTests(unittest.TestCase):
@@ -27,6 +30,13 @@ class KPIWorkflowAutomationTests(unittest.TestCase):
 
         self.assertIn('if has("dry_run") then (.dry_run | tostring)', text)
         self.assertNotIn(".dry_run // true", text)
+
+    def test_workflows_do_not_require_obsolete_legacy_ai_export(self):
+        production = WORKFLOW.read_text(encoding="utf-8")
+        probe = PROBE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertNotIn("AI_LEGACY_SCORE_REMOTE", production)
+        self.assertNotIn("AI_LEGACY_SCORE_REMOTE", probe)
 
 
 if __name__ == "__main__":

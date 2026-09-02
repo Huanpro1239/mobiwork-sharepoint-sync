@@ -38,7 +38,6 @@ jobs:
       AI_SAMPLE_PENDING_SELECTION: oldest
       AI_SHAREPOINT_ASSET_ROOT: Chạy chương trình/KPI Assets
       AI_ASSET_DRIVE_ID: b!2K9oEC8dsUa6BquPvDyH35k3WNCRWItKlw8AJ2EKa5VahAhoPyTCQLc0Qsq_5UdO
-      AI_LEGACY_SCORE_REMOTE: Chạy chương trình/KPI Assets/legacy_scores_through_2026-08-28.csv
       KPI_SHAREPOINT_ROOT: KPI
       HF_HUB_DISABLE_TELEMETRY: '1'
       TOKENIZERS_PARALLELISM: 'false'

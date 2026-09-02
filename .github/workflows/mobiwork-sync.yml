@@ -32,13 +32,12 @@ permissions:
   id-token: write
   actions: write
 
-# Preserve every queued production run. GitHub's default concurrency behavior keeps
-# only one pending run; queue:max prevents the hourly refresh from replacing the
-# finalized-yesterday refresh or a queued image reconciliation.
+# Serialize SharePoint production writes. GitHub Actions supports only `group`
+# and `cancel-in-progress` in this block; keeping cancellation false protects the
+# active report/image run while a newer pending refresh may coalesce older work.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false
-  queue: max
 
 jobs:
   sync:

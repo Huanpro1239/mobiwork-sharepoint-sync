@@ -40,10 +40,12 @@ Cấu hình:
 
 ```text
 cancel-in-progress: false
-queue: max
 ```
 
-Mục tiêu là giữ các run quan trọng đang chờ thay vì để run mới thay thế pending run cũ. Các writer vẫn chạy tuần tự.
+Mục tiêu là không hủy run đang ghi SharePoint và giữ các writer chạy tuần tự. GitHub
+chỉ giữ tối đa một run pending cho mỗi concurrency group; các refresh mới có thể
+gộp/thay pending refresh cũ, còn chuỗi ảnh/KPI tiếp tục bằng checkpoint nên không
+mất phần việc chưa xử lý.
 
 KPI dùng group riêng:
 

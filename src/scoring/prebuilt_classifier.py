@@ -54,6 +54,42 @@ _REQUIRED_FIELDS = {
     "implementation_hash",
 }
 
+# The deployed bundle was built before ``ClassificationResult`` carried the
+# auto-fail gate explicitly.  That change affects only the runtime result
+# contract; embeddings, trained heads, thresholds and evaluation data remain
+# identical.  Keep this one exact hash so the production asset can cross that
+# contract upgrade without enabling the broad legacy-bundle escape hatch.
+_COMPATIBLE_V23_IMPLEMENTATION_HASHES = frozenset(
+    {"bf00cf1d94b0bb1070a88671e95e11f55f998bad9c1c30ca82b6cdcb842d6331"}
+)
+_RESULT_GATE_CONTRACT_IMPLEMENTATION_HASHES = frozenset(
+    {
+        # Linux/GitHub-hosted checkout (LF).
+        "2589b464d36660e6bc66de6f3fc87cdef6bc3c66b8718fcd19f4bbad4e6ef01e",
+        # Windows checkout with core.autocrlf (CRLF).
+        "9051d797192f2c6129fcd81ee4181445d5af6f01d2bcd4b175df1db892f5bc9a",
+    }
+)
+
+
+def _implementation_is_compatible(
+    bundle_hash: str,
+    current_hash: str,
+    *,
+    pipeline_version: str,
+    schema_version: int,
+) -> bool:
+    """Accept the current code or the one audited V2.3 contract-only upgrade."""
+
+    if bundle_hash == current_hash:
+        return True
+    return (
+        pipeline_version == "2.3.0"
+        and schema_version == 4
+        and bundle_hash in _COMPATIBLE_V23_IMPLEMENTATION_HASHES
+        and current_hash in _RESULT_GATE_CONTRACT_IMPLEMENTATION_HASHES
+    )
+
 
 def _install_legacy_pickle_aliases() -> None:
     """Allow legacy project and NumPy-2-produced bundles to unpickle safely."""
@@ -141,7 +177,12 @@ class PrebuiltSceneClassifier:
                 f"bundle={bundle_schema} runtime={CACHE_SCHEMA_VERSION}"
             )
         expected_implementation = _implementation_hash()
-        if not allow_legacy and bundle_implementation != expected_implementation:
+        if not allow_legacy and not _implementation_is_compatible(
+            bundle_implementation,
+            expected_implementation,
+            pipeline_version=bundle_pipeline,
+            schema_version=bundle_schema,
+        ):
             raise ValueError(
                 "Prebuilt bundle implementation hash does not match current scoring code"
             )
@@ -211,6 +252,7 @@ class PrebuiltSceneClassifier:
                     scores=scores,
                     neighbors=neighbors,
                     quality_gate_passed=self.quality_gate_passed,
+                    auto_fail_gate_passed=self.auto_fail_gate_passed,
                     sign_pass_probability=float(
                         model_scores.sign_pass_probability[row_index]
                     ),
@@ -266,6 +308,7 @@ class PrebuiltSceneClassifier:
             scores=resolved_scores,
             neighbors=classification.neighbors,
             quality_gate_passed=classification.quality_gate_passed,
+            auto_fail_gate_passed=classification.auto_fail_gate_passed,
             sign_pass_probability=classification.sign_pass_probability,
             display_pass_probability=classification.display_pass_probability,
         )

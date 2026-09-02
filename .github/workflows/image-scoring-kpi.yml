@@ -117,7 +117,6 @@ jobs:
           AI_SHAREPOINT_ASSET_ROOT: Chạy chương trình/KPI Assets
           AI_PREBUILT_BUNDLE: "true"
           AI_PREBUILT_BUNDLE_REMOTE: reference_bundle_v23_33357852900.pkl
-          AI_LEGACY_SCORE_REMOTE: Chạy chương trình/KPI Assets/legacy_scores_through_2026-08-28.csv
           AI_SYNC_ASSETS: "false"
           AI_DEVICE: cpu
           # 4,000 CPU images can exceed the workflow window. Checkpoint smaller
