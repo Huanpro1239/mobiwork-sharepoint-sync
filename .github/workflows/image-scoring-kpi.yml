@@ -23,11 +23,12 @@ permissions:
   id-token: write
   actions: write
 
-# Catch-up is checkpointed between bounded batches. Prefer the newest runtime over
-# a stale queued/running batch so old scoring code cannot publish after main moves.
+# A marker push means a newer production runtime should replace stale work.
+# Self-dispatched catch-up batches must finish normally instead of cancelling the
+# batch that created them.
 concurrency:
   group: mobiwork-kpi-production
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   score-kpi:
@@ -57,35 +58,43 @@ jobs:
           path: |
             ~/.cache/huggingface
             ~/.cache/torch
+            ~/.cache/clip
             ~/.EasyOCR
             ~/.config/Ultralytics
-          key: dms-ai-models-${{ runner.os }}-v2
+          key: dms-ai-models-${{ runner.os }}-v3
+          restore-keys: |
+            dms-ai-models-${{ runner.os }}-v2
 
       - name: Install AI runtime dependencies
         run: |
           python -m pip install --upgrade pip
+          # Install the runtime-compatible NumPy first so the torch install does
+          # not pull NumPy 2.x only to downgrade it a minute later.
+          pip install 'numpy>=1.26,<2'
           pip install 'torch>=2.4,<3' 'torchvision>=0.19,<1' --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-ai.txt
+          # YOLO-World otherwise performs this installation inside inference and
+          # asks for a runtime restart. Pin the exact commit observed in production.
+          pip install 'git+https://github.com/ultralytics/CLIP.git@a13192f8cb767260d7dfd98c843b0716593169e7'
           pip check
 
       - name: Validate AI runtime imports
         run: |
           python - <<'PY'
+          import clip
           import easyocr
           import torch
           import torchvision
           print(f'torch={torch.__version__}')
           print(f'torchvision={torchvision.__version__}')
           print(f'easyocr={getattr(easyocr, "__version__", "unknown")}')
+          print(f'clip={getattr(clip, "__version__", "installed")}')
           PY
 
+      # Full unit/model regression tests belong to CI. Production only compiles
+      # the runtime so each catch-up batch does not repeat the complete test suite.
       - name: Compile AI/KPI sources
-        run: python -m compileall -q src/scoring src/kpi src/score_kpi_pipeline.py src/run_score_kpi_cloud.py tests_ai
-
-      - name: Run unit and V2.3 policy/model tests
-        run: |
-          python -m unittest discover -s tests -v
-          python -m unittest discover -s tests_ai -v
+        run: python -m compileall -q src/scoring src/kpi src/score_kpi_pipeline.py src/run_score_kpi_cloud.py
 
       - name: Azure login with GitHub OIDC
         uses: azure/login@v3
@@ -119,10 +128,14 @@ jobs:
           AI_PREBUILT_BUNDLE_REMOTE: reference_bundle_v23_33357852900.pkl
           AI_SYNC_ASSETS: "false"
           AI_DEVICE: cpu
-          # 4,000 CPU images can exceed the workflow window. Checkpoint smaller
-          # batches and self-dispatch the next batch instead of monopolizing a runner.
-          AI_PRODUCTION_MAX_PENDING_IMAGES: "500"
+          # 1,000 unique URLs keeps each CPU batch bounded while halving the
+          # number of runner/model startups versus the 500-image emergency cap.
+          AI_PRODUCTION_MAX_PENDING_IMAGES: "1000"
           AI_PRODUCTION_MAX_TECHNICAL_RETRIES: "3"
+          # Eight simultaneous Graph reads caused repeated 429 throttling in the
+          # measured production run. Four workers trades a little raw concurrency
+          # for steadier end-to-end throughput.
+          AI_DOWNLOAD_WORKERS: "4"
           KPI_SHAREPOINT_ROOT: KPI
           KPI_PERIOD: ${{ github.event_name == 'workflow_dispatch' && inputs.period || '' }}
           KPI_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
