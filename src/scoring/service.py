@@ -48,7 +48,7 @@ def _flatten_image_score(score: Any) -> dict[str, Any]:
         (
             f"signboard={int(bool(evidence.has_signboard))}",
             f"brand_keyword={int(bool(evidence.has_brand_keyword))}",
-            f"store_keyword={int(bool(getattr(evidence, 'has_store_keyword', False)))}",
+            f"store_keyword={int(bool(getattr(score, 'store_keyword', False)))}",
             f"bottle_or_pack={int(bool(evidence.has_bottle_or_pack))}",
             f"face_audit={int(bool(evidence.has_face))}",
         )
