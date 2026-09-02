@@ -38,6 +38,25 @@ class KPIWorkflowAutomationTests(unittest.TestCase):
         self.assertNotIn("AI_LEGACY_SCORE_REMOTE", production)
         self.assertNotIn("AI_LEGACY_SCORE_REMOTE", probe)
 
+    def test_self_dispatched_batches_do_not_cancel_the_batch_that_created_them(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'push' }}", text)
+        self.assertNotIn("queue: max", text)
+
+    def test_production_caches_yolo_world_clip_and_uses_larger_bounded_batch(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("~/.cache/clip", text)
+        self.assertIn('AI_PRODUCTION_MAX_PENDING_IMAGES: "1000"', text)
+        self.assertIn("ultralytics/CLIP.git@a13192f8cb767260d7dfd98c843b0716593169e7", text)
+
+    def test_production_does_not_repeat_full_test_suite_inside_each_batch(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertNotIn("Run unit and V2.3 policy/model tests", text)
+        self.assertNotIn("python -m unittest discover", text)
+
 
 if __name__ == "__main__":
     unittest.main()
