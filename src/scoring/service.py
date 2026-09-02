@@ -1,4 +1,4 @@
-"""High-level batch service around the audited V2.3 scoring components."""
+"""High-level batch service around the audited image-scoring components."""
 from __future__ import annotations
 
 import hashlib
@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 
 from scoring.config import CLIP_INFERENCE_BATCH_SIZE
+from scoring.runtime_signature import scoring_runtime_signature
 from scoring.score_cache import ScoreCache
 
 
@@ -47,6 +48,7 @@ def _flatten_image_score(score: Any) -> dict[str, Any]:
         (
             f"signboard={int(bool(evidence.has_signboard))}",
             f"brand_keyword={int(bool(evidence.has_brand_keyword))}",
+            f"store_keyword={int(bool(getattr(evidence, 'has_store_keyword', False)))}",
             f"bottle_or_pack={int(bool(evidence.has_bottle_or_pack))}",
             f"face_audit={int(bool(evidence.has_face))}",
         )
@@ -126,7 +128,7 @@ class ImageScoringService:
         self.ocr = TargetedOCREngine()
         self.face = FaceDetector()
         self.cache = cache or ScoreCache()
-        self.pipeline_signature = self.classifier.model_signature
+        self.pipeline_signature = scoring_runtime_signature(self.classifier.model_signature)
 
     def close(self) -> None:
         self.cache.close()
