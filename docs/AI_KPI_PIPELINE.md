@@ -87,8 +87,8 @@ Production batching counts **unique URLs**, not workbook rows. Never-attempted U
 
 The validated V2.3 CLIP/logistic bundle remains immutable unless it is deliberately retrained and OOF-validated. A separate V2.4 production evidence layer is precision-first:
 
-- sign auto-pass requires a detected signboard **and** Vikoda/Đảnh Thạnh brand OCR, plus strong model/reference support;
-- generic store text such as `tạp hóa`, `cửa hàng`, `đại lý` may help resolve scene context but never proves Vikoda branding;
+- sign auto-pass requires a non-trivial learned pass score plus sign/store evidence or close positive human-reference consensus; Vikoda/Đảnh Thạnh OCR is useful support but is not mandatory for valid generic store signs;
+- generic store text such as `tạp hóa`, `cửa hàng`, `đại lý` supports scene/store evidence but is not recorded as a Vikoda brand hit;
 - display auto-pass requires bottle/pack evidence plus stricter model/reference support;
 - severely small, dark, bright or blurry images are downgraded to review instead of receiving an automatic business pass/fail;
 - uncertain evidence is sent to `Can_duyet`; the system prefers lower auto-coverage over a false automatic pass.

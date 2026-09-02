@@ -201,8 +201,11 @@ def score_decoded_image_with_classification(
         pass_gate_passed = bool(
             getattr(resolved_classification, "quality_gate_passed", False)
         )
+        # Gate state belongs to the exact classification output.  Default false
+        # for old score-bearing adapters so a missing field cannot authorize an
+        # automatic business failure.
         auto_fail_gate_passed = bool(
-            getattr(classifier, "auto_fail_gate_passed", pass_gate_passed)
+            getattr(resolved_classification, "auto_fail_gate_passed", False)
         )
         decision = decide_reference_tiered_scores(
             scores,

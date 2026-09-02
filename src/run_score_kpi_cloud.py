@@ -51,7 +51,7 @@ def main() -> int:
         install_history_sanitizer()
         legacy_rows = install_legacy_url_scoring(client)
         logger.info(
-            "Cloud score reuse enabled: legacy_urls=%s production_batch_limit=%s",
+            "Cloud checkpoint/catch-up enabled: optional_legacy_urls=%s production_batch_limit=%s",
             legacy_rows,
             os.environ.get("AI_PRODUCTION_MAX_PENDING_IMAGES", "0"),
         )

@@ -123,7 +123,7 @@ The following data classes have different trust rules:
 
 ### Current score checkpoint
 
-A remote score row is a lookup candidate only if it contains a valid payload, non-empty image SHA-256, and an exact current pipeline signature. Before reuse, the cloud path obtains the current image bytes (or an equivalent trusted SharePoint content hash) and verifies that their SHA-256 matches the checkpoint. URL equality alone never authorizes reuse. A mismatch is scored as changed content. The normal local cache remains keyed by signature plus SHA-256.
+A remote score row is reusable only if it contains a valid payload, non-empty image SHA-256, and an exact current pipeline signature. The current SharePoint image store is append-only for a URL/date identity: synchronized filenames contain the URL digest and an existing non-empty identity is never overwritten. Under that invariant, the exact URL and runtime signature identify the same stored bytes whose SHA was recorded at scoring time. The normal local cache remains keyed by signature plus SHA-256. If image replacement is introduced later, checkpoint records must also store and verify SharePoint eTag/content hash before URL-based reuse is allowed.
 
 ### Historical AI export
 

@@ -57,6 +57,8 @@ def _classification(
     similarity: float,
     fraud_probability: float = 0.01,
     neighbors=(),
+    pass_gate_passed: bool = True,
+    auto_fail_gate_passed: bool = True,
 ):
     sign_probability = 0.95 if scene == "Bien_hieu" else 0.05
     decision = ScoringDecision(
@@ -76,7 +78,8 @@ def _classification(
         decision=decision,
         scores=scores,
         neighbors=tuple(neighbors),
-        quality_gate_passed=True,
+        quality_gate_passed=pass_gate_passed,
+        auto_fail_gate_passed=auto_fail_gate_passed,
         sign_pass_probability=pass_probability,
         display_pass_probability=pass_probability,
     )
@@ -88,6 +91,23 @@ def _normal_image():
 
 
 class PrecisionGuardrailTests(unittest.TestCase):
+    def test_auto_fail_uses_gate_carried_by_the_classification_result(self):
+        score = score_decoded_image_with_classification(
+            _normal_image(),
+            _classification(
+                "Trung_bay",
+                pass_probability=0.10,
+                similarity=0.90,
+                auto_fail_gate_passed=False,
+            ),
+            _YOLO(),
+            _OCR(),
+            _Face(),
+        )
+
+        self.assertEqual(score.decision.label, "Can_duyet")
+        self.assertEqual(score.decision.status, "REVIEW_QUALITY_GATE")
+
     def test_generic_store_sign_can_pass_when_human_model_support_is_strong(self):
         """Ground truth contains valid generic store signs without Vikoda brand text."""
 
