@@ -127,6 +127,7 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
+          BOOTSTRAP_BYPASS_GATE: "true"
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
           MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
