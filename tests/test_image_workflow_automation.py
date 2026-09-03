@@ -18,12 +18,11 @@ class ImageWorkflowAutomationTests(unittest.TestCase):
         self.assertIn('[ "$status" != "partial_failure" ]', continuation)
         self.assertIn('[ "$uploaded" -le 0 ]', continuation)
 
-    def test_complete_sync_dispatches_kpi_with_safe_dry_run_gate(self):
+    def test_image_sync_never_dispatches_removed_scoring_pipeline(self):
         text = WORKFLOW.read_text(encoding="utf-8")
-        trigger = text.split("- name: Trigger KPI after complete image sync", maxsplit=1)[1]
-        self.assertIn('if has("dry_run") then (.dry_run | tostring)', trigger)
-        self.assertIn("pending == 0", trigger)
-        self.assertIn("image-scoring-kpi.yml/dispatches", trigger)
+        self.assertNotIn("Trigger KPI", text)
+        self.assertNotIn("image-scoring-kpi.yml", text)
+        self.assertNotIn("IMAGE_KPI_", text)
 
 
 if __name__ == "__main__":
