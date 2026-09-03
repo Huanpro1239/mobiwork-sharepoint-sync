@@ -25,6 +25,41 @@ MobiWork Open API
 
 Dự án chỉ tạo **nguồn dữ liệu chuẩn**. Nó không chấm điểm ảnh và không tạo KPI nghiệp vụ.
 
+## Bootstrap production trước khi chạy lịch
+
+Production mới hoặc production vừa thay đổi logic dữ liệu phải chạy **`MobiWork Bootstrap Full History`** trước khi để automation định kỳ tiếp tục.
+
+Bootstrap mặc định chạy từ `2026-06` vì đây là tháng lịch sử sớm nhất hiện đang tồn tại trong SharePoint production. Có thể nhập tháng sớm hơn nếu MobiWork thực tế có dữ liệu cũ hơn.
+
+Luồng bootstrap:
+
+```text
+2026-06
+  ↓ full rebuild 4 report
+2026-07
+  ↓ full rebuild 4 report
+2026-08
+  ↓ full rebuild 4 report
+tháng hiện tại
+  ↓ rebuild đến ngày hiện tại
+  ↓
+bootstrap_complete = true
+  ↓
+resume hourly/nightly/weekly automation
+```
+
+Một bootstrap production (`dry_run=false`) sẽ:
+
+- giữ production writer lock trong toàn bộ lần chạy;
+- tạm **disable** các workflow routine trước khi rebuild;
+- rebuild từng tháng theo thứ tự cũ → mới;
+- mỗi tháng phải pass source completeness gate cho toàn bộ report;
+- dừng ngay trước các tháng sau nếu có một tháng lỗi;
+- ghi trạng thái vào `_sync_state/bootstrap.json`;
+- chỉ **enable lại** routine workflows sau khi tất cả tháng hoàn tất thành công.
+
+Nếu bootstrap fail hoặc bị cancel, routine automation vẫn bị pause để không cập nhật tiếp trên một historical baseline chưa đầy đủ. Sau khi sửa nguyên nhân, chạy lại bootstrap từ tháng chưa hoàn tất hoặc từ đầu range cần xác nhận.
+
 ## Data model production
 
 Các report được khai báo tại `config/reports.json`:
@@ -66,6 +101,8 @@ Chi tiết xem [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md).
 
 ## Tự động hóa
 
+- `.github/workflows/mobiwork-bootstrap-history.yml`
+  - one-time historical bootstrap trước khi production schedule tiếp tục.
 - `.github/workflows/mobiwork-sync.yml`
   - `HH:05`: refresh `today`.
   - `09:00`: refresh `yesterday` và queue image sync.
@@ -80,7 +117,7 @@ Chi tiết xem [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md).
 - `.github/workflows/operations-health.yml`: watchdog production.
 - `.github/workflows/ci.yml`: compile, Ruff, unit tests và coverage.
 
-Các writer production dùng concurrency lock để không đồng thời sửa cùng vùng SharePoint. Full-month recovery được ưu tiên khi cần khôi phục dữ liệu.
+Các writer production dùng concurrency lock để không đồng thời sửa cùng vùng SharePoint. Full-month recovery và bootstrap được ưu tiên khi cần khôi phục dữ liệu.
 
 ## Chạy cục bộ
 
