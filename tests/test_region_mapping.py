@@ -30,11 +30,21 @@ class RegionMappingTests(unittest.TestCase):
         self.assertEqual(enriched[0]["vung_source"], "ma_nv_prefix")
         self.assertEqual(enriched[0]["loai_kh"], "KA Miền Trung 1")
 
-    def test_hni_historical_employee_maps_to_mien_bac(self):
-        enriched = enrich_visit_records([{"ma_nv": "HNI02"}], strict=True)
-        self.assertEqual(enriched[0]["vung_code"], "MB")
-        self.assertEqual(enriched[0]["vung"], "Miền Bắc")
-        self.assertEqual(enriched[0]["vung_source"], "ma_nv_prefix")
+    def test_historical_bootstrap_prefixes_map_to_confirmed_regions(self):
+        cases = {
+            "HNI02": ("MB", "Miền Bắc"),
+            "HNC": ("MB", "Miền Bắc"),
+            "THA01": ("MB", "Miền Bắc"),
+            "THHO0101": ("MB", "Miền Bắc"),
+            "MNU": ("MN", "Miền Nam"),
+            "MEKO": ("MN", "Miền Nam"),
+        }
+        for employee_code, expected in cases.items():
+            with self.subTest(employee_code=employee_code):
+                enriched = enrich_visit_records([{"ma_nv": employee_code}], strict=True)
+                self.assertEqual(enriched[0]["vung_code"], expected[0])
+                self.assertEqual(enriched[0]["vung"], expected[1])
+                self.assertEqual(enriched[0]["vung_source"], "ma_nv_prefix")
 
     def test_unknown_prefix_fails_in_strict_mode(self):
         with self.assertRaisesRegex(ValueError, "Unmapped employees/prefixes"):
@@ -46,13 +56,13 @@ class RegionMappingTests(unittest.TestCase):
         self.assertIsNone(enriched[0]["vung_code"])
         self.assertEqual(enriched[0]["vung_source"], "unmapped")
 
-    def test_master_contains_current_operating_prefixes(self):
+    def test_master_contains_current_and_bootstrap_historical_prefixes(self):
         mapping = load_region_map()
         expected = {
-            "BAGI", "HANC", "HAPH", "HNI", "HUYE", "NIBI", "QUNI", "VIPH",
+            "BAGI", "HANC", "HAPH", "HNC", "HNI", "HUYE", "NIBI", "QUNI", "THA", "THHO", "VIPH",
             "BITH", "DALA", "DANO", "KHA", "KHHO", "PHYE",
             "DANA", "QUNA", "QUNG",
-            "BDG", "BIDU", "BRVT", "HCM", "HCMC", "VTU",
+            "BDG", "BIDU", "BRVT", "HCM", "HCMC", "MEKO", "MNU", "VTU",
         }
         self.assertTrue(expected.issubset(mapping))
 
