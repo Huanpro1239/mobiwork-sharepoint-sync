@@ -41,13 +41,13 @@
       },
       "export_mode": "flat",
       "primary_key": [
-        "makh"
+        "ID"
       ],
       "required_fields": [
-        "makh"
+        "ID"
       ],
       "upsert_keys": [
-        "makh"
+        "ID"
       ]
     },
     {
