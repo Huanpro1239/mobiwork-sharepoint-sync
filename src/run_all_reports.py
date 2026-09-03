@@ -175,8 +175,18 @@ def _build_or_update_month_group(
                 records = mobiwork.fetch_report(cfg, target_date)
                 incoming = frames_from_records(records, cfg.export_mode, target_date)
                 if frames is None:
-                    frames = build_month_from_partitions([], cfg.export_mode)
-                frames = merge_partition(frames, incoming, target_date, cfg.export_mode)
+                    frames = build_month_from_partitions(
+                        [],
+                        cfg.export_mode,
+                        upsert_keys=cfg.upsert_keys,
+                    )
+                frames = merge_partition(
+                    frames,
+                    incoming,
+                    target_date,
+                    cfg.export_mode,
+                    upsert_keys=cfg.upsert_keys,
+                )
                 source_rows[target_date] = len(records)
             except Exception as exc:
                 errors[target_date] = f"{type(exc).__name__}: {exc}"
@@ -234,14 +244,24 @@ def _build_or_update_month_group(
             partitions.append((rebuild_date, records))
             if rebuild_date in target_set:
                 source_rows[rebuild_date] = len(records)
-        frames = build_month_from_partitions(partitions, cfg.export_mode)
+        frames = build_month_from_partitions(
+            partitions,
+            cfg.export_mode,
+            upsert_keys=cfg.upsert_keys,
+        )
     else:
         frames = read_master(existing_content, cfg.export_mode)
         for target_date in ordered_dates:
             try:
                 records = mobiwork.fetch_report(cfg, target_date)
                 incoming = frames_from_records(records, cfg.export_mode, target_date)
-                frames = merge_partition(frames, incoming, target_date, cfg.export_mode)
+                frames = merge_partition(
+                    frames,
+                    incoming,
+                    target_date,
+                    cfg.export_mode,
+                    upsert_keys=cfg.upsert_keys,
+                )
                 source_rows[target_date] = len(records)
             except Exception as exc:
                 errors[target_date] = f"{type(exc).__name__}: {exc}"
@@ -321,7 +341,6 @@ def run_incremental_all_reports(
     results: list[dict[str, Any]] = []
     result_map: dict[tuple[str, date], dict[str, Any]] = {}
 
-    # Preserve the historical date-major result order for manifests and summaries.
     for target_date in target_dates:
         for cfg in reports:
             result = _result_entry(cfg, target_date)
@@ -500,6 +519,7 @@ def run_incremental() -> dict[str, Any]:
     manifest["execution_policy"] = "continue_on_report_error"
     manifest["xlsx_verification"] = "semantic_cell_content"
     manifest["publish_batching"] = "one_read_one_publish_per_report_month"
+    manifest["upsert_policy"] = "explicit_configured_business_keys"
 
     sharepoint: SemanticSharePointClient | None = None
     drive_id: str | None = None

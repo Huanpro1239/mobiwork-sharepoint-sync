@@ -113,16 +113,54 @@ class MonthlyMasterTests(unittest.TestCase):
         master = build_month_from_partitions(
             [(date(2026, 8, 20), [day20])],
             "flat",
+            upsert_keys=["makh"],
         )
         day21 = {"makh": "KH01", "tenkh": "Cửa hàng A", "dia_chi": "Địa chỉ mới"}
         incoming = frames_from_records([day21], "flat", date(2026, 8, 21))
-        merged = merge_partition(master, incoming, date(2026, 8, 21), "flat")
+        merged = merge_partition(
+            master,
+            incoming,
+            date(2026, 8, 21),
+            "flat",
+            upsert_keys=["makh"],
+        )
 
         frame = merged["Data"]
         self.assertEqual(len(frame), 1)
         self.assertEqual(frame["makh"].tolist(), ["KH01"])
         self.assertEqual(frame["dia_chi"].tolist(), ["Địa chỉ mới"])
         self.assertEqual(frame[SYNC_DATE_COLUMN].tolist(), ["2026-08-21"])
+
+    def test_flat_report_with_makh_does_not_upsert_without_config(self):
+        master = build_month_from_partitions(
+            [(date(2026, 8, 20), [{"makh": "KH01", "value": "old"}])],
+            "flat",
+        )
+        incoming = frames_from_records(
+            [{"makh": "KH01", "value": "new"}],
+            "flat",
+            date(2026, 8, 21),
+        )
+        merged = merge_partition(master, incoming, date(2026, 8, 21), "flat")
+
+        self.assertEqual(len(merged["Data"]), 2)
+        self.assertEqual(merged["Data"]["value"].tolist(), ["old", "new"])
+
+    def test_configured_upsert_key_must_exist_in_incoming_data(self):
+        master = build_month_from_partitions([], "flat", upsert_keys=["makh"])
+        incoming = frames_from_records(
+            [{"id": "A"}],
+            "flat",
+            date(2026, 8, 21),
+        )
+        with self.assertRaisesRegex(ValueError, "configured upsert key"):
+            merge_partition(
+                master,
+                incoming,
+                date(2026, 8, 21),
+                "flat",
+                upsert_keys=["makh"],
+            )
 
     def test_order_month_rebuild_accepts_historical_lines_missing_stt(self):
         partitions = [

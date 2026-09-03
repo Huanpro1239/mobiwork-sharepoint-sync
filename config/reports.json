@@ -17,7 +17,8 @@
       "data_path": "data",
       "explode_field": "thoi_gian_vt",
       "fixed_params": {},
-      "export_mode": "flat"
+      "export_mode": "flat",
+      "upsert_keys": []
     },
     {
       "key": "new_customer",
@@ -43,6 +44,9 @@
         "makh"
       ],
       "required_fields": [
+        "makh"
+      ],
+      "upsert_keys": [
         "makh"
       ]
     },
@@ -72,6 +76,9 @@
       ],
       "required_fields": [
         "ma_phieu"
+      ],
+      "upsert_keys": [
+        "ma_phieu"
       ]
     },
     {
@@ -100,6 +107,9 @@
         "ma_phieu"
       ],
       "required_fields": [
+        "ma_phieu"
+      ],
+      "upsert_keys": [
         "ma_phieu"
       ]
     }
