@@ -5,10 +5,13 @@
     "BAGI": {"vung_code": "MB", "vung": "Miền Bắc"},
     "HANC": {"vung_code": "MB", "vung": "Miền Bắc"},
     "HAPH": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "HNC": {"vung_code": "MB", "vung": "Miền Bắc"},
     "HNI": {"vung_code": "MB", "vung": "Miền Bắc"},
     "HUYE": {"vung_code": "MB", "vung": "Miền Bắc"},
     "NIBI": {"vung_code": "MB", "vung": "Miền Bắc"},
     "QUNI": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "THA": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "THHO": {"vung_code": "MB", "vung": "Miền Bắc"},
     "VIPH": {"vung_code": "MB", "vung": "Miền Bắc"},
 
     "BITH": {"vung_code": "MT1", "vung": "Miền Trung 1"},
@@ -27,6 +30,8 @@
     "BRVT": {"vung_code": "MN", "vung": "Miền Nam"},
     "HCM": {"vung_code": "MN", "vung": "Miền Nam"},
     "HCMC": {"vung_code": "MN", "vung": "Miền Nam"},
+    "MEKO": {"vung_code": "MN", "vung": "Miền Nam"},
+    "MNU": {"vung_code": "MN", "vung": "Miền Nam"},
     "VTU": {"vung_code": "MN", "vung": "Miền Nam"}
   }
 }
