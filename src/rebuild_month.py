@@ -28,12 +28,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def resolve_anchor(target_month: str | None = None) -> date:
-    """Resolve the last business date that should be fetched for a YYYY-MM month.
-
-    - blank/current month -> today in Vietnam
-    - past month -> calendar month end
-    - future month -> rejected
-    """
+    """Resolve the last business date that should be fetched for a YYYY-MM month."""
     today_vn = datetime.now(core.VN_TZ).date()
     value = (target_month or "").strip()
     if not value:
@@ -64,26 +59,14 @@ def _result_entry(cfg: Any, anchor: date) -> dict[str, Any]:
     }
 
 
-def _rebuild_report_month(
-    cfg: Any,
-    anchor: date,
-    mobiwork: Any,
-    sharepoint: Any,
-    drive_id: str | None,
-    dry_run: bool,
-    manifest: dict[str, Any],
-) -> dict[str, Any]:
-    """Rebuild one report/month only from MobiWork API partitions.
-
-    The existing SharePoint workbook is deliberately not read. Every expected day
-    must fetch successfully before a replacement monthly master can be published.
-    """
+def _prepare_report_month(cfg: Any, anchor: date, mobiwork: Any) -> dict[str, Any]:
+    """Fetch every expected daily partition and build a local monthly workbook."""
     target_dates = month_dates_through(anchor)
     partitions: list[tuple[date, list[dict[str, Any]]]] = []
     daily_source_rows: dict[str, int] = {}
 
     LOG.info(
-        "Full month rebuild started report=%s month=%s days=%s",
+        "Full month source preparation started report=%s month=%s days=%s",
         cfg.key,
         anchor.strftime("%Y-%m"),
         len(target_dates),
@@ -96,40 +79,64 @@ def _rebuild_report_month(
 
     frames = build_month_from_partitions(partitions, cfg.export_mode)
     path = write_master(frames, cfg.name, anchor)
-    stored_rows = master_row_count(frames, cfg.export_mode)
-    source_rows = sum(daily_source_rows.values())
     remote_folder = f"{cfg.folder}/{anchor:%Y}/{anchor:%m}"
-    canonical_name = master_filename(cfg.name, anchor)
 
+    return {
+        "cfg": cfg,
+        "anchor": anchor,
+        "path": path,
+        "remote_folder": remote_folder,
+        "canonical_name": master_filename(cfg.name, anchor),
+        "source_rows": sum(daily_source_rows.values()),
+        "master_rows": master_row_count(frames, cfg.export_mode),
+        "target_dates": target_dates,
+        "daily_source_rows": daily_source_rows,
+    }
+
+
+def _publish_prepared_report(
+    bundle: dict[str, Any],
+    sharepoint: Any,
+    drive_id: str | None,
+    dry_run: bool,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Publish one already-prepared workbook after the global source gate passes."""
+    cfg = bundle["cfg"]
+    anchor = bundle["anchor"]
+    path = bundle["path"]
+    target_dates = bundle["target_dates"]
     uploaded: dict[str, Any] | None = None
+
     if not dry_run:
         if not sharepoint or not drive_id:
             raise RuntimeError("SharePoint client is unavailable in production mode")
-        uploaded = sharepoint.upload_file(drive_id, path, remote_folder)
+        uploaded = sharepoint.upload_file(drive_id, path, bundle["remote_folder"])
         runner._cleanup_legacy_files(
             sharepoint,
             drive_id,
-            remote_folder,
+            bundle["remote_folder"],
             cfg.name,
-            canonical_name,
+            bundle["canonical_name"],
         )
 
     runner._record_monthly_export(
         manifest,
         cfg,
         path,
-        source_rows,
-        stored_rows,
-        remote_folder,
+        bundle["source_rows"],
+        bundle["master_rows"],
+        bundle["remote_folder"],
         uploaded,
         target_dates=target_dates,
     )
     export = manifest["files"][-1]
     export["rebuild_mode"] = "full_month_from_api"
     export["days_expected"] = len(target_dates)
-    export["days_fetched"] = len(daily_source_rows)
-    export["all_days_fetched"] = len(daily_source_rows) == len(target_dates)
-    export["daily_source_rows"] = daily_source_rows
+    export["days_fetched"] = len(bundle["daily_source_rows"])
+    export["all_days_fetched"] = len(bundle["daily_source_rows"]) == len(target_dates)
+    export["daily_source_rows"] = bundle["daily_source_rows"]
+    export["source_gate_passed"] = True
 
     result = _result_entry(cfg, anchor)
     result.update(
@@ -137,14 +144,15 @@ def _rebuild_report_month(
             "status": "success",
             "filename": path.name,
             "local_size_bytes": path.stat().st_size,
-            "remote_folder": remote_folder,
-            "source_rows": source_rows,
-            "master_rows": stored_rows,
+            "remote_folder": bundle["remote_folder"],
+            "source_rows": bundle["source_rows"],
+            "master_rows": bundle["master_rows"],
             "month_rebuilt": True,
             "rebuild_days": len(target_dates),
             "days_expected": len(target_dates),
-            "days_fetched": len(daily_source_rows),
+            "days_fetched": len(bundle["daily_source_rows"]),
             "all_days_fetched": True,
+            "source_gate_passed": True,
             "verification_mode": uploaded.get("verification_mode") if uploaded else "dry-run",
             "semantic_match": uploaded.get("semantic_match") if uploaded else None,
             "upload_skipped": bool(uploaded.get("upload_skipped", False)) if uploaded else False,
@@ -152,6 +160,116 @@ def _rebuild_report_month(
         }
     )
     return result
+
+
+def run_rebuild_set(
+    reports: list[Any],
+    anchor: date,
+    mobiwork: Any,
+    sharepoint: Any,
+    drive_id: str | None,
+    dry_run: bool,
+    manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Prepare every source first; publish nothing unless all report sources pass."""
+    prepared: dict[str, dict[str, Any]] = {}
+    results: dict[str, dict[str, Any]] = {}
+
+    for cfg in reports:
+        try:
+            prepared[cfg.key] = _prepare_report_month(cfg, anchor, mobiwork)
+        except Exception as exc:
+            LOG.exception(
+                "Full month source preparation failed report=%s month=%s",
+                cfg.key,
+                anchor.strftime("%Y-%m"),
+            )
+            failed = _result_entry(cfg, anchor)
+            failed.update(
+                {
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "month_rebuilt": False,
+                    "source_gate_passed": False,
+                }
+            )
+            results[cfg.key] = failed
+
+    if results:
+        failed_keys = ", ".join(sorted(results))
+        for cfg in reports:
+            if cfg.key in results:
+                continue
+            bundle = prepared[cfg.key]
+            blocked = _result_entry(cfg, anchor)
+            blocked.update(
+                {
+                    "status": "failed",
+                    "error": (
+                        "Publish blocked by source completeness gate; failed report(s): "
+                        f"{failed_keys}"
+                    ),
+                    "source_rows": bundle["source_rows"],
+                    "master_rows": bundle["master_rows"],
+                    "month_rebuilt": False,
+                    "days_expected": len(bundle["target_dates"]),
+                    "days_fetched": len(bundle["daily_source_rows"]),
+                    "all_days_fetched": True,
+                    "source_gate_passed": False,
+                }
+            )
+            results[cfg.key] = blocked
+        return [results[cfg.key] for cfg in reports]
+
+    publish_failed = False
+    publish_error = ""
+    for cfg in reports:
+        bundle = prepared[cfg.key]
+        if publish_failed:
+            blocked = _result_entry(cfg, anchor)
+            blocked.update(
+                {
+                    "status": "failed",
+                    "error": f"Publish blocked after prior SharePoint failure: {publish_error}",
+                    "source_rows": bundle["source_rows"],
+                    "master_rows": bundle["master_rows"],
+                    "month_rebuilt": False,
+                    "source_gate_passed": True,
+                }
+            )
+            results[cfg.key] = blocked
+            continue
+
+        try:
+            results[cfg.key] = _publish_prepared_report(
+                bundle,
+                sharepoint,
+                drive_id,
+                dry_run,
+                manifest,
+            )
+        except Exception as exc:
+            LOG.exception(
+                "Full month publish failed report=%s month=%s; later reports blocked",
+                cfg.key,
+                anchor.strftime("%Y-%m"),
+            )
+            publish_failed = True
+            publish_error = f"{type(exc).__name__}: {exc}"
+            failed = _result_entry(cfg, anchor)
+            failed.update(
+                {
+                    "status": "failed",
+                    "error": publish_error,
+                    "source_rows": bundle["source_rows"],
+                    "master_rows": bundle["master_rows"],
+                    "month_rebuilt": False,
+                    "source_gate_passed": True,
+                }
+            )
+            results[cfg.key] = failed
+
+    return [results[cfg.key] for cfg in reports]
 
 
 def run() -> dict[str, Any]:
@@ -164,41 +282,23 @@ def run() -> dict[str, Any]:
     manifest["rebuild_through"] = anchor.isoformat()
     manifest["storage_model"] = "single_monthly_master_per_report"
     manifest["rebuild_policy"] = "full_month_from_api_no_existing_master_read"
-    manifest["completeness_gate"] = "all_expected_daily_fetches_must_succeed"
+    manifest["completeness_gate"] = "all_reports_all_expected_days_before_first_write"
+    manifest["publish_policy"] = "stop_after_first_sharepoint_failure"
 
     sharepoint = None
     drive_id: str | None = None
-    results: list[dict[str, Any]] = []
 
     try:
         mobiwork, sharepoint, drive_id = runner.build_clients(dry_run)
-
-        for cfg in reports:
-            try:
-                results.append(
-                    _rebuild_report_month(
-                        cfg,
-                        anchor,
-                        mobiwork,
-                        sharepoint,
-                        drive_id,
-                        dry_run,
-                        manifest,
-                    )
-                )
-            except Exception as exc:
-                LOG.exception(
-                    "Full month rebuild failed; existing SharePoint master left untouched: "
-                    "report=%s month=%s",
-                    cfg.key,
-                    anchor.strftime("%Y-%m"),
-                )
-                failed = _result_entry(cfg, anchor)
-                failed["status"] = "failed"
-                failed["error"] = f"{type(exc).__name__}: {exc}"
-                failed["month_rebuilt"] = False
-                results.append(failed)
-
+        results = run_rebuild_set(
+            reports,
+            anchor,
+            mobiwork,
+            sharepoint,
+            drive_id,
+            dry_run,
+            manifest,
+        )
         manifest["report_results"] = results
         runner._finalize_manifest(manifest, results)
         core._write_manifest(manifest)
