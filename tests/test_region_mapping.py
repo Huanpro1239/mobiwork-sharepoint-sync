@@ -30,6 +30,12 @@ class RegionMappingTests(unittest.TestCase):
         self.assertEqual(enriched[0]["vung_source"], "ma_nv_prefix")
         self.assertEqual(enriched[0]["loai_kh"], "KA Miền Trung 1")
 
+    def test_hni_historical_employee_maps_to_mien_bac(self):
+        enriched = enrich_visit_records([{"ma_nv": "HNI02"}], strict=True)
+        self.assertEqual(enriched[0]["vung_code"], "MB")
+        self.assertEqual(enriched[0]["vung"], "Miền Bắc")
+        self.assertEqual(enriched[0]["vung_source"], "ma_nv_prefix")
+
     def test_unknown_prefix_fails_in_strict_mode(self):
         with self.assertRaisesRegex(ValueError, "Unmapped employees/prefixes"):
             enrich_visit_records([{"ma_nv": "NEWX0101"}], strict=True)
@@ -43,7 +49,7 @@ class RegionMappingTests(unittest.TestCase):
     def test_master_contains_current_operating_prefixes(self):
         mapping = load_region_map()
         expected = {
-            "BAGI", "HANC", "HAPH", "HUYE", "NIBI", "QUNI", "VIPH",
+            "BAGI", "HANC", "HAPH", "HNI", "HUYE", "NIBI", "QUNI", "VIPH",
             "BITH", "DALA", "DANO", "KHA", "KHHO", "PHYE",
             "DANA", "QUNA", "QUNG",
             "BDG", "BIDU", "BRVT", "HCM", "HCMC", "VTU",
