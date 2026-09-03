@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from sharepoint_semantic import SemanticSharePointClient
+
+
+BOOTSTRAP_STATE_PATH = "_sync_state/bootstrap.json"
+
+
+def evaluate_bootstrap_state(state: dict[str, Any] | None) -> tuple[bool, str]:
+    if not state:
+        return False, "bootstrap state is missing"
+    status = str(state.get("status") or "").strip().casefold()
+    complete = state.get("bootstrap_complete") is True
+    if status != "complete" or not complete:
+        return False, f"bootstrap status={status or 'unknown'} complete={complete}"
+    return True, "bootstrap history is complete"
+
+
+def _write_output(name: str, value: str) -> None:
+    output = os.environ.get("GITHUB_OUTPUT", "").strip()
+    if not output:
+        return
+    with Path(output).open("a", encoding="utf-8") as handle:
+        handle.write(f"{name}={value}\n")
+
+
+def run() -> dict[str, Any]:
+    sharepoint = SemanticSharePointClient.from_env()
+    drive_id = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
+    if not drive_id:
+        site_id = sharepoint.get_site_id()
+        drive_id = sharepoint.get_drive_id(site_id)
+
+    state = sharepoint.download_json(drive_id, BOOTSTRAP_STATE_PATH)
+    ready, reason = evaluate_bootstrap_state(state)
+    payload = {
+        "ready": ready,
+        "reason": reason,
+        "state": state or {},
+        "state_path": BOOTSTRAP_STATE_PATH,
+    }
+    _write_output("ready", "true" if ready else "false")
+    _write_output("reason", reason.replace("\n", " "))
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return payload
+
+
+if __name__ == "__main__":
+    run()
