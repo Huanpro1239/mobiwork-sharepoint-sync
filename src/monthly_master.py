@@ -85,27 +85,62 @@ def _combine_partition_frames(old: pd.DataFrame, new: pd.DataFrame) -> pd.DataFr
     return pd.concat([old, new], ignore_index=True, sort=False)
 
 
+def _normalize_key_value(value: Any) -> str:
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _incoming_business_keys(
+    frame: pd.DataFrame,
+    keys: list[str],
+    label: str,
+) -> set[tuple[str, ...]]:
+    if frame.empty or not keys:
+        return set()
+    missing = [key for key in keys if key not in frame.columns]
+    if missing:
+        raise ValueError(f"{label} is missing configured upsert key(s): {missing}")
+
+    values: set[tuple[str, ...]] = set()
+    for row_number, row in enumerate(frame.loc[:, keys].itertuples(index=False, name=None), start=1):
+        normalized = tuple(_normalize_key_value(value) for value in row)
+        if any(not value for value in normalized):
+            raise ValueError(
+                f"{label} row {row_number} has an empty configured upsert key {keys}"
+            )
+        values.add(normalized)
+    return values
+
+
+def _existing_business_key(row: pd.Series, keys: list[str]) -> tuple[str, ...] | None:
+    values = tuple(_normalize_key_value(row.get(key)) for key in keys)
+    return None if any(not value for value in values) else values
+
+
 def merge_partition(
     existing: dict[str, pd.DataFrame],
     incoming: dict[str, pd.DataFrame],
     target_date: date,
     export_mode: str,
+    upsert_keys: list[str] | None = None,
 ) -> dict[str, pd.DataFrame]:
     partition = target_date.isoformat()
     sheet_names = ("DonHang", "ChiTietSP") if export_mode == "order" else ("Data",)
     merged: dict[str, pd.DataFrame] = {}
 
-    incoming_order_ids: set[str] = set()
-    if export_mode == "order":
-        header_new = incoming.get("DonHang", pd.DataFrame())
-        if not header_new.empty and "ma_phieu" in header_new.columns:
-            incoming_order_ids = set(header_new["ma_phieu"].astype("string").dropna().unique())
+    configured_keys = list(upsert_keys or ([] if export_mode == "flat" else ["ma_phieu"]))
+    if export_mode == "order" and configured_keys not in ([], ["ma_phieu"]):
+        raise ValueError(
+            "Order-mode monthly masters currently require upsert_keys=['ma_phieu']"
+        )
 
-    incoming_customer_ids: set[str] = set()
-    if export_mode == "flat":
-        data_new = incoming.get("Data", pd.DataFrame())
-        if not data_new.empty and "makh" in data_new.columns and "ma_nv" not in data_new.columns:
-            incoming_customer_ids = set(data_new["makh"].astype("string").dropna().unique())
+    source_sheet = "DonHang" if export_mode == "order" else "Data"
+    incoming_keys = _incoming_business_keys(
+        incoming.get(source_sheet, pd.DataFrame()),
+        configured_keys,
+        f"{source_sheet} incoming partition",
+    )
 
     for sheet_name in sheet_names:
         old = existing.get(sheet_name, pd.DataFrame()).copy()
@@ -116,10 +151,12 @@ def merge_partition(
                     f"Monthly master sheet {sheet_name!r} is missing {SYNC_DATE_COLUMN}"
                 )
             mask = old[SYNC_DATE_COLUMN].astype("string") != partition
-            if incoming_order_ids and "ma_phieu" in old.columns:
-                mask = mask & (~old["ma_phieu"].astype("string").isin(incoming_order_ids))
-            if incoming_customer_ids and "makh" in old.columns:
-                mask = mask & (~old["makh"].astype("string").isin(incoming_customer_ids))
+            if incoming_keys and all(key in old.columns for key in configured_keys):
+                old_keys = old.apply(
+                    lambda row: _existing_business_key(row, configured_keys),
+                    axis=1,
+                )
+                mask = mask & (~old_keys.isin(incoming_keys))
             old = old.loc[mask]
         combined = _combine_partition_frames(old, new)
         if SYNC_DATE_COLUMN in combined.columns:
@@ -135,17 +172,26 @@ def merge_partition(
             ["ma_phieu", "stt"],
             "ChiTietSP monthly master",
         )
+    elif configured_keys:
+        _assert_unique(merged["Data"], configured_keys, "Data monthly master")
     return merged
 
 
 def build_month_from_partitions(
     partitions: list[tuple[date, list[dict[str, Any]]]],
     export_mode: str,
+    upsert_keys: list[str] | None = None,
 ) -> dict[str, pd.DataFrame]:
     master = _empty_frames(export_mode)
     for target_date, records in partitions:
         incoming = frames_from_records(records, export_mode, target_date)
-        master = merge_partition(master, incoming, target_date, export_mode)
+        master = merge_partition(
+            master,
+            incoming,
+            target_date,
+            export_mode,
+            upsert_keys=upsert_keys,
+        )
     return master
 
 
