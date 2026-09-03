@@ -39,14 +39,18 @@ class BootstrapMonthRangeTests(unittest.TestCase):
         self.assertEqual(anchors, [date(2026, 6, 30), date(2026, 7, 31)])
 
     def test_future_month_is_rejected(self):
-        with patch.object(bootstrap, "datetime", FixedDateTime):
-            with self.assertRaisesRegex(ValueError, "future"):
-                bootstrap.resolve_month_anchors("2026-06", "2026-10")
+        with (
+            patch.object(bootstrap, "datetime", FixedDateTime),
+            self.assertRaisesRegex(ValueError, "future"),
+        ):
+            bootstrap.resolve_month_anchors("2026-06", "2026-10")
 
     def test_end_before_start_is_rejected(self):
-        with patch.object(bootstrap, "datetime", FixedDateTime):
-            with self.assertRaisesRegex(ValueError, "after START_MONTH"):
-                bootstrap.resolve_month_anchors("2026-08", "2026-07")
+        with (
+            patch.object(bootstrap, "datetime", FixedDateTime),
+            self.assertRaisesRegex(ValueError, "after START_MONTH"),
+        ):
+            bootstrap.resolve_month_anchors("2026-08", "2026-07")
 
 
 class BootstrapExecutionTests(unittest.TestCase):
