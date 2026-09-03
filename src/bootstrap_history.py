@@ -9,6 +9,7 @@ from typing import Any
 import main as core
 import rebuild_month
 import run_all_reports as runner
+from bootstrap_gate import BOOTSTRAP_STATE_PATH
 
 
 LOG = logging.getLogger("mobiwork_bootstrap")
@@ -64,6 +65,53 @@ def resolve_month_anchors(
     return anchors
 
 
+def _bootstrap_state_payload(
+    manifest: dict[str, Any],
+    status: str,
+    *,
+    bootstrap_complete: bool,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "bootstrap_complete": bootstrap_complete,
+        "run_id": manifest.get("run_id"),
+        "start_month": manifest.get("start_month"),
+        "end_month": manifest.get("end_month"),
+        "months_expected": manifest.get("months_expected", []),
+        "months_completed": manifest.get("months_completed", []),
+        "month_count_expected": manifest.get("month_count_expected", 0),
+        "month_count_completed": manifest.get("month_count_completed", 0),
+        "failed_month": manifest.get("failed_month"),
+        "started_at": manifest.get("started_at"),
+        "finished_at": manifest.get("finished_at"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _write_bootstrap_state(
+    sharepoint: Any,
+    drive_id: str | None,
+    manifest: dict[str, Any],
+    status: str,
+    *,
+    bootstrap_complete: bool,
+) -> None:
+    if not sharepoint or not drive_id:
+        return
+    payload = _bootstrap_state_payload(
+        manifest,
+        status,
+        bootstrap_complete=bootstrap_complete,
+    )
+    sharepoint.upload_json(drive_id, BOOTSTRAP_STATE_PATH, payload)
+    LOG.info(
+        "Bootstrap readiness state updated status=%s complete=%s path=%s",
+        status,
+        bootstrap_complete,
+        BOOTSTRAP_STATE_PATH,
+    )
+
+
 def run_bootstrap_set(
     reports: list[Any],
     anchors: list[date],
@@ -110,6 +158,16 @@ def run_bootstrap_set(
             break
 
         completed_months.append(month)
+        manifest["months_completed"] = list(completed_months)
+        manifest["month_count_completed"] = len(completed_months)
+        if not dry_run:
+            _write_bootstrap_state(
+                sharepoint,
+                drive_id,
+                manifest,
+                "running",
+                bootstrap_complete=False,
+            )
         LOG.info("Bootstrap month completed month=%s", month)
 
     return results, completed_months
@@ -129,12 +187,15 @@ def run() -> dict[str, Any]:
             "start_month": anchors[0].strftime("%Y-%m"),
             "end_month": anchors[-1].strftime("%Y-%m"),
             "months_expected": [anchor.strftime("%Y-%m") for anchor in anchors],
+            "months_completed": [],
             "month_count_expected": len(anchors),
+            "month_count_completed": 0,
             "bootstrap_policy": "oldest_to_newest_full_month_rebuild",
-            "schedule_handoff": "shared_production_lock_releases_only_after_bootstrap_finishes",
+            "schedule_handoff": "bootstrap_state_must_be_complete_before_production_writers_run",
             "storage_model": "single_monthly_master_per_report",
             "upsert_policy": "explicit_configured_business_keys",
             "completeness_gate": "all_reports_all_expected_days_per_month",
+            "bootstrap_state_path": BOOTSTRAP_STATE_PATH,
         }
     )
 
@@ -143,6 +204,15 @@ def run() -> dict[str, Any]:
 
     try:
         mobiwork, sharepoint, drive_id = runner.build_clients(dry_run)
+        if not dry_run:
+            _write_bootstrap_state(
+                sharepoint,
+                drive_id,
+                manifest,
+                "running",
+                bootstrap_complete=False,
+            )
+
         results, completed_months = run_bootstrap_set(
             reports,
             anchors,
@@ -175,9 +245,26 @@ def run() -> dict[str, Any]:
             LOG.exception("Unable to upload bootstrap audit manifest")
 
         if not manifest["bootstrap_complete"]:
+            if not dry_run:
+                _write_bootstrap_state(
+                    sharepoint,
+                    drive_id,
+                    manifest,
+                    "failed",
+                    bootstrap_complete=False,
+                )
             raise RuntimeError(
                 f"History bootstrap is incomplete: {len(completed_months)}/{len(anchors)} "
                 "month(s) completed; see sync_manifest.json"
+            )
+
+        if not dry_run:
+            _write_bootstrap_state(
+                sharepoint,
+                drive_id,
+                manifest,
+                "complete",
+                bootstrap_complete=True,
             )
         return manifest
     except Exception:
@@ -190,6 +277,17 @@ def run() -> dict[str, Any]:
                 core._upload_manifest(manifest, sharepoint, drive_id)
             except Exception:
                 LOG.exception("Unable to upload bootstrap failure manifest")
+        if not dry_run and sharepoint and drive_id:
+            try:
+                _write_bootstrap_state(
+                    sharepoint,
+                    drive_id,
+                    manifest,
+                    "failed",
+                    bootstrap_complete=False,
+                )
+            except Exception:
+                LOG.exception("Unable to update failed bootstrap readiness state")
         raise
 
 
