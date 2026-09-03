@@ -18,6 +18,15 @@ class FixedDateTime(datetime):
         return cls(2026, 9, 3, 10, 0, tzinfo=tz)
 
 
+class FakeSharePoint:
+    def __init__(self):
+        self.states = []
+
+    def upload_json(self, drive_id, remote_path, payload):
+        self.states.append((drive_id, remote_path, payload))
+        return {"id": "state"}
+
+
 class BootstrapMonthRangeTests(unittest.TestCase):
     def test_default_range_runs_oldest_to_current_month(self):
         with patch.object(bootstrap, "datetime", FixedDateTime):
@@ -58,6 +67,7 @@ class BootstrapExecutionTests(unittest.TestCase):
         reports = [SimpleNamespace(key="visit"), SimpleNamespace(key="bill")]
         anchors = [date(2026, 6, 30), date(2026, 7, 31), date(2026, 8, 31)]
         calls = []
+        sharepoint = FakeSharePoint()
 
         def fake_rebuild(reports_arg, anchor, mobiwork, sharepoint, drive_id, dry_run, manifest):
             calls.append(anchor)
@@ -77,7 +87,7 @@ class BootstrapExecutionTests(unittest.TestCase):
                 reports,
                 anchors,
                 object(),
-                object(),
+                sharepoint,
                 "drive",
                 False,
                 manifest,
@@ -87,11 +97,15 @@ class BootstrapExecutionTests(unittest.TestCase):
         self.assertEqual(completed, ["2026-06"])
         self.assertEqual(manifest["failed_month"], "2026-07")
         self.assertEqual(len(results), 4)
+        self.assertEqual(len(sharepoint.states), 1)
+        self.assertEqual(sharepoint.states[0][2]["status"], "running")
+        self.assertEqual(sharepoint.states[0][2]["months_completed"], ["2026-06"])
 
     def test_all_months_complete_in_order(self):
         reports = [SimpleNamespace(key="visit")]
         anchors = [date(2026, 6, 30), date(2026, 7, 31)]
         calls = []
+        sharepoint = FakeSharePoint()
 
         def fake_rebuild(reports_arg, anchor, mobiwork, sharepoint, drive_id, dry_run, manifest):
             calls.append(anchor)
@@ -102,7 +116,7 @@ class BootstrapExecutionTests(unittest.TestCase):
                 reports,
                 anchors,
                 object(),
-                object(),
+                sharepoint,
                 "drive",
                 False,
                 {},
@@ -110,6 +124,8 @@ class BootstrapExecutionTests(unittest.TestCase):
 
         self.assertEqual(calls, anchors)
         self.assertEqual(completed, ["2026-06", "2026-07"])
+        self.assertEqual(len(sharepoint.states), 2)
+        self.assertEqual(sharepoint.states[-1][2]["months_completed"], ["2026-06", "2026-07"])
 
 
 if __name__ == "__main__":
