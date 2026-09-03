@@ -23,7 +23,7 @@ class ProductionConfigIntegrityTests(unittest.TestCase):
 
     def test_business_keys_are_declared_for_customer_order_and_bill(self):
         expected = {
-            "new_customer": ["makh"],
+            "new_customer": ["ID"],
             "order": ["ma_phieu"],
             "bill": ["ma_phieu"],
         }
@@ -32,6 +32,11 @@ class ProductionConfigIntegrityTests(unittest.TestCase):
             self.assertEqual(report.get("primary_key"), business_key)
             self.assertEqual(report.get("required_fields"), business_key)
             self.assertEqual(report.get("upsert_keys"), business_key)
+
+    def test_new_customer_does_not_treat_makh_as_unique_source_identity(self):
+        report = self.reports["new_customer"]
+        self.assertNotIn("makh", report.get("primary_key", []))
+        self.assertNotIn("makh", report.get("upsert_keys", []))
 
     def test_visit_has_no_cross_partition_business_upsert(self):
         self.assertEqual(self.reports["visit"].get("upsert_keys"), [])
