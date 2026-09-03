@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from bootstrap_gate import require_bootstrap_ready
 from mobiwork import ReportConfig
 from sharepoint import SharePointClient
 
@@ -32,7 +33,43 @@ def target_dates(lookback_days: int) -> list[date]:
     return [today_vn - timedelta(days=offset) for offset in range(1, lookback_days + 1)]
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _bootstrap_gate_required() -> bool:
+    """Gate real GitHub production runs after the SharePoint drive has been resolved."""
+    if _env_bool("BOOTSTRAP_BYPASS_GATE", False):
+        return False
+    if _env_bool("DRY_RUN", False):
+        return False
+    if not _env_bool("GITHUB_ACTIONS", False):
+        return False
+    return bool(os.environ.get("SHAREPOINT_DRIVE_ID", "").strip())
+
+
+def _verify_bootstrap_ready() -> dict[str, Any] | None:
+    if not _bootstrap_gate_required():
+        return None
+
+    drive_id = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
+    sharepoint = SharePointClient.from_env()
+    state = require_bootstrap_ready(sharepoint, drive_id)
+    LOG.info(
+        "Historical bootstrap gate passed range=%s..%s completed=%s/%s",
+        state.get("start_month", ""),
+        state.get("end_month", ""),
+        state.get("month_count_completed", ""),
+        state.get("month_count_expected", ""),
+    )
+    return state
+
+
 def enabled_reports() -> list[ReportConfig]:
+    _verify_bootstrap_ready()
     reports = [cfg for cfg in load_reports(Path("config/reports.json")) if cfg.enabled]
     if not reports:
         raise RuntimeError("No MobiWork reports are enabled in config/reports.json")

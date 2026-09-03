@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from typing import Any, Protocol
 
-from sharepoint_semantic import SemanticSharePointClient
-
 
 BOOTSTRAP_STATE_PATH = "_sync_state/bootstrap.json"
 
@@ -56,6 +54,8 @@ def _write_output(name: str, value: str) -> None:
 
 
 def run() -> dict[str, Any]:
+    from sharepoint_semantic import SemanticSharePointClient
+
     sharepoint = SemanticSharePointClient.from_env()
     drive_id = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
     if not drive_id:

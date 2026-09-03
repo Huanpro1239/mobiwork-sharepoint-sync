@@ -1,9 +1,11 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
@@ -45,6 +47,79 @@ class MainHelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sync_main.target_dates(32)
 
+    def test_bootstrap_gate_only_applies_to_real_github_production_with_drive(self):
+        cases = [
+            ({}, False),
+            ({"GITHUB_ACTIONS": "true"}, False),
+            ({"GITHUB_ACTIONS": "true", "SHAREPOINT_DRIVE_ID": "drive"}, True),
+            (
+                {
+                    "GITHUB_ACTIONS": "true",
+                    "SHAREPOINT_DRIVE_ID": "drive",
+                    "DRY_RUN": "true",
+                },
+                False,
+            ),
+            (
+                {
+                    "GITHUB_ACTIONS": "true",
+                    "SHAREPOINT_DRIVE_ID": "drive",
+                    "BOOTSTRAP_BYPASS_GATE": "true",
+                },
+                False,
+            ),
+        ]
+        controlled = {
+            "GITHUB_ACTIONS",
+            "SHAREPOINT_DRIVE_ID",
+            "DRY_RUN",
+            "BOOTSTRAP_BYPASS_GATE",
+        }
+        original = {key: os.environ.get(key) for key in controlled}
+        try:
+            for values, expected in cases:
+                for key in controlled:
+                    os.environ.pop(key, None)
+                os.environ.update(values)
+                self.assertEqual(sync_main._bootstrap_gate_required(), expected)
+        finally:
+            for key in controlled:
+                os.environ.pop(key, None)
+                if original[key] is not None:
+                    os.environ[key] = original[key]
+
+    def test_verify_bootstrap_ready_uses_sharepoint_state(self):
+        state = {
+            "status": "complete",
+            "bootstrap_complete": True,
+            "start_month": "2026-06",
+            "end_month": "2026-09",
+            "month_count_completed": 4,
+            "month_count_expected": 4,
+        }
+        storage = object()
+        env = {
+            "GITHUB_ACTIONS": "true",
+            "SHAREPOINT_DRIVE_ID": "drive",
+            "DRY_RUN": "false",
+            "BOOTSTRAP_BYPASS_GATE": "false",
+        }
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch.object(sync_main.SharePointClient, "from_env", return_value=storage),
+            patch.object(sync_main, "require_bootstrap_ready", return_value=state) as gate,
+        ):
+            result = sync_main._verify_bootstrap_ready()
+
+        self.assertEqual(result, state)
+        gate.assert_called_once_with(storage, "drive")
+
+    def test_enabled_reports_checks_bootstrap_gate_first(self):
+        with patch.object(sync_main, "_verify_bootstrap_ready") as gate:
+            reports = sync_main.enabled_reports()
+        gate.assert_called_once_with()
+        self.assertTrue(reports)
+
     def test_manifest_helpers_write_hash_and_upload_audit(self):
         cfg = ReportConfig(key="bill", enabled=True, name="Bill", folder="04")
         manifest = sync_main._new_manifest("incremental", False)
@@ -65,8 +140,6 @@ class MainHelperTests(unittest.TestCase):
         previous = Path.cwd()
         with tempfile.TemporaryDirectory() as temp_dir:
             try:
-                import os
-
                 os.chdir(temp_dir)
                 path = sync_main._write_manifest(manifest)
                 saved = json.loads(path.read_text(encoding="utf-8"))
