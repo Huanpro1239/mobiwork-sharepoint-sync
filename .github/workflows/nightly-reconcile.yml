@@ -6,7 +6,7 @@ on:
       lookback_days:
         description: "How many completed days to reconcile"
         required: true
-        default: "3"
+        default: "7"
   schedule:
     - cron: "30 23 * * *"
       timezone: "Asia/Ho_Chi_Minh"
@@ -34,9 +34,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            days="${INPUT_LOOKBACK:-3}"
+            days="${INPUT_LOOKBACK:-7}"
           else
-            days="3"
+            days="7"
           fi
           if ! [[ "$days" =~ ^[1-9][0-9]*$ ]] || [ "$days" -gt 31 ]; then
             echo "::error::lookback_days must be an integer between 1 and 31"
