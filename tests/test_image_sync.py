@@ -13,6 +13,7 @@ from image_sync import (
     ImageSyncConfig,
     _download_image,
     _host_allowed,
+    _parse_date,
     _remote_image_path,
     _resolve_start_date,
     retained_months,
@@ -315,6 +316,11 @@ class ImageSyncTests(unittest.TestCase):
         self.assertEqual(content_type, "image/jpeg")
         self.assertEqual(extension, ".jpg")
         self.assertTrue(session.calls[0][1]["stream"])
+
+    def test_parse_date_preserves_business_calendar_date(self):
+        self.assertEqual(_parse_date("2026-08-03T17:00:00.000Z"), date(2026, 8, 3))
+        self.assertEqual(_parse_date("2026-08-03"), date(2026, 8, 3))
+        self.assertEqual(_parse_date("03/08/2026"), date(2026, 8, 3))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ on:
         description: "Read SharePoint visit data and count image links only"
         required: true
         type: boolean
-        default: true
+        default: false
       from_date:
         description: "Optional repair/backfill start date (YYYY-MM-DD)"
         required: false

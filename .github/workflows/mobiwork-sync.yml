@@ -20,7 +20,7 @@ on:
         description: "Fetch/export only; do not upload to SharePoint"
         required: true
         type: boolean
-        default: true
+        default: false
   schedule:
     - cron: "5 * * * *"
       timezone: "Asia/Ho_Chi_Minh"

@@ -95,6 +95,18 @@ def merge_partition(
     sheet_names = ("DonHang", "ChiTietSP") if export_mode == "order" else ("Data",)
     merged: dict[str, pd.DataFrame] = {}
 
+    incoming_order_ids: set[str] = set()
+    if export_mode == "order":
+        header_new = incoming.get("DonHang", pd.DataFrame())
+        if not header_new.empty and "ma_phieu" in header_new.columns:
+            incoming_order_ids = set(header_new["ma_phieu"].astype("string").dropna().unique())
+
+    incoming_customer_ids: set[str] = set()
+    if export_mode == "flat":
+        data_new = incoming.get("Data", pd.DataFrame())
+        if not data_new.empty and "makh" in data_new.columns and "ma_nv" not in data_new.columns:
+            incoming_customer_ids = set(data_new["makh"].astype("string").dropna().unique())
+
     for sheet_name in sheet_names:
         old = existing.get(sheet_name, pd.DataFrame()).copy()
         new = incoming.get(sheet_name, pd.DataFrame()).copy()
@@ -103,7 +115,12 @@ def merge_partition(
                 raise ValueError(
                     f"Monthly master sheet {sheet_name!r} is missing {SYNC_DATE_COLUMN}"
                 )
-            old = old.loc[old[SYNC_DATE_COLUMN].astype("string") != partition]
+            mask = old[SYNC_DATE_COLUMN].astype("string") != partition
+            if incoming_order_ids and "ma_phieu" in old.columns:
+                mask = mask & (~old["ma_phieu"].astype("string").isin(incoming_order_ids))
+            if incoming_customer_ids and "makh" in old.columns:
+                mask = mask & (~old["makh"].astype("string").isin(incoming_customer_ids))
+            old = old.loc[mask]
         combined = _combine_partition_frames(old, new)
         if SYNC_DATE_COLUMN in combined.columns:
             combined[SYNC_DATE_COLUMN] = combined[SYNC_DATE_COLUMN].astype("string")

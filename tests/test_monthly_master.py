@@ -78,6 +78,52 @@ class MonthlyMasterTests(unittest.TestCase):
         self.assertEqual(merged["DonHang"]["ma_phieu"].tolist(), ["P20", "P21X"])
         self.assertEqual(merged["ChiTietSP"]["ma_phieu"].tolist(), ["P20", "P21X"])
 
+    def test_order_master_upserts_existing_order_across_different_dates(self):
+        day20 = {
+            "ma_phieu": "P20",
+            "ngay_dat": "2026-08-20T01:00:00.000Z",
+            "trang_thai": "Chờ duyệt",
+            "san_pham": [{"stt": 1, "ma_sp": "SP01", "so_luong": "2"}],
+        }
+        master = build_month_from_partitions(
+            [(date(2026, 8, 20), [day20])],
+            "order",
+        )
+        updated_p20_on_day21 = {
+            "ma_phieu": "P20",
+            "ngay_dat": "2026-08-20T01:00:00.000Z",
+            "trang_thai": "Đã duyệt",
+            "san_pham": [
+                {"stt": 1, "ma_sp": "SP01", "so_luong": "5"},
+                {"stt": 2, "ma_sp": "SP02", "so_luong": "1"},
+            ],
+        }
+        incoming = frames_from_records([updated_p20_on_day21], "order", date(2026, 8, 21))
+        merged = merge_partition(master, incoming, date(2026, 8, 21), "order")
+
+        self.assertEqual(len(merged["DonHang"]), 1)
+        self.assertEqual(merged["DonHang"]["ma_phieu"].tolist(), ["P20"])
+        self.assertEqual(merged["DonHang"]["trang_thai"].tolist(), ["Đã duyệt"])
+        self.assertEqual(merged["DonHang"][SYNC_DATE_COLUMN].tolist(), ["2026-08-21"])
+        self.assertEqual(len(merged["ChiTietSP"]), 2)
+        self.assertEqual(merged["ChiTietSP"]["ma_phieu"].tolist(), ["P20", "P20"])
+
+    def test_customer_master_upserts_existing_makh_across_dates(self):
+        day20 = {"makh": "KH01", "tenkh": "Cửa hàng A", "dia_chi": "Địa chỉ cũ"}
+        master = build_month_from_partitions(
+            [(date(2026, 8, 20), [day20])],
+            "flat",
+        )
+        day21 = {"makh": "KH01", "tenkh": "Cửa hàng A", "dia_chi": "Địa chỉ mới"}
+        incoming = frames_from_records([day21], "flat", date(2026, 8, 21))
+        merged = merge_partition(master, incoming, date(2026, 8, 21), "flat")
+
+        frame = merged["Data"]
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame["makh"].tolist(), ["KH01"])
+        self.assertEqual(frame["dia_chi"].tolist(), ["Địa chỉ mới"])
+        self.assertEqual(frame[SYNC_DATE_COLUMN].tolist(), ["2026-08-21"])
+
     def test_order_month_rebuild_accepts_historical_lines_missing_stt(self):
         partitions = [
             (

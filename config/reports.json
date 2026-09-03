@@ -57,7 +57,8 @@
       "data_path": "data",
       "explode_field": null,
       "fixed_params": {
-        "kieu_ngay": "cdate"
+        "kieu_ngay": "cdate",
+        "trang_thai": ""
       },
       "export_mode": "order"
     },
@@ -79,15 +80,15 @@
       "total_path": "total",
       "explode_field": null,
       "fixed_params": {
-        "kieu_ngay": "cdate"
+        "kieu_ngay": "cdate",
+        "trang_thai": ""
       },
       "export_mode": "order",
       "primary_key": [
         "ma_phieu"
       ],
       "required_fields": [
-        "ma_phieu",
-        "san_pham"
+        "ma_phieu"
       ]
     }
   ]

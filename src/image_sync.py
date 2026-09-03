@@ -100,7 +100,7 @@ class ImageSyncConfig:
     request_timeout: int = 30
     max_download_retries: int = 2
     max_image_bytes: int = 20 * 1024 * 1024
-    allowed_hosts: tuple[str, ...] = ("dmsimages.mobiwork.vn",)
+    allowed_hosts: tuple[str, ...] = ("dmsimages.mobiwork.vn", "mobiwork.vn")
     force_from_date: date | None = None
 
     def __post_init__(self) -> None:
@@ -135,7 +135,7 @@ class ImageSyncConfig:
             request_timeout=int(os.environ.get("IMAGE_REQUEST_TIMEOUT_SECONDS", "30")),
             max_download_retries=int(os.environ.get("IMAGE_MAX_DOWNLOAD_RETRIES", "2")),
             max_image_bytes=int(os.environ.get("IMAGE_MAX_BYTES", str(20 * 1024 * 1024))),
-            allowed_hosts=_parse_hosts(os.environ.get("IMAGE_ALLOWED_HOSTS", "dmsimages.mobiwork.vn")),
+            allowed_hosts=_parse_hosts(os.environ.get("IMAGE_ALLOWED_HOSTS", "dmsimages.mobiwork.vn,mobiwork.vn")),
             force_from_date=force_from_date,
         )
 
@@ -157,6 +157,9 @@ def retained_months(today: date) -> set[str]:
     return {today.strftime("%Y-%m"), previous_month_start(today).strftime("%Y-%m")}
 
 
+_ISO_DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
+
 def _local_date(value: datetime) -> date:
     if value.tzinfo is not None:
         return value.astimezone(VN_TZ).date()
@@ -171,6 +174,12 @@ def _parse_date(value: Any) -> date | None:
     text = str(value or "").strip()
     if not text:
         return None
+    match = _ISO_DATE_PREFIX_RE.match(text)
+    if match:
+        try:
+            return date.fromisoformat(match.group(1))
+        except ValueError:
+            pass
     normalized = text.replace("Z", "+00:00")
     try:
         return _local_date(datetime.fromisoformat(normalized))
