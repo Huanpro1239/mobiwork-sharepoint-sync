@@ -17,9 +17,12 @@ permissions:
   contents: read
   id-token: write
 
+# Manual full-month recovery has priority over routine report/image refreshes.
+# It keeps the same production lock so SharePoint still has only one writer,
+# but triggering a rebuild cancels the current holder and starts recovery next.
 concurrency:
   group: mobiwork-sharepoint-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   rebuild:
