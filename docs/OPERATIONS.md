@@ -88,9 +88,11 @@ Phạm vi chạy thủ công:
 Production contract hiện tại:
 
 - `visit`: partition replacement theo ngày, `upsert_keys=[]`;
-- `new_customer`: `makh`;
+- `new_customer`: `ID` của record MobiWork;
 - `order`: `ma_phieu`;
 - `bill`: `ma_phieu`.
+
+`makh` của `new_customer` không phải khóa unique. Nếu source có hai record khác `ID` nhưng cùng `makh`, phải giữ cả hai. Không đổi lại primary/upsert key về `makh` chỉ để “lọc trùng”, vì dữ liệu lịch sử thực tế có reused customer code.
 
 Không thêm heuristic mới vào `monthly_master.py`. Nếu thêm report mới cần cross-partition upsert, phải khai báo `upsert_keys` trong `reports.json` và thêm test.
 
@@ -195,12 +197,13 @@ Bootstrap còn có `months_expected`, `months_completed`, `month_count_expected`
 
 1. Nếu đang bootstrap, xem Job Summary và `sync_manifest.json`; xác định `failed_month` và report lỗi.
 2. Nếu Visit lỗi mapping, cập nhật `config/employee_regions.json` đúng prefix nhân viên rồi chạy lại; không fallback bằng `loai_kh`.
-3. Khi bootstrap chưa complete, giữ routine workflows ở trạng thái disabled.
-4. Sau bootstrap, nếu dữ liệu một vài ngày sai/nhập trễ, chạy `lookback` phù hợp.
-5. Nếu nghi một master tháng đã thiếu hoặc tích lũy sai, chạy `MobiWork Full Month Rebuild` cho tháng đó.
-6. Với ảnh, xem `image_sync_manifest.json`, đặc biệt `status`, `pending_remaining`, `failed_count`, `retry_from_date`.
-7. Phân biệt lỗi dữ liệu cố định với timeout/rate limit/API tạm thời trước khi retry nhiều lần.
-8. `dry_run=true` không ghi SharePoint và không được dùng khi mục tiêu là sửa dữ liệu production.
+3. Nếu `new_customer` báo duplicate `makh`, không được loại record hoặc ép `makh` thành unique; kiểm `ID` của source vì `ID` mới là identity chuẩn.
+4. Khi bootstrap chưa complete, giữ routine workflows ở trạng thái disabled.
+5. Sau bootstrap, nếu dữ liệu một vài ngày sai/nhập trễ, chạy `lookback` phù hợp.
+6. Nếu nghi một master tháng đã thiếu hoặc tích lũy sai, chạy `MobiWork Full Month Rebuild` cho tháng đó.
+7. Với ảnh, xem `image_sync_manifest.json`, đặc biệt `status`, `pending_remaining`, `failed_count`, `retry_from_date`.
+8. Phân biệt lỗi dữ liệu cố định với timeout/rate limit/API tạm thời trước khi retry nhiều lần.
+9. `dry_run=true` không ghi SharePoint và không được dùng khi mục tiêu là sửa dữ liệu production.
 
 ## Sau thay đổi schema/code
 

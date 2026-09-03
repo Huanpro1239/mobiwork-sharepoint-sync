@@ -67,11 +67,11 @@ Các report được khai báo tại `config/reports.json`:
 | Key | Workbook | Kiểu | Business key / upsert |
 |---|---|---|---|
 | `visit` | `BaoCaoViengTham_YYYY-MM.xlsx` | flat | thay partition theo ngày; không cross-day upsert |
-| `new_customer` | `MoMoiKhachHang_YYYY-MM.xlsx` | flat | `makh` |
+| `new_customer` | `MoMoiKhachHang_YYYY-MM.xlsx` | flat | `ID` của record MobiWork |
 | `order` | `DonDatHang_YYYY-MM.xlsx` | header + detail | `ma_phieu` |
 | `bill` | `DonBanHang_YYYY-MM.xlsx` | header + detail | `ma_phieu` |
 
-`order` và `bill` kiểm uniqueness header theo `ma_phieu`; detail kiểm theo `ma_phieu + stt`. `bill` còn đối chiếu `API total == fetched rows` trước khi chấp nhận dữ liệu.
+`makh` của `new_customer` là mã nghiệp vụ và **không được giả định unique**: dữ liệu lịch sử đã có các record khác `ID` nhưng dùng lại cùng `makh`. Pipeline giữ đủ các record đó và dùng `ID` làm identity/upsert key. `order` và `bill` kiểm uniqueness header theo `ma_phieu`; detail kiểm theo `ma_phieu + stt`. `bill` còn đối chiếu `API total == fetched rows` trước khi chấp nhận dữ liệu.
 
 ### Quy tắc Vùng cho báo cáo viếng thăm
 

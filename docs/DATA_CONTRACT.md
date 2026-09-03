@@ -16,9 +16,15 @@ Tài liệu này là hợp đồng dữ liệu giữa MobiWork DMS, pipeline đ�
 | Report | Canonical workbook | Export mode | Required / primary key | Cross-partition upsert |
 |---|---|---|---|---|
 | `visit` | `BaoCaoViengTham_YYYY-MM.xlsx` | `Data` | không áp business key cứng | không; refresh theo `_sync_date` |
-| `new_customer` | `MoMoiKhachHang_YYYY-MM.xlsx` | `Data` | `makh` | `makh` |
+| `new_customer` | `MoMoiKhachHang_YYYY-MM.xlsx` | `Data` | `ID` | `ID` |
 | `order` | `DonDatHang_YYYY-MM.xlsx` | `DonHang` + `ChiTietSP` | `ma_phieu` | `ma_phieu` |
 | `bill` | `DonBanHang_YYYY-MM.xlsx` | `DonHang` + `ChiTietSP` | `ma_phieu` | `ma_phieu` |
+
+Với `new_customer`:
+
+- `ID` là identity ổn định của record MobiWork và là khóa dùng để validate/upsert.
+- `makh` là mã khách hàng nghiệp vụ, **không được giả định unique**.
+- Nếu hai record có `ID` khác nhau nhưng cùng `makh`, pipeline phải giữ cả hai. Dữ liệu lịch sử production đã có trường hợp này, nên dùng `makh` làm primary key sẽ làm mất dữ liệu hoặc làm bootstrap fail sai.
 
 Với `order`/`bill`:
 
