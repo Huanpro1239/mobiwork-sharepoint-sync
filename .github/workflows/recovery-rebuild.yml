@@ -1,0 +1,93 @@
+name: MobiWork Recovery Rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_scope:
+        description: "Month to rebuild"
+        required: true
+        type: choice
+        options:
+          - current_month
+          - previous_month
+        default: current_month
+  schedule:
+    - cron: "0 2 * * 0"
+      timezone: "Asia/Ho_Chi_Minh"
+    - cron: "30 2 1 * *"
+      timezone: "Asia/Ho_Chi_Minh"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: mobiwork-recovery-rebuild-dispatch
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Resolve recovery month
+        id: target
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          INPUT_SCOPE: ${{ inputs.target_scope }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_month=$(python - <<'PY'
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+          event_name = os.environ.get("EVENT_NAME", "")
+          schedule = os.environ.get("EVENT_SCHEDULE", "")
+          scope = os.environ.get("INPUT_SCOPE", "")
+
+          if event_name == "schedule":
+              scope = "previous_month" if schedule == "30 2 1 * *" else "current_month"
+
+          if scope == "previous_month":
+              anchor = today.replace(day=1) - timedelta(days=1)
+          elif scope == "current_month":
+              anchor = today
+          else:
+              raise SystemExit(f"Unsupported target_scope: {scope}")
+
+          print(anchor.strftime("%Y-%m"))
+          PY
+          )
+          echo "target_month=$target_month" >> "$GITHUB_OUTPUT"
+          echo "Recovery rebuild target: $target_month"
+
+      - name: Queue full-month rebuild
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_MONTH: ${{ steps.target.outputs.target_month }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n --arg target_month "$TARGET_MONTH" \
+            '{ref:"main",inputs:{target_month:$target_month,dry_run:"false"}}' \
+            | gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-rebuild-month.yml/dispatches" \
+                --input -
+          echo "Queued full-month recovery for $TARGET_MONTH."
+
+      - name: Publish summary
+        env:
+          TARGET_MONTH: ${{ steps.target.outputs.target_month }}
+        shell: bash
+        run: |
+          {
+            echo "## Recovery rebuild queued"
+            echo
+            echo "- Target month: **$TARGET_MONTH**"
+            echo "- Rebuild workflow: \`mobiwork-rebuild-month.yml\`"
+            echo "- Mode: full month from MobiWork API"
+          } >> "$GITHUB_STEP_SUMMARY"
