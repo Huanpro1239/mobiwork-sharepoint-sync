@@ -83,6 +83,23 @@ class ValidateRecordsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing required fields"):
             validate_records([{"ma_phieu": "A"}], cfg)
 
+    def test_new_customer_can_reuse_makh_when_source_ids_are_distinct(self):
+        cfg = ReportConfig(
+            key="new_customer",
+            enabled=True,
+            name="MoMoiKhachHang",
+            folder="02_MoMoiKhachHang",
+            primary_key=["ID"],
+            required_fields=["ID"],
+            upsert_keys=["ID"],
+        )
+        rows = [
+            {"ID": "6a41f58f2b7b17c81c3dd4e7", "makh": "HANC061331", "tenkh": "A"},
+            {"ID": "6a41f58f2b7b17c81c3dd506", "makh": "HANC061331", "tenkh": "B"},
+        ]
+
+        validate_records(rows, cfg)
+
 
 class FakeSession:
     def __init__(self, payloads):
