@@ -31,6 +31,10 @@ class ProductionConfigIntegrityTests(unittest.TestCase):
             report = self.reports[report_key]
             self.assertEqual(report.get("primary_key"), business_key)
             self.assertEqual(report.get("required_fields"), business_key)
+            self.assertEqual(report.get("upsert_keys"), business_key)
+
+    def test_visit_has_no_cross_partition_business_upsert(self):
+        self.assertEqual(self.reports["visit"].get("upsert_keys"), [])
 
     def test_order_and_bill_fetch_all_statuses_by_creation_date(self):
         for report_key in ("order", "bill"):
