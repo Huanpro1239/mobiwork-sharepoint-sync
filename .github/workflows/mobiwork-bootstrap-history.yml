@@ -20,10 +20,12 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: write
 
-# Bootstrap owns the same production writer lock for the entire historical run.
-# Starting it cancels the active routine writer. Hourly/nightly jobs triggered while
-# bootstrap is active wait behind this lock and can resume only after bootstrap exits.
+# Bootstrap owns the production writer lock for the full historical run. A real
+# bootstrap also disables routine workflows first and re-enables them only after
+# every requested month succeeds. If bootstrap fails/cancels, automation stays
+# paused instead of updating an incomplete historical baseline.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: true
@@ -72,6 +74,29 @@ jobs:
             test -n "$AZURE_TENANT_ID"
           fi
 
+      - name: Pause routine production workflows
+        if: ${{ inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflows=(
+            mobiwork-sync.yml
+            mobiwork-images.yml
+            mobiwork-rebuild-month.yml
+            nightly-reconcile.yml
+            recovery-rebuild.yml
+            production-smoke.yml
+            operations-health.yml
+          )
+          for workflow in "${workflows[@]}"; do
+            gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/disable"
+            echo "Paused $workflow"
+          done
+
       - name: Azure login with GitHub OIDC
         if: ${{ inputs.dry_run == false }}
         uses: azure/login@v3
@@ -118,6 +143,29 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: python src/bootstrap_history.py
 
+      - name: Resume routine production workflows
+        if: ${{ success() && inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflows=(
+            mobiwork-sync.yml
+            mobiwork-images.yml
+            mobiwork-rebuild-month.yml
+            nightly-reconcile.yml
+            recovery-rebuild.yml
+            production-smoke.yml
+            operations-health.yml
+          )
+          for workflow in "${workflows[@]}"; do
+            gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
+            echo "Resumed $workflow"
+          done
+
       - name: Publish bootstrap summary
         if: ${{ always() }}
         shell: bash
@@ -146,6 +194,10 @@ jobs:
               lines.append(f"- Failed month: **{data['failed_month']}**")
           if data.get("error"):
               lines.append(f"- Error: `{data['error']}`")
+          if not data.get("bootstrap_complete"):
+              lines.append("- Routine automation remains **paused** until bootstrap succeeds.")
+          else:
+              lines.append("- Routine automation has been **resumed**.")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
           PY
