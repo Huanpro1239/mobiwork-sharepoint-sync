@@ -1,0 +1,212 @@
+name: MobiWork Bootstrap Full History
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_month:
+        description: "First month to rebuild as YYYY-MM"
+        required: true
+        default: "2026-06"
+      end_month:
+        description: "Last month to rebuild as YYYY-MM; blank means current month"
+        required: false
+        default: ""
+      dry_run:
+        description: "Fetch/export only; do not upload to SharePoint"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+  actions: write
+
+# Bootstrap owns the production writer lock for the full historical run. A real
+# bootstrap also disables routine workflows first and re-enables them only after
+# every requested month succeeds. If bootstrap fails/cancels, automation stays
+# paused instead of updating an incomplete historical baseline.
+concurrency:
+  group: mobiwork-sharepoint-production
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip check
+
+      - name: Compile and test bootstrap command
+        run: |
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -p "test_bootstrap_history.py"
+          python -m unittest discover -s tests -p "test_rebuild_month.py"
+
+      - name: Validate required credentials
+        env:
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MOBIWORK_USER"
+          test -n "$MOBIWORK_TOKEN"
+          if [ "${{ inputs.dry_run }}" != "true" ]; then
+            test -n "$AZURE_CLIENT_ID"
+            test -n "$AZURE_TENANT_ID"
+          fi
+
+      - name: Pause routine production workflows
+        if: ${{ inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflows=(
+            mobiwork-sync.yml
+            mobiwork-images.yml
+            mobiwork-rebuild-month.yml
+            nightly-reconcile.yml
+            recovery-rebuild.yml
+            production-smoke.yml
+            operations-health.yml
+          )
+          for workflow in "${workflows[@]}"; do
+            gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/disable"
+            echo "Paused $workflow"
+          done
+
+      - name: Azure login with GitHub OIDC
+        if: ${{ inputs.dry_run == false }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Resolve SharePoint document library
+        if: ${{ inputs.dry_run == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SITE_ID=$(az rest \
+            --method get \
+            --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' \
+            --query id -o tsv)
+          DRIVES=$(az rest \
+            --method get \
+            --url "https://graph.microsoft.com/v1.0/sites/$SITE_ID/drives" \
+            --output json)
+          DRIVE_ID=$(echo "$DRIVES" | jq -r '.value[] | select((.name | ascii_downcase) == "mobiworkdms") | .id' | head -n 1)
+          test -n "$DRIVE_ID"
+          test "$DRIVE_ID" != "null"
+          echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
+
+      - name: Bootstrap all historical monthly masters
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+          MOBIWORK_MAX_RETRIES: "8"
+          MOBIWORK_TIMEOUT_SECONDS: "120"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          START_MONTH: ${{ inputs.start_month }}
+          END_MONTH: ${{ inputs.end_month }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python src/bootstrap_history.py
+
+      - name: Resume routine production workflows
+        if: ${{ success() && inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflows=(
+            mobiwork-sync.yml
+            mobiwork-images.yml
+            mobiwork-rebuild-month.yml
+            nightly-reconcile.yml
+            recovery-rebuild.yml
+            production-smoke.yml
+            operations-health.yml
+          )
+          for workflow in "${workflows[@]}"; do
+            gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
+            echo "Resumed $workflow"
+          done
+
+      - name: Publish bootstrap summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("output/sync_manifest.json")
+          if not path.exists():
+              raise SystemExit(0)
+          data = json.loads(path.read_text(encoding="utf-8"))
+          lines = [
+              "## MobiWork full-history bootstrap",
+              "",
+              f"- Status: **{data.get('status', 'unknown')}**",
+              f"- Bootstrap complete: **{data.get('bootstrap_complete', False)}**",
+              f"- Range: **{data.get('start_month', '')} → {data.get('end_month', '')}**",
+              f"- Months completed: **{data.get('month_count_completed', 0)}/{data.get('month_count_expected', 0)}**",
+              f"- Failed report executions: **{data.get('failed_report_count', 0)}**",
+              f"- SharePoint writes: **{data.get('sharepoint_write_count', 0)}**",
+              f"- Avoided no-op writes: **{data.get('sharepoint_write_avoided_count', 0)}**",
+          ]
+          if data.get("failed_month"):
+              lines.append(f"- Failed month: **{data['failed_month']}**")
+          if data.get("error"):
+              lines.append(f"- Error: `{data['error']}`")
+          if not data.get("bootstrap_complete"):
+              lines.append("- Routine automation remains **paused** until bootstrap succeeds.")
+          else:
+              lines.append("- Routine automation has been **resumed**.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          PY
+
+      - name: Upload bootstrap manifest
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobiwork-bootstrap-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/sync_manifest.json
+          if-no-files-found: ignore
+          retention-days: 30

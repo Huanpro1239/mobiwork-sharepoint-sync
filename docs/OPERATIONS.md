@@ -1,6 +1,50 @@
 # Runbook vận hành production
 
-## Lịch và luồng tự động
+## Bootstrap baseline trước khi bật lịch
+
+Sau khi triển khai mới hoặc thay đổi logic dữ liệu quan trọng, bước production đầu tiên là chạy workflow **`MobiWork Bootstrap Full History`**. Không bật các workflow routine bằng tay trước khi bootstrap hoàn tất.
+
+Input chuẩn hiện tại:
+
+```text
+start_month = 2026-06
+end_month   = [để trống = tháng hiện tại]
+dry_run     = false
+```
+
+`2026-06` là tháng lịch sử sớm nhất hiện đã xác nhận có file production trên SharePoint. Nếu MobiWork thực tế có dữ liệu trước tháng này thì phải đặt `start_month` sớm hơn.
+
+Bootstrap production thực hiện theo thứ tự:
+
+```text
+pause routine workflows
+        ↓
+2026-06 full rebuild
+        ↓ pass toàn bộ report
+2026-07 full rebuild
+        ↓ pass toàn bộ report
+2026-08 full rebuild
+        ↓ pass toàn bộ report
+tháng hiện tại → đến ngày hiện tại
+        ↓
+_sync_state/bootstrap.json = complete
+        ↓
+resume routine workflows
+```
+
+Quy tắc an toàn:
+
+- bootstrap giữ shared production writer lock trong toàn bộ lần chạy;
+- trước khi rebuild, nó disable `mobiwork-sync`, image sync, full-month recovery, nightly reconcile, production smoke và operations health;
+- mỗi tháng dùng full-month source gate: toàn bộ report và toàn bộ ngày của tháng đó phải build được trước khi publish set của tháng;
+- nếu một tháng fail, các tháng sau không chạy;
+- nếu bootstrap fail hoặc bị cancel, routine automation **vẫn bị disable**;
+- chỉ khi tất cả tháng thành công, state được ghi `status=complete`, `bootstrap_complete=true` và workflow routine mới được enable lại;
+- `dry_run=true` không ghi SharePoint và không pause/resume automation.
+
+Nếu bootstrap fail, sửa nguyên nhân rồi chạy lại bootstrap. Không manually enable các workflow routine chỉ để “chạy tiếp”, vì như vậy có thể tạo baseline lịch sử chưa đầy đủ.
+
+## Lịch và luồng tự động sau bootstrap
 
 Tất cả lịch nghiệp vụ dùng múi giờ `Asia/Ho_Chi_Minh`.
 
@@ -64,9 +108,11 @@ Mapping nằm ở `config/employee_regions.json`, lấy từ prefix của `ma_nv
 
 Consumer/Power BI phải filter Vùng bằng `vung`.
 
+Trong bootstrap lịch sử, nếu một prefix nhân viên cũ chưa có mapping thì bootstrap phải fail an toàn. Cập nhật mapping đúng nghiệp vụ rồi chạy lại; không fallback sang `loai_kh`.
+
 ## Full-month rebuild
 
-`MobiWork Full Month Rebuild` là đường khôi phục dữ liệu mạnh nhất.
+`MobiWork Full Month Rebuild` là đường khôi phục một tháng riêng lẻ.
 
 Nó không đọc master cũ để làm source. Mỗi report được fetch lại từng ngày từ đầu tháng đến anchor.
 
@@ -98,7 +144,8 @@ Nó dùng `Data anh/_state.json`, one-day overlap, `retry_from_date`, giới h�
 Report và image production dùng chung concurrency group `mobiwork-sharepoint-production` để tránh hai writer sửa SharePoint đồng thời.
 
 - sync/image thường: `cancel-in-progress: false`;
-- full-month rebuild: cùng production lock nhưng `cancel-in-progress: true` để recovery thủ công có thể ưu tiên.
+- full-month rebuild: cùng production lock nhưng `cancel-in-progress: true` để recovery thủ công có thể ưu tiên;
+- historical bootstrap: cùng production lock, `cancel-in-progress: true`, đồng thời pause routine workflows cho đến khi baseline hoàn tất.
 
 Excel được so sánh theo nội dung worksheet thay vì chỉ dựa vào kích thước hoặc raw-file hash.
 
@@ -110,7 +157,22 @@ Nó kiểm cả image state. Với mismatch có thể sửa bằng reconciliatio
 
 ## Audit và giám sát
 
-Report/rebuild ghi `output/sync_manifest.json`; image sync ghi `output/image_sync_manifest.json`.
+Report/rebuild/bootstrap ghi `output/sync_manifest.json`; image sync ghi `output/image_sync_manifest.json`.
+
+Bootstrap còn ghi readiness state tại:
+
+```text
+_sync_state/bootstrap.json
+```
+
+Trạng thái cho phép schedule tiếp tục là:
+
+```json
+{
+  "status": "complete",
+  "bootstrap_complete": true
+}
+```
 
 Report manifest cần kiểm:
 
@@ -125,15 +187,17 @@ Report manifest cần kiểm:
 
 Full rebuild còn có `source_gate_passed`, `days_expected`, `days_fetched`, `all_days_fetched`.
 
+Bootstrap còn có `months_expected`, `months_completed`, `month_count_expected`, `month_count_completed`, `failed_month`, `bootstrap_complete`.
+
 `operations-health.yml` kiểm độ mới của report sync, image sync và production smoke. Khi lỗi kéo dài, nó mở/cập nhật issue `[OPS] MobiWork automation unhealthy` và tự đóng khi phục hồi.
 
 ## Xử lý sự cố
 
-1. Mở GitHub Actions Job Summary và xác nhận workflow + target date/month.
-2. Nếu report lỗi, xem `sync_manifest.json` và `report_results`.
-3. Nếu Visit lỗi mapping, cập nhật `config/employee_regions.json` đúng prefix nhân viên rồi chạy lại; không fallback bằng `loai_kh`.
-4. Nếu dữ liệu một vài ngày sai/nhập trễ, chạy `lookback` phù hợp.
-5. Nếu nghi master tháng đã thiếu hoặc tích lũy sai, chạy `MobiWork Full Month Rebuild` cho tháng đó.
+1. Nếu đang bootstrap, xem Job Summary và `sync_manifest.json`; xác định `failed_month` và report lỗi.
+2. Nếu Visit lỗi mapping, cập nhật `config/employee_regions.json` đúng prefix nhân viên rồi chạy lại; không fallback bằng `loai_kh`.
+3. Khi bootstrap chưa complete, giữ routine workflows ở trạng thái disabled.
+4. Sau bootstrap, nếu dữ liệu một vài ngày sai/nhập trễ, chạy `lookback` phù hợp.
+5. Nếu nghi một master tháng đã thiếu hoặc tích lũy sai, chạy `MobiWork Full Month Rebuild` cho tháng đó.
 6. Với ảnh, xem `image_sync_manifest.json`, đặc biệt `status`, `pending_remaining`, `failed_count`, `retry_from_date`.
 7. Phân biệt lỗi dữ liệu cố định với timeout/rate limit/API tạm thời trước khi retry nhiều lần.
 8. `dry_run=true` không ghi SharePoint và không được dùng khi mục tiêu là sửa dữ liệu production.
@@ -146,7 +210,7 @@ Trước merge:
 compile -> Ruff -> unit tests -> coverage -> CI green
 ```
 
-Nếu thay đổi schema monthly master hoặc mapping Vùng, sau khi merge nên full rebuild tháng hiện tại; với tháng lịch sử bị ảnh hưởng thì rebuild chính tháng đó.
+Nếu thay đổi schema monthly master hoặc mapping Vùng, production baseline nên được bootstrap/rebuild lại phạm vi tháng bị ảnh hưởng trước khi dashboard refresh.
 
 Secrets bắt buộc: `MOBIWORK_USER`, `MOBIWORK_TOKEN`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`.
 
