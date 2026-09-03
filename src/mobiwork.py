@@ -39,6 +39,7 @@ class ReportConfig:
     export_mode: str = "flat"
     primary_key: list[str] = field(default_factory=list)
     required_fields: list[str] = field(default_factory=list)
+    upsert_keys: list[str] = field(default_factory=list)
 
 
 def get_by_path(payload: Any, path: str | None) -> Any:
@@ -172,7 +173,6 @@ class MobiWorkClient:
                 except ValueError:
                     pass
 
-        # Exponential backoff with small jitter to avoid synchronized retries.
         base = min(5.0 * (2**attempt), 60.0)
         return base + random.uniform(0.0, min(base * 0.1, 3.0))
 
