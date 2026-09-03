@@ -43,8 +43,8 @@ jobs:
 
       - name: Compile and test rebuild command
         run: |
-          python -m compileall -q src
-          python -m unittest tests.test_rebuild_month
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -p "test_rebuild_month.py"
 
       - name: Validate required credentials
         env:
