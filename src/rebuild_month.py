@@ -77,7 +77,11 @@ def _prepare_report_month(cfg: Any, anchor: date, mobiwork: Any) -> dict[str, An
         partitions.append((target_date, records))
         daily_source_rows[target_date.isoformat()] = len(records)
 
-    frames = build_month_from_partitions(partitions, cfg.export_mode)
+    frames = build_month_from_partitions(
+        partitions,
+        cfg.export_mode,
+        upsert_keys=cfg.upsert_keys,
+    )
     path = write_master(frames, cfg.name, anchor)
     remote_folder = f"{cfg.folder}/{anchor:%Y}/{anchor:%m}"
 
@@ -284,6 +288,7 @@ def run() -> dict[str, Any]:
     manifest["rebuild_policy"] = "full_month_from_api_no_existing_master_read"
     manifest["completeness_gate"] = "all_reports_all_expected_days_before_first_write"
     manifest["publish_policy"] = "stop_after_first_sharepoint_failure"
+    manifest["upsert_policy"] = "explicit_configured_business_keys"
 
     sharepoint = None
     drive_id: str | None = None
