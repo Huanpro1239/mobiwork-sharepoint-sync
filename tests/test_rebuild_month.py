@@ -37,14 +37,18 @@ class ResolveAnchorTests(unittest.TestCase):
             )
 
     def test_future_month_is_rejected(self):
-        with patch.object(rebuild, "datetime", FixedDateTime):
-            with self.assertRaisesRegex(ValueError, "future"):
-                rebuild.resolve_anchor("2026-10")
+        with (
+            patch.object(rebuild, "datetime", FixedDateTime),
+            self.assertRaisesRegex(ValueError, "future"),
+        ):
+            rebuild.resolve_anchor("2026-10")
 
     def test_invalid_month_format_is_rejected(self):
-        with patch.object(rebuild, "datetime", FixedDateTime):
-            with self.assertRaisesRegex(ValueError, "YYYY-MM"):
-                rebuild.resolve_anchor("09/2026")
+        with (
+            patch.object(rebuild, "datetime", FixedDateTime),
+            self.assertRaisesRegex(ValueError, "YYYY-MM"),
+        ):
+            rebuild.resolve_anchor("09/2026")
 
 
 if __name__ == "__main__":
