@@ -78,15 +78,8 @@ Only folders whose names exactly match `YYYY-MM` are automatically deleted. Manu
 
 ## Automatic workflow
 
-`.github/workflows/mobiwork-sync.yml` is the production workflow. Its hourly schedule is `5 * * * *` in `Asia/Ho_Chi_Minh`.
+`.github/workflows/mobiwork-sync.yml` cập nhật báo cáo lúc phút 05 mỗi giờ. Lượt chốt `yesterday` lúc 09:00 và các lượt production chạy thủ công sẽ dispatch `.github/workflows/mobiwork-images.yml` sau khi báo cáo thành công. Image workflow đọc dữ liệu từ SharePoint, tải một batch và tự dispatch batch kế tiếp khi còn backlog và có tiến triển.
 
-Every hourly production run now executes in this order:
-
-1. Sync all enabled MobiWork reports.
-2. Persist/replace the monthly SharePoint masters.
-3. Run image sync against the persisted SharePoint visit workbook.
-4. Publish both data-sync and image-sync manifests.
-
-The separate `.github/workflows/mobiwork-images.yml` has no schedule. It remains available as a manual repair/backfill tool and also reads SharePoint as its metadata source.
+Hourly `today` chỉ cập nhật monthly master, tránh tải lại ảnh quá thường xuyên. Image workflow vẫn có thể chạy thủ công để repair/backfill.
 
 No new GitHub secrets are required.

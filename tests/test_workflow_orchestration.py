@@ -43,24 +43,24 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertIn('today - timedelta(days=lookback)', report)
         self.assertIn("--arg from_date \"$from_date\"", report)
 
-    def test_kpi_is_not_triggered_by_generic_workflow_completion(self):
-        kpi = self._read("image-scoring-kpi.yml")
+    def test_removed_scoring_workflows_are_absent(self):
+        removed = {
+            "cloud-kpi-dryrun.yml",
+            "cloud-kpi-main-probe.yml",
+            "image-scoring-kpi.yml",
+            "migrate-kpi-bundle-main.yml",
+        }
+        existing = {path.name for path in WORKFLOWS.glob("*.yml")}
+        self.assertTrue(removed.isdisjoint(existing))
 
-        self.assertNotIn("workflow_run:", kpi)
-        self.assertIn("workflow_dispatch:", kpi)
-
-    def test_image_workflow_uses_controlled_degraded_kpi_gate(self):
+    def test_image_workflow_only_synchronizes_images(self):
         images = self._read("mobiwork-images.yml")
 
-        self.assertIn("Trigger KPI after complete image sync", images)
         self.assertIn("IMAGE_FAIL_ON_PARTIAL: \"false\"", images)
-        self.assertIn("IMAGE_KPI_MIN_COMPLETENESS_PCT: \"99.0\"", images)
-        self.assertIn("IMAGE_KPI_MAX_FAILED_IMAGES: \"10\"", images)
-        self.assertIn("status == \"partial_failure\"", images)
-        self.assertIn("completeness >= min_completeness", images)
-        self.assertIn("failed <= max_failed", images)
-        self.assertIn("deferred == 0", images)
-        self.assertIn("actions/workflows/image-scoring-kpi.yml/dispatches", images)
+        self.assertIn("python src/run_images.py", images)
+        self.assertNotIn("Trigger KPI", images)
+        self.assertNotIn("image-scoring-kpi.yml", images)
+        self.assertNotIn("IMAGE_KPI_", images)
 
     def test_partial_image_failure_can_continue_only_when_forward_progress_exists(self):
         images = self._read("mobiwork-images.yml")

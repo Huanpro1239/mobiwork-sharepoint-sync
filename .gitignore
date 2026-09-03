@@ -148,23 +148,6 @@ cache/
 input/
 feedback/
 
-# Private AI/model/reference assets. These are synchronized from SharePoint.
-weights/
-reference/
-Nguoi cham/
-Model Assets/
-AI Assets/
-*.pt
-*.pth
-*.onnx
-*.pkl
-*.sqlite
-*.sqlite3
-reference_bundle*.bin
-
-# Generated KPI artifacts
-Ket_qua_*.xlsx
-Ket_qua_*.csv
-Data cham anh*.xlsx
+# Temporary files from interrupted atomic SharePoint writes.
 *_atomic.tmp
 *.rollback

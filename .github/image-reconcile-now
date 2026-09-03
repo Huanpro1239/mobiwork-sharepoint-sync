@@ -1,3 +1,3 @@
 triggered_at=2026-09-02
-reason=verify guarded image-to-AI-to-KPI end-to-end after PR 51
+reason=reconcile retained DMS images into SharePoint Data anh
 mode=full-retained-reconcile

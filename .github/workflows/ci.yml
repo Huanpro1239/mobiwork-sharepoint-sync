@@ -40,13 +40,10 @@ jobs:
           pip check
 
       - name: Compile Python sources
-        run: python -m compileall -q src tests tests_ai
+        run: python -m compileall -q src tests
 
       - name: Ruff lint
         run: ruff check .
-
-      - name: V2.3 policy/model regression tests
-        run: python -m unittest discover -s tests_ai -v
 
       - name: Unit tests with coverage
         run: |
