@@ -16,11 +16,15 @@ class WorkflowOrchestrationTests(unittest.TestCase):
     def test_shared_production_lock_uses_supported_concurrency_keys(self):
         report = self._read("mobiwork-sync.yml")
         images = self._read("mobiwork-images.yml")
+        rebuild = self._read("mobiwork-rebuild-month.yml")
 
-        for workflow in (report, images):
+        for workflow in (report, images, rebuild):
             self.assertIn("group: mobiwork-sharepoint-production", workflow)
-            self.assertIn("cancel-in-progress: false", workflow)
             self.assertNotIn("queue: max", workflow)
+
+        self.assertIn("cancel-in-progress: false", report)
+        self.assertIn("cancel-in-progress: false", images)
+        self.assertIn("cancel-in-progress: true", rebuild)
 
     def test_images_are_dispatched_after_successful_production_report_refresh(self):
         report = self._read("mobiwork-sync.yml")
@@ -42,6 +46,23 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertIn('elif scope == "lookback":', report)
         self.assertIn('today - timedelta(days=lookback)', report)
         self.assertIn("--arg from_date \"$from_date\"", report)
+
+    def test_nightly_reconciliation_defaults_to_seven_completed_days(self):
+        nightly = self._read("nightly-reconcile.yml")
+
+        self.assertIn('default: "7"', nightly)
+        self.assertIn('days="${INPUT_LOOKBACK:-7}"', nightly)
+        self.assertIn('days="7"', nightly)
+        self.assertIn('cron: "30 23 * * *"', nightly)
+
+    def test_recovery_rebuild_covers_weekly_current_month_and_month_close(self):
+        recovery = self._read("recovery-rebuild.yml")
+
+        self.assertIn('cron: "0 2 * * 0"', recovery)
+        self.assertIn('cron: "30 2 1 * *"', recovery)
+        self.assertIn('scope = "previous_month" if schedule == "30 2 1 * *"', recovery)
+        self.assertIn('actions/workflows/mobiwork-rebuild-month.yml/dispatches', recovery)
+        self.assertIn('dry_run:"false"', recovery)
 
     def test_removed_scoring_workflows_are_absent(self):
         removed = {
