@@ -1,0 +1,111 @@
+name: MobiWork Full Month Rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_month:
+        description: "Month to rebuild as YYYY-MM; blank means current month"
+        required: false
+        default: ""
+      dry_run:
+        description: "Fetch/export only; do not upload to SharePoint"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: mobiwork-sharepoint-production
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile and test rebuild command
+        run: |
+          python -m compileall -q src
+          python -m unittest tests.test_rebuild_month
+
+      - name: Validate required credentials
+        env:
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MOBIWORK_USER"
+          test -n "$MOBIWORK_TOKEN"
+          if [ "${{ inputs.dry_run }}" != "true" ]; then
+            test -n "$AZURE_CLIENT_ID"
+            test -n "$AZURE_TENANT_ID"
+          fi
+
+      - name: Azure login with GitHub OIDC
+        if: ${{ inputs.dry_run == false }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Resolve SharePoint document library
+        if: ${{ inputs.dry_run == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SITE_ID=$(az rest --method get --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' --query id -o tsv)
+          DRIVES=$(az rest --method get --url "https://graph.microsoft.com/v1.0/sites/$SITE_ID/drives" --output json)
+          DRIVE_ID=$(echo "$DRIVES" | jq -r '.value[] | select((.name | ascii_downcase) == "mobiworkdms") | .id' | head -n 1)
+          test -n "$DRIVE_ID"
+          test "$DRIVE_ID" != "null"
+          echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
+
+      - name: Rebuild monthly masters from MobiWork API
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+          MOBIWORK_MAX_RETRIES: "8"
+          MOBIWORK_TIMEOUT_SECONDS: "120"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          TARGET_MONTH: ${{ inputs.target_month }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python src/rebuild_month.py
+
+      - name: Upload rebuild manifest
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobiwork-rebuild-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/sync_manifest.json
+          if-no-files-found: ignore
+          retention-days: 30
