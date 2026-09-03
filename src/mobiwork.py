@@ -11,6 +11,8 @@ from typing import Any
 import requests
 from requests.auth import HTTPBasicAuth
 
+from region_mapping import enrich_visit_records
+
 
 LOG = logging.getLogger("mobiwork_sync")
 
@@ -322,5 +324,7 @@ class MobiWorkClient:
                 "Refusing to export an incomplete dataset."
             )
 
+        if cfg.key == "visit":
+            all_records = enrich_visit_records(all_records)
         validate_records(all_records, cfg)
         return all_records

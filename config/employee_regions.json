@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "description": "Employee-code prefix to DMS sales region. Region is derived from ma_nv, never from customer loai_kh.",
+  "regions": {
+    "BAGI": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "HANC": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "HAPH": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "HUYE": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "NIBI": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "QUNI": {"vung_code": "MB", "vung": "Miền Bắc"},
+    "VIPH": {"vung_code": "MB", "vung": "Miền Bắc"},
+
+    "BITH": {"vung_code": "MT1", "vung": "Miền Trung 1"},
+    "DALA": {"vung_code": "MT1", "vung": "Miền Trung 1"},
+    "DANO": {"vung_code": "MT1", "vung": "Miền Trung 1"},
+    "KHA": {"vung_code": "MT1", "vung": "Miền Trung 1"},
+    "KHHO": {"vung_code": "MT1", "vung": "Miền Trung 1"},
+    "PHYE": {"vung_code": "MT1", "vung": "Miền Trung 1"},
+
+    "DANA": {"vung_code": "MT2", "vung": "Miền Trung 2"},
+    "QUNA": {"vung_code": "MT2", "vung": "Miền Trung 2"},
+    "QUNG": {"vung_code": "MT2", "vung": "Miền Trung 2"},
+
+    "BDG": {"vung_code": "MN", "vung": "Miền Nam"},
+    "BIDU": {"vung_code": "MN", "vung": "Miền Nam"},
+    "BRVT": {"vung_code": "MN", "vung": "Miền Nam"},
+    "HCM": {"vung_code": "MN", "vung": "Miền Nam"},
+    "HCMC": {"vung_code": "MN", "vung": "Miền Nam"},
+    "VTU": {"vung_code": "MN", "vung": "Miền Nam"}
+  }
+}
