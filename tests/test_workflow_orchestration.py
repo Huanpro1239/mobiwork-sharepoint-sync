@@ -17,14 +17,27 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         report = self._read("mobiwork-sync.yml")
         images = self._read("mobiwork-images.yml")
         rebuild = self._read("mobiwork-rebuild-month.yml")
+        bootstrap = self._read("mobiwork-bootstrap-history.yml")
 
-        for workflow in (report, images, rebuild):
+        for workflow in (report, images, rebuild, bootstrap):
             self.assertIn("group: mobiwork-sharepoint-production", workflow)
             self.assertNotIn("queue: max", workflow)
 
         self.assertIn("cancel-in-progress: false", report)
         self.assertIn("cancel-in-progress: false", images)
         self.assertIn("cancel-in-progress: true", rebuild)
+        self.assertIn("cancel-in-progress: true", bootstrap)
+
+    def test_bootstrap_is_manual_and_holds_production_lock_until_history_finishes(self):
+        bootstrap = self._read("mobiwork-bootstrap-history.yml")
+
+        self.assertIn("workflow_dispatch:", bootstrap)
+        self.assertNotIn("\n  schedule:\n", bootstrap)
+        self.assertIn('default: "2026-06"', bootstrap)
+        self.assertIn("timeout-minutes: 360", bootstrap)
+        self.assertIn("run: python src/bootstrap_history.py", bootstrap)
+        self.assertIn("group: mobiwork-sharepoint-production", bootstrap)
+        self.assertIn("cancel-in-progress: true", bootstrap)
 
     def test_images_are_dispatched_after_successful_production_report_refresh(self):
         report = self._read("mobiwork-sync.yml")
