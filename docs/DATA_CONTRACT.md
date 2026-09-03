@@ -9,6 +9,7 @@ Tài liệu này là hợp đồng dữ liệu giữa MobiWork DMS, pipeline đ�
 - `primary_key` dùng để kiểm tính hợp lệ/uniqueness của dữ liệu source trong một lần fetch.
 - `upsert_keys` dùng để xác định bản ghi nào phải thay thế xuyên partition khi dữ liệu nghiệp vụ được cập nhật lại.
 - Không suy luận business key từ tên cột. Mọi cross-partition upsert phải được khai báo trong `config/reports.json`.
+- Scheduled automation chỉ được coi là production-ready sau khi historical bootstrap baseline hoàn tất.
 
 ## 2. Report contract
 
@@ -52,7 +53,7 @@ Vùng = loai_kh
 
 Một khách hàng có thể mang `loai_kh` khác với Vùng phụ trách của nhân viên. Đây là tình huống hợp lệ và không phải lỗi sync.
 
-Nếu `ma_nv` không map được sang Vùng, Visit fail ở strict mode. Mục tiêu là fail rõ ràng thay vì publish dữ liệu bị phân vùng sai.
+Nếu `ma_nv` không map được sang Vùng, Visit fail ở strict mode. Mục tiêu là fail rõ ràng thay vì publish dữ liệu bị phân vùng sai. Quy tắc này áp dụng cả khi bootstrap dữ liệu lịch sử; không được fallback sang `loai_kh` chỉ để bootstrap chạy qua.
 
 ## 4. Completeness và validation
 
@@ -69,9 +70,28 @@ Pipeline có nhiều lớp kiểm tra:
 
 Không được tự thêm `total_path` cho endpoint nếu chưa xác nhận MobiWork thực sự trả field tổng tương ứng.
 
-## 5. Recovery policy
+## 5. Bootstrap baseline và recovery policy
 
-### Incremental
+### Historical bootstrap
+
+Trước khi routine schedules được dùng như nguồn production chính thức, workflow `MobiWork Bootstrap Full History` rebuild toàn bộ monthly master trong phạm vi lịch sử đã chọn.
+
+Baseline mặc định hiện bắt đầu từ `2026-06`, vì đây là tháng sớm nhất đã xác nhận có dữ liệu lịch sử production trên SharePoint. Nếu MobiWork có lịch sử sớm hơn, operator phải đặt `start_month` sớm hơn.
+
+Bootstrap contract:
+
+- rebuild tháng theo thứ tự cũ → mới;
+- tháng quá khứ chạy đến calendar month-end;
+- tháng hiện tại chạy đến ngày hiện tại theo giờ Việt Nam;
+- mỗi tháng dùng full-month all-report source completeness gate;
+- một tháng fail thì các tháng sau không chạy;
+- bootstrap production pause routine workflows trước khi rebuild;
+- bootstrap ghi readiness state tại `_sync_state/bootstrap.json`;
+- chỉ sau khi tất cả tháng pass mới ghi `status=complete`, `bootstrap_complete=true` và resume routine workflows;
+- fail/cancel giữ routine workflows paused để không tiếp tục trên historical baseline chưa đầy đủ;
+- dry-run không thay đổi SharePoint readiness state và không pause/resume routine workflows.
+
+### Incremental sau bootstrap
 
 - Theo giờ: `today`.
 - 09:00: `yesterday`.
@@ -87,14 +107,29 @@ Full-month rebuild:
 - chỉ bắt đầu ghi SharePoint khi tất cả report/tất cả ngày đã vượt source gate;
 - dừng các publish phía sau nếu có SharePoint publish failure.
 
-Lịch recovery:
+Lịch recovery sau bootstrap:
 
 - Chủ nhật 02:00: rebuild tháng hiện tại.
 - Ngày 1 lúc 02:30: rebuild tháng trước để khóa sổ.
 
 ## 6. Audit
 
-Report sync/rebuild ghi `output/sync_manifest.json` và upload audit JSON vào `_sync_runs/YYYY/MM/` khi SharePoint khả dụng.
+Report sync/rebuild/bootstrap ghi `output/sync_manifest.json` và upload audit JSON vào `_sync_runs/YYYY/MM/` khi SharePoint khả dụng.
+
+Bootstrap readiness được lưu riêng tại:
+
+```text
+_sync_state/bootstrap.json
+```
+
+Ready state hợp lệ:
+
+```json
+{
+  "status": "complete",
+  "bootstrap_complete": true
+}
+```
 
 Các trường cần theo dõi gồm:
 
@@ -107,6 +142,7 @@ Các trường cần theo dõi gồm:
 - `verification_mode`
 - `semantic_match`
 - `source_gate_passed` với full rebuild
+- `months_expected`, `months_completed`, `failed_month`, `bootstrap_complete` với bootstrap.
 
 ## 7. Quy tắc thay đổi schema
 
@@ -117,4 +153,4 @@ Khi thêm/sửa report:
 3. thêm/đổi test trong `tests/`;
 4. chạy compile + Ruff + unit tests + coverage;
 5. chỉ merge khi CI xanh;
-6. nếu thay đổi schema workbook, rebuild tháng liên quan trước khi consumer refresh dashboard.
+6. nếu thay đổi schema workbook/mapping có thể ảnh hưởng lịch sử, bootstrap hoặc rebuild toàn bộ phạm vi tháng liên quan trước khi consumer refresh dashboard.
