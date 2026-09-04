@@ -84,6 +84,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # Older bootstrap versions disabled the manual recovery workflow and could
+          # leave it disabled after failure. Repair that persisted GitHub state first.
+          gh api --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-rebuild-month.yml/enable"
+          echo "Ensured mobiwork-rebuild-month.yml is enabled for recovery."
+
           workflows=(
             mobiwork-sync.yml
             mobiwork-images.yml
@@ -172,7 +180,11 @@ jobs:
               "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
             echo "Resumed $workflow"
           done
-          echo "Manual mobiwork-rebuild-month.yml was kept enabled throughout."
+
+          gh api --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-rebuild-month.yml/enable"
+          echo "Confirmed mobiwork-rebuild-month.yml is enabled."
 
       - name: Publish bootstrap summary
         if: ${{ always() }}
