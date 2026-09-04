@@ -87,8 +87,29 @@ jobs:
         run: |
           set -euo pipefail
 
+          workflow_state() {
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/$1" \
+              --jq '.state'
+          }
+
+          pause_if_active() {
+            local workflow="$1"
+            local state
+            state="$(workflow_state "$workflow")"
+            if [ "$state" != "active" ]; then
+              echo "$workflow already paused; state=$state"
+              return
+            fi
+            gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/disable"
+            echo "Paused $workflow"
+          }
+
           # Older bootstrap versions disabled the manual recovery workflow and could
-          # leave it disabled after failure. Repair that persisted GitHub state first.
+          # leave it disabled after failure. GitHub treats enable as an idempotent PUT.
           gh api --method PUT \
             -H "Accept: application/vnd.github+json" \
             "/repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-rebuild-month.yml/enable"
@@ -104,10 +125,7 @@ jobs:
             operations-health.yml
           )
           for workflow in "${workflows[@]}"; do
-            gh api --method PUT \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/disable"
-            echo "Paused $workflow"
+            pause_if_active "$workflow"
           done
           echo "Manual mobiwork-rebuild-month.yml remains enabled for recovery."
 
@@ -167,6 +185,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          workflow_state() {
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/$1" \
+              --jq '.state'
+          }
+
+          resume_if_needed() {
+            local workflow="$1"
+            local state
+            state="$(workflow_state "$workflow")"
+            if [ "$state" = "active" ]; then
+              echo "$workflow already active; no action needed."
+              return
+            fi
+            gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
+            echo "Resumed $workflow from state=$state"
+          }
+
           workflows=(
             mobiwork-sync.yml
             mobiwork-images.yml
@@ -177,10 +217,7 @@ jobs:
             operations-health.yml
           )
           for workflow in "${workflows[@]}"; do
-            gh api --method PUT \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
-            echo "Resumed $workflow"
+            resume_if_needed "$workflow"
           done
 
           gh api --method PUT \
