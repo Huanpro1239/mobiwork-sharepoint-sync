@@ -268,6 +268,7 @@ def run() -> dict[str, Any]:
             )
         return manifest
     except Exception:
+        LOG.exception("bootstrap_history run failed")
         if manifest.get("status") == "running":
             manifest["status"] = "failed"
             manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -292,8 +293,7 @@ def run() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s | %(levelname)s | %(message)s",
-    )
+    from logging_config import configure
+
+    configure()
     run()

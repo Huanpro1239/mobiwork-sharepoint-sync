@@ -348,7 +348,7 @@ def _download_image(
                     total += len(chunk)
                     if total > cfg.max_image_bytes:
                         raise ValueError(
-                            f"Image exceeds configured size limit while streaming: {total} > {cfg.max_image_bytes} bytes"
+                            f"Image exceeds configured size while streaming: {total} > {cfg.max_image_bytes}"
                         )
                     chunks.append(chunk)
                 content = b"".join(chunks)

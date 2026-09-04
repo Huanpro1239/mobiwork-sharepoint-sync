@@ -75,10 +75,7 @@ class SharePointMonthlyImageSource:
         end = to_date.replace(day=1)
         while current <= end:
             months.append(current)
-            if current.month == 12:
-                current = date(current.year + 1, 1, 1)
-            else:
-                current = date(current.year, current.month + 1, 1)
+            current = date(current.year + 1, 1, 1) if current.month == 12 else date(current.year, current.month + 1, 1)
         return months
 
     @staticmethod
