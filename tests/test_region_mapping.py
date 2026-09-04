@@ -1,6 +1,8 @@
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
@@ -46,15 +48,22 @@ class RegionMappingTests(unittest.TestCase):
                 self.assertEqual(enriched[0]["vung"], expected[1])
                 self.assertEqual(enriched[0]["vung_source"], "ma_nv_prefix")
 
-    def test_unknown_prefix_fails_in_strict_mode(self):
+    def test_unknown_prefix_fails_only_in_explicit_strict_mode(self):
         with self.assertRaisesRegex(ValueError, "Unmapped employees/prefixes"):
             enrich_visit_records([{"ma_nv": "NEWX0101"}], strict=True)
 
-    def test_unknown_prefix_is_explicit_when_strict_disabled(self):
+    def test_unknown_prefix_is_preserved_when_strict_disabled(self):
         enriched = enrich_visit_records([{"ma_nv": "NEWX0101"}], strict=False)
-        self.assertIsNone(enriched[0]["vung"])
-        self.assertIsNone(enriched[0]["vung_code"])
+        self.assertEqual(enriched[0]["vung"], "Chưa phân vùng")
+        self.assertEqual(enriched[0]["vung_code"], "UNMAPPED")
         self.assertEqual(enriched[0]["vung_source"], "unmapped")
+
+    def test_production_default_preserves_unknown_prefix(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("EMPLOYEE_REGION_STRICT", None)
+            enriched = enrich_visit_records([{"ma_nv": "NEWX0101"}])
+        self.assertEqual(enriched[0]["vung_code"], "UNMAPPED")
+        self.assertEqual(enriched[0]["vung"], "Chưa phân vùng")
 
     def test_master_contains_current_and_bootstrap_historical_prefixes(self):
         mapping = load_region_map()
