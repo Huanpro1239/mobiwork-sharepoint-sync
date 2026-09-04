@@ -156,7 +156,10 @@ class PaginationIntegrityTests(unittest.TestCase):
 
     def test_incomplete_dataset_is_rejected(self):
         session = FakeSession(
-            [{"status": True, "data": [{"id": 1}], "total": 2}]
+            [
+                {"status": True, "data": [{"id": 1}], "total": 2},
+                {"status": True, "data": [], "total": 2},
+            ]
         )
         client = MobiWorkClient(
             "user",
@@ -180,6 +183,75 @@ class PaginationIntegrityTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Refusing to export an incomplete dataset"):
             client.fetch_report_range(cfg, date(2026, 8, 1), date(2026, 8, 1))
+
+        self.assertEqual(len(session.calls), 2)
+
+    def test_short_page_without_total_does_not_truncate_following_pages(self):
+        session = FakeSession(
+            [
+                {"status": True, "data": [{"id": 1}, {"id": 2}]},
+                {"status": True, "data": [{"id": 3}]},
+                {"status": True, "data": []},
+            ]
+        )
+        client = MobiWorkClient(
+            "user",
+            "token",
+            min_interval_seconds=0,
+            max_retries=0,
+            session=session,
+        )
+        cfg = ReportConfig(
+            key="order",
+            enabled=True,
+            name="Order",
+            folder="Order",
+            url="https://example.test/order",
+            page_param="page_number",
+            page_size_param="page_size",
+            page_size=100,
+            data_path="data",
+            primary_key=["id"],
+        )
+
+        records = client.fetch_report_range(cfg, date(2026, 8, 1), date(2026, 8, 1))
+
+        self.assertEqual([row["id"] for row in records], [1, 2, 3])
+        self.assertEqual(len(session.calls), 3)
+        self.assertEqual([call[1]["page_number"] for call in session.calls], [1, 2, 3])
+
+    def test_repeated_page_is_rejected_instead_of_looping_or_duplicating(self):
+        page = [{"id": 1}, {"id": 2}]
+        session = FakeSession(
+            [
+                {"status": True, "data": page},
+                {"status": True, "data": page},
+            ]
+        )
+        client = MobiWorkClient(
+            "user",
+            "token",
+            min_interval_seconds=0,
+            max_retries=0,
+            session=session,
+        )
+        cfg = ReportConfig(
+            key="order",
+            enabled=True,
+            name="Order",
+            folder="Order",
+            url="https://example.test/order",
+            page_param="page_number",
+            page_size_param="page_size",
+            page_size=100,
+            data_path="data",
+            primary_key=["id"],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "repeated page"):
+            client.fetch_report_range(cfg, date(2026, 8, 1), date(2026, 8, 1))
+
+        self.assertEqual(len(session.calls), 2)
 
 
 if __name__ == "__main__":
