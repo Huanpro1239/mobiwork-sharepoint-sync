@@ -13,6 +13,8 @@ if str(SRC_DIR) not in sys.path:
 
 class BootstrapGateCLITests(unittest.TestCase):
     def test_run_emits_json_to_stdout(self):
+        # Capture original env so it can be restored
+        orig_env = os.environ.get("SHAREPOINT_DRIVE_ID")
         # Ensure env drive id is set so code path uses download_json
         os.environ["SHAREPOINT_DRIVE_ID"] = "drive"
 
@@ -41,7 +43,6 @@ class BootstrapGateCLITests(unittest.TestCase):
 
             buf = io.StringIO()
             old_stdout = sys.stdout
-            orig_env = os.environ.get("SHAREPOINT_DRIVE_ID")
             try:
                 sys.stdout = buf
                 payload = bootstrap_gate.run()

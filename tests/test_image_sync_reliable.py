@@ -245,7 +245,13 @@ class ReliableImageSyncTests(unittest.TestCase):
             "image_sync_reliable._download_image", return_value=download_result
         ):
             first = run_image_sync_reliable(
-                [self.report], FakeSource(records), storage, "drive", False, date(2026, 8, 31), ImageSyncConfig()
+                [self.report],
+                FakeSource(records),
+                storage,
+                "drive",
+                False,
+                date(2026, 8, 31),
+                ImageSyncConfig(),
             )
         self.assertEqual(first["status"], "warming_up")
         first_uploads = len(storage.uploaded_bytes)
@@ -254,7 +260,13 @@ class ReliableImageSyncTests(unittest.TestCase):
             "image_sync_reliable._download_image", return_value=download_result
         ):
             second = run_image_sync_reliable(
-                [self.report], FakeSource(records), storage, "drive", False, date(2026, 8, 31), ImageSyncConfig()
+                [self.report],
+                FakeSource(records),
+                storage,
+                "drive",
+                False,
+                date(2026, 8, 31),
+                ImageSyncConfig(),
             )
 
         self.assertEqual(second["status"], "success")

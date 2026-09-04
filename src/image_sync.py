@@ -122,20 +122,43 @@ class ImageSyncConfig:
         if force_text and force_from_date is None:
             raise ValueError("IMAGE_FORCE_FROM_DATE must be a valid date")
 
+        root_folder = (
+            os.environ.get("IMAGE_ROOT_FOLDER", "Data anh")
+            .strip()
+            .strip("/")
+            or "Data anh"
+        )
+        url_field = os.environ.get("IMAGE_URL_FIELD", "hinh_anh").strip() or "hinh_anh"
+        date_field = os.environ.get("IMAGE_DATE_FIELD", "ngay").strip() or "ngay"
+        employee_field = (
+            os.environ.get("IMAGE_EMPLOYEE_FIELD", "ten_nhan_vien")
+            .strip()
+            or "ten_nhan_vien"
+        )
+        customer_field = os.environ.get("IMAGE_CUSTOMER_FIELD", "ma_kh").strip() or "ma_kh"
+        sequence_field = os.environ.get("IMAGE_SEQUENCE_FIELD", "stt_hinh").strip() or "stt_hinh"
+        max_image_bytes = int(os.environ.get("IMAGE_MAX_BYTES", str(20 * 1024 * 1024)))
+        allowed_hosts = _parse_hosts(
+            os.environ.get(
+                "IMAGE_ALLOWED_HOSTS",
+                "dmsimages.mobiwork.vn,mobiwork.vn",
+            )
+        )
+
         return cls(
             enabled=_env_bool("IMAGE_SYNC_ENABLED", True),
             source_report_key=os.environ.get("IMAGE_SOURCE_REPORT", "visit").strip() or "visit",
-            root_folder=os.environ.get("IMAGE_ROOT_FOLDER", "Data anh").strip().strip("/") or "Data anh",
-            url_field=os.environ.get("IMAGE_URL_FIELD", "hinh_anh").strip() or "hinh_anh",
-            date_field=os.environ.get("IMAGE_DATE_FIELD", "ngay").strip() or "ngay",
-            employee_field=os.environ.get("IMAGE_EMPLOYEE_FIELD", "ten_nhan_vien").strip() or "ten_nhan_vien",
-            customer_field=os.environ.get("IMAGE_CUSTOMER_FIELD", "ma_kh").strip() or "ma_kh",
-            sequence_field=os.environ.get("IMAGE_SEQUENCE_FIELD", "stt_hinh").strip() or "stt_hinh",
+            root_folder=root_folder,
+            url_field=url_field,
+            date_field=date_field,
+            employee_field=employee_field,
+            customer_field=customer_field,
+            sequence_field=sequence_field,
             require_ghi_ton=_env_bool("IMAGE_REQUIRE_GHI_TON", False),
             request_timeout=int(os.environ.get("IMAGE_REQUEST_TIMEOUT_SECONDS", "30")),
             max_download_retries=int(os.environ.get("IMAGE_MAX_DOWNLOAD_RETRIES", "2")),
-            max_image_bytes=int(os.environ.get("IMAGE_MAX_BYTES", str(20 * 1024 * 1024))),
-            allowed_hosts=_parse_hosts(os.environ.get("IMAGE_ALLOWED_HOSTS", "dmsimages.mobiwork.vn,mobiwork.vn")),
+            max_image_bytes=max_image_bytes,
+            allowed_hosts=allowed_hosts,
             force_from_date=force_from_date,
         )
 
@@ -315,7 +338,10 @@ def _download_image(
                     stream=True,
                     allow_redirects=True,
                 )
-                if response.status_code in {429, 500, 502, 503, 504} and attempt < cfg.max_download_retries:
+                if (
+                    response.status_code in {429, 500, 502, 503, 504}
+                    and attempt < cfg.max_download_retries
+                ):
                     delay = min(2.0 * (2**attempt), 30.0)
                     LOG.warning(
                         "Image download HTTP %s; retry %s/%s in %.1fs: %s",
@@ -332,12 +358,23 @@ def _download_image(
                 final_url = str(response.url or url)
                 final_host = urlsplit(final_url).hostname
                 if not final_host or not _host_allowed(final_host, cfg.allowed_hosts):
-                    raise ValueError(f"Image redirect target is not allow-listed: {final_host or '<missing>'}")
+                    raise ValueError(
+                        "Image redirect target is not allow-listed: "
+                        + (final_host or "<missing>")
+                    )
 
                 declared_length = response.headers.get("Content-Length")
-                if declared_length and declared_length.isdigit() and int(declared_length) > cfg.max_image_bytes:
+                if (
+                    declared_length
+                    and declared_length.isdigit()
+                    and int(declared_length) > cfg.max_image_bytes
+                ):
                     raise ValueError(
-                        f"Image exceeds configured size limit: {declared_length} > {cfg.max_image_bytes} bytes"
+                        "Image exceeds configured size limit: "
+                        + str(declared_length)
+                        + " > "
+                        + str(cfg.max_image_bytes)
+                        + " bytes"
                     )
 
                 chunks: list[bytes] = []
@@ -348,7 +385,11 @@ def _download_image(
                     total += len(chunk)
                     if total > cfg.max_image_bytes:
                         raise ValueError(
-                            f"Image exceeds configured size while streaming: {total} > {cfg.max_image_bytes}"
+                            "Image exceeds configured size limit while streaming: "
+                            + str(total)
+                            + " > "
+                            + str(cfg.max_image_bytes)
+                            + " bytes"
                         )
                     chunks.append(chunk)
                 content = b"".join(chunks)
@@ -361,7 +402,10 @@ def _download_image(
                     response.headers.get("Content-Type"),
                 )
                 if not content_type.startswith("image/"):
-                    raise ValueError(f"Downloaded payload is not a recognized image: content_type={content_type}")
+                    raise ValueError(
+                        "Downloaded payload is not a recognized image: content_type="
+                        + str(content_type)
+                    )
                 return content, content_type, extension
             except (requests.Timeout, requests.ConnectionError):
                 if attempt >= cfg.max_download_retries:
@@ -453,8 +497,16 @@ def _plan_candidates(
     for record in records:
         if cfg.require_ghi_ton and not _looks_true(record.get("ghi_ton")):
             continue
-        record_date = _parse_date(record.get("_sync_date")) or _parse_date(record.get(cfg.date_field))
-        if record_date is None or record_date < from_date or record_date < retention_floor or record_date > today:
+        record_date = (
+            _parse_date(record.get("_sync_date"))
+            or _parse_date(record.get(cfg.date_field))
+        )
+        if (
+            record_date is None
+            or record_date < from_date
+            or record_date < retention_floor
+            or record_date > today
+        ):
             continue
         for image_index, image_url in enumerate(_iter_urls(record.get(cfg.url_field)), start=1):
             planned.append(ImageCandidate(record, image_url, record_date, image_index))
@@ -555,7 +607,10 @@ def run_image_sync(
                 candidate.image_index,
                 extension,
             )
-            if remote_path != provisional_path and _existing_nonempty_file(storage, drive_id, remote_path):
+            if (
+                remote_path != provisional_path
+                and _existing_nonempty_file(storage, drive_id, remote_path)
+            ):
                 result["skipped_existing_count"] += 1
                 continue
 

@@ -41,6 +41,9 @@ class ProductionRecoveryCLITests(unittest.TestCase):
                 os.environ["SMOKE_MANIFEST_PATH"] = orig_env
             with contextlib.suppress(Exception):
                 tmp.unlink()
+            # Clean up any recovery_plan output produced by main()
+            with contextlib.suppress(Exception):
+                Path("output/recovery_plan.json").unlink()
         output = buf.getvalue().strip()
         parsed = json.loads(output)
         self.assertIn("eligible", parsed)

@@ -11,7 +11,13 @@ import pandas as pd
 
 import main as core
 from mobiwork import MobiWorkClient, ReportConfig
-from monthly_master import SYNC_DATE_COLUMN, frames_from_records, master_filename, read_master, write_master
+from monthly_master import (
+    SYNC_DATE_COLUMN,
+    frames_from_records,
+    master_filename,
+    read_master,
+    write_master,
+)
 from sharepoint_semantic import SemanticSharePointClient
 
 
@@ -58,20 +64,35 @@ def compare_report_frames(
         actual_partition = _target_partition(actual[sheet_name], target_date)
         expected_partition = _target_partition(expected_frame, target_date)
 
-        missing_columns = [col for col in expected_partition.columns if col not in actual_partition.columns]
+        missing_columns = [
+            col for col in expected_partition.columns if col not in actual_partition.columns
+        ]
         if missing_columns:
-            raise AssertionError(
-                f"Sheet {sheet_name}: missing columns in SharePoint master: {missing_columns}"
+            msg = (
+                "Sheet "
+                + repr(sheet_name)
+                + ": missing columns in SharePoint master: "
+                + str(missing_columns)
             )
+            raise AssertionError(msg)
 
-        extra_columns = [col for col in actual_partition.columns if col not in expected_partition.columns]
+        extra_columns = [
+            col for col in actual_partition.columns if col not in expected_partition.columns
+        ]
         stale_extra = [col for col in extra_columns if not actual_partition[col].isna().all()]
         if stale_extra:
-            raise AssertionError(
-                f"Sheet {sheet_name}: target partition contains stale extra values in {stale_extra}"
+            msg = (
+                "Sheet "
+                + repr(sheet_name)
+                + ": target partition contains stale extra values in "
+                + str(stale_extra)
             )
+            raise AssertionError(msg)
 
-        actual_selected = actual_partition.loc[:, list(expected_partition.columns)].reset_index(drop=True)
+        expected_cols = list(expected_partition.columns)
+        actual_selected = (
+            actual_partition.loc[:, expected_cols].reset_index(drop=True)
+        )
         expected_selected = expected_partition.reset_index(drop=True)
         try:
             pd.testing.assert_frame_equal(
@@ -83,9 +104,13 @@ def compare_report_frames(
                 atol=0,
             )
         except AssertionError as exc:
-            raise AssertionError(
-                f"Sheet {sheet_name}: SharePoint partition does not match fresh MobiWork source: {exc}"
-            ) from exc
+            msg = (
+                "Sheet "
+                + repr(sheet_name)
+                + ": SharePoint partition does not match fresh MobiWork source: "
+                + str(exc)
+            )
+            raise AssertionError(msg) from exc
         compared_rows += len(expected_selected)
 
     return {"compared_rows": compared_rows}
@@ -107,9 +132,13 @@ def evaluate_image_state(state: dict[str, Any] | None, target_date: date) -> dic
     failed_count = int(state.get("failed_count") or 0)
     retry_from = str(state.get("retry_from_date") or "").strip() or None
     if failed_count > 0 or retry_from:
-        raise AssertionError(
-            f"Image state still has unresolved work: failed_count={failed_count}, retry_from_date={retry_from}"
+        msg = (
+            "Image state still has unresolved work: failed_count="
+            + str(failed_count)
+            + ", retry_from_date="
+            + str(retry_from)
         )
+        raise AssertionError(msg)
 
     return {
         "status": "success",
@@ -147,7 +176,8 @@ def _write_manifest(payload: dict[str, Any]) -> Path:
     output = Path("output")
     output.mkdir(parents=True, exist_ok=True)
     path = output / "production_smoke_manifest.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    json_text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    path.write_text(json_text, encoding="utf-8")
     return path
 
 

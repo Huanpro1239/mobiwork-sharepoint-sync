@@ -150,7 +150,8 @@ class SemanticSharePointClient(SharePointClient):
                 else:
                     if matched:
                         LOG.info(
-                            "Skipping unchanged SharePoint Excel write: %s local_bytes=%s remote_bytes=%s",
+                            "Skipping unchanged SharePoint Excel write: %s "
+                            "local_bytes=%s remote_bytes=%s",
                             remote_path,
                             len(content),
                             len(current_content),
