@@ -103,7 +103,10 @@ def _incoming_business_keys(
         raise ValueError(f"{label} is missing configured upsert key(s): {missing}")
 
     values: set[tuple[str, ...]] = set()
-    for row_number, row in enumerate(frame.loc[:, keys].itertuples(index=False, name=None), start=1):
+    for row_number, row in enumerate(
+        frame.loc[:, keys].itertuples(index=False, name=None),
+        start=1,
+    ):
         normalized = tuple(_normalize_key_value(value) for value in row)
         if any(not value for value in normalized):
             raise ValueError(
@@ -116,6 +119,139 @@ def _incoming_business_keys(
 def _existing_business_key(row: pd.Series, keys: list[str]) -> tuple[str, ...] | None:
     values = tuple(_normalize_key_value(row.get(key)) for key in keys)
     return None if any(not value for value in values) else values
+
+
+def _partition_rows(frame: pd.DataFrame, partition: str, label: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    if SYNC_DATE_COLUMN not in frame.columns:
+        raise ValueError(f"{label} is missing {SYNC_DATE_COLUMN}")
+    return frame.loc[frame[SYNC_DATE_COLUMN].astype("string") == partition].copy()
+
+
+def _assert_partition_applied(
+    merged: dict[str, pd.DataFrame],
+    incoming: dict[str, pd.DataFrame],
+    target_date: date,
+    export_mode: str,
+    configured_keys: list[str],
+) -> None:
+    """Fail before publish if a fetched partition was lost or only partly applied.
+
+    This is intentionally checked after every merge, not only during full-month rebuilds.
+    It protects hourly, nightly, weekly and month-close paths with the same invariant:
+    everything fetched for the target partition must be represented in the resulting
+    monthly master, while stale rows from an older version of that partition must be gone.
+    """
+    partition = target_date.isoformat()
+
+    if export_mode == "order":
+        incoming_header = incoming.get("DonHang", pd.DataFrame())
+        incoming_detail = incoming.get("ChiTietSP", pd.DataFrame())
+        merged_header = merged.get("DonHang", pd.DataFrame())
+        merged_detail = merged.get("ChiTietSP", pd.DataFrame())
+
+        expected_header_keys = _incoming_business_keys(
+            incoming_header,
+            ["ma_phieu"],
+            "DonHang incoming quality gate",
+        )
+        expected_detail_keys = _incoming_business_keys(
+            incoming_detail,
+            ["ma_phieu", "stt"],
+            "ChiTietSP incoming quality gate",
+        )
+
+        applied_header = _partition_rows(
+            merged_header,
+            partition,
+            "DonHang merged quality gate",
+        )
+        applied_detail = _partition_rows(
+            merged_detail,
+            partition,
+            "ChiTietSP merged quality gate",
+        )
+        applied_header_keys = _incoming_business_keys(
+            applied_header,
+            ["ma_phieu"],
+            "DonHang applied quality gate",
+        )
+        applied_detail_keys = _incoming_business_keys(
+            applied_detail,
+            ["ma_phieu", "stt"],
+            "ChiTietSP applied quality gate",
+        )
+
+        if applied_header_keys != expected_header_keys:
+            missing = sorted(expected_header_keys - applied_header_keys)
+            unexpected = sorted(applied_header_keys - expected_header_keys)
+            raise RuntimeError(
+                "Monthly master quality gate failed for DonHang partition "
+                f"{partition}: missing={missing[:10]} unexpected={unexpected[:10]}"
+            )
+        if applied_detail_keys != expected_detail_keys:
+            missing = sorted(expected_detail_keys - applied_detail_keys)
+            unexpected = sorted(applied_detail_keys - expected_detail_keys)
+            raise RuntimeError(
+                "Monthly master quality gate failed for ChiTietSP partition "
+                f"{partition}: missing={missing[:10]} unexpected={unexpected[:10]}"
+            )
+
+        # A repeated ma_phieu on a later source date is a full replacement of that
+        # business entity. No old detail line for the same document may survive on
+        # another _sync_date after the new partition is applied.
+        if expected_header_keys and not merged_detail.empty:
+            if "ma_phieu" not in merged_detail.columns:
+                raise RuntimeError(
+                    "Monthly master quality gate failed: ChiTietSP has no ma_phieu"
+                )
+            parent_values = {key[0] for key in expected_header_keys}
+            normalized_parent = merged_detail["ma_phieu"].map(_normalize_key_value)
+            all_current_detail = merged_detail.loc[normalized_parent.isin(parent_values)]
+            all_current_detail_keys = _incoming_business_keys(
+                all_current_detail,
+                ["ma_phieu", "stt"],
+                "ChiTietSP current-business quality gate",
+            )
+            if all_current_detail_keys != expected_detail_keys:
+                stale = sorted(all_current_detail_keys - expected_detail_keys)
+                missing = sorted(expected_detail_keys - all_current_detail_keys)
+                raise RuntimeError(
+                    "Monthly master quality gate failed for replaced order detail "
+                    f"partition {partition}: missing={missing[:10]} stale={stale[:10]}"
+                )
+        return
+
+    incoming_data = incoming.get("Data", pd.DataFrame())
+    merged_data = merged.get("Data", pd.DataFrame())
+    applied_data = _partition_rows(merged_data, partition, "Data merged quality gate")
+
+    if configured_keys:
+        expected_keys = _incoming_business_keys(
+            incoming_data,
+            configured_keys,
+            "Data incoming quality gate",
+        )
+        applied_keys = _incoming_business_keys(
+            applied_data,
+            configured_keys,
+            "Data applied quality gate",
+        )
+        if applied_keys != expected_keys:
+            missing = sorted(expected_keys - applied_keys)
+            unexpected = sorted(applied_keys - expected_keys)
+            raise RuntimeError(
+                "Monthly master quality gate failed for Data partition "
+                f"{partition}: missing={missing[:10]} unexpected={unexpected[:10]}"
+            )
+        return
+
+    if len(applied_data) != len(incoming_data):
+        raise RuntimeError(
+            "Monthly master quality gate failed for Data partition "
+            f"{partition}: fetched_rows={len(incoming_data)} stored_rows={len(applied_data)}"
+        )
 
 
 def merge_partition(
@@ -174,6 +310,14 @@ def merge_partition(
         )
     elif configured_keys:
         _assert_unique(merged["Data"], configured_keys, "Data monthly master")
+
+    _assert_partition_applied(
+        merged,
+        incoming,
+        target_date,
+        export_mode,
+        configured_keys,
+    )
     return merged
 
 
