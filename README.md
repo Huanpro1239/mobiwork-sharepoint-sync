@@ -7,10 +7,12 @@ MobiWork Open API
         │
         ├─ Report fetch + validation
         │        │
+        │        ├─ pagination completeness / repeated-page guard
         │        ├─ business-key validation
         │        ├─ employee-region enrichment cho Visit
         │        └─ monthly merge / full-month rebuild
         │                 │
+        │                 ├─ partition quality gate
         │                 ▼
         │          Semantic SharePoint publish
         │                 │
@@ -45,12 +47,13 @@ tháng hiện tại
   ↓
 bootstrap_complete = true
   ↓
-resume hourly/nightly/weekly automation
+resume hourly/nightly/weekly/monthly automation
 ```
 
 Một bootstrap production (`dry_run=false`) sẽ:
 
 - giữ production writer lock trong toàn bộ lần chạy;
+- chờ writer đang chạy hoàn tất, không cancel job đang ghi SharePoint;
 - tạm **disable** các workflow routine trước khi rebuild;
 - rebuild từng tháng theo thứ tự cũ → mới;
 - mỗi tháng phải pass source completeness gate cho toàn bộ report;
@@ -89,8 +92,10 @@ Chi tiết xem [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md).
 
 ## Cơ chế bảo vệ dữ liệu
 
+- Paginated API không còn coi một page ngắn hơn `page_size` là EOF. Nếu source không có `total`, pipeline tiếp tục cho đến page rỗng; nếu API lặp lại cùng page, job fail thay vì ghi dữ liệu trùng/thiếu.
 - Một workbook canonical cho mỗi report/tháng; `_sync_date` lưu partition ngày và được ẩn trong Excel.
 - Upsert cross-day dùng `upsert_keys` khai báo rõ trong `reports.json`, không suy luận từ tên cột.
+- Sau mỗi merge có **partition quality gate**: dữ liệu vừa fetch phải hiện diện đầy đủ trong partition kết quả; `order`/`bill` còn kiểm không để lại detail cũ của cùng `ma_phieu`.
 - Staged SharePoint upload → semantic verification → promote → rollback/backup khi cần.
 - Không ghi lại workbook nếu nội dung nghiệp vụ không đổi.
 - Full-month rebuild không đọc master cũ; fetch lại toàn bộ ngày từ MobiWork.
@@ -107,17 +112,20 @@ Chi tiết xem [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md).
   - `HH:05`: refresh `today`.
   - `09:00`: refresh `yesterday` và queue image sync.
 - `.github/workflows/nightly-reconcile.yml`
-  - `23:30`: reconcile lại **7 ngày đã hoàn tất**.
+  - `23:30`: reconcile lại **14 ngày đã hoàn tất**.
 - `.github/workflows/recovery-rebuild.yml`
-  - Chủ nhật `02:00`: queue full rebuild tháng hiện tại.
-  - Ngày 1 mỗi tháng `02:30`: queue full rebuild tháng trước để khóa sổ.
+  - Chủ nhật `02:00`: full rebuild tháng hiện tại.
+  - Chủ nhật `05:00`: full rebuild tháng trước để bắt late/back-dated edits.
+  - Ngày 2 mỗi tháng `03:30`: full rebuild tháng trước để khóa sổ.
+- `.github/workflows/historical-reconcile.yml`
+  - Ngày 3 mỗi tháng `04:30`: full rebuild tuần tự **toàn bộ các tháng đã hoàn tất từ 2026-06 đến tháng trước**, nhằm bắt các thay đổi lịch sử nằm ngoài mọi lookback ngắn hạn.
 - `.github/workflows/mobiwork-rebuild-month.yml`: full-month rebuild thủ công/được recovery dispatcher gọi.
 - `.github/workflows/mobiwork-images.yml`: đồng bộ ảnh theo batch + checkpoint.
 - `.github/workflows/production-smoke.yml`: kiểm tra source ↔ SharePoint và one-shot bounded recovery.
 - `.github/workflows/operations-health.yml`: watchdog production.
 - `.github/workflows/ci.yml`: compile, Ruff, unit tests và coverage.
 
-Các writer production dùng concurrency lock để không đồng thời sửa cùng vùng SharePoint. Full-month recovery và bootstrap được ưu tiên khi cần khôi phục dữ liệu.
+Các writer production dùng chung concurrency lock và `cancel-in-progress: false`, vì vậy một job repair/rebuild sẽ **chờ** writer hiện tại hoàn tất thay vì cắt ngang một lần ghi SharePoint đang chạy.
 
 ## Chạy cục bộ
 
