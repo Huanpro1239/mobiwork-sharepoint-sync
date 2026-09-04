@@ -1,14 +1,14 @@
-name: MobiWork Bootstrap Full History
+name: MobiWork Historical Reconciliation
 
 on:
   workflow_dispatch:
     inputs:
       start_month:
-        description: "First month to rebuild as YYYY-MM"
+        description: "First historical month to reconcile as YYYY-MM"
         required: true
         default: "2026-06"
       end_month:
-        description: "Last month to rebuild as YYYY-MM; blank means current month"
+        description: "Last month as YYYY-MM; blank means previous completed month"
         required: false
         default: ""
       dry_run:
@@ -16,21 +16,22 @@ on:
         required: true
         type: boolean
         default: false
+  schedule:
+    - cron: "30 4 3 * *"
+      timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
   contents: read
   id-token: write
-  actions: write
 
-# Bootstrap owns the production writer lock for the full historical run. It waits
-# for any active writer to finish instead of cancelling it, then disables routine
-# workflows. Routines resume only after every requested month succeeds.
+# Old completed months are reconciled sequentially under the same SharePoint writer
+# lock. Never interrupt an active production writer; historical repair can wait.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false
 
 jobs:
-  bootstrap:
+  reconcile:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -49,15 +50,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip check
 
-      - name: Compile and test bootstrap command
+      - name: Historical reconciliation preflight
         run: |
           python -m compileall -q src tests
           python -m unittest discover -s tests -p "test_mobiwork.py"
           python -m unittest discover -s tests -p "test_monthly_master.py"
-          python -m unittest discover -s tests -p "test_bootstrap_history.py"
           python -m unittest discover -s tests -p "test_rebuild_month.py"
+          python -m unittest discover -s tests -p "test_reconcile_history.py"
 
       - name: Validate required credentials
         env:
@@ -70,37 +70,13 @@ jobs:
           set -euo pipefail
           test -n "$MOBIWORK_USER"
           test -n "$MOBIWORK_TOKEN"
-          if [ "${{ inputs.dry_run }}" != "true" ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.dry_run }}" != "true" ]; then
             test -n "$AZURE_CLIENT_ID"
             test -n "$AZURE_TENANT_ID"
           fi
 
-      - name: Pause routine production workflows
-        if: ${{ inputs.dry_run == false }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          workflows=(
-            mobiwork-sync.yml
-            mobiwork-images.yml
-            mobiwork-rebuild-month.yml
-            nightly-reconcile.yml
-            recovery-rebuild.yml
-            historical-reconcile.yml
-            production-smoke.yml
-            operations-health.yml
-          )
-          for workflow in "${workflows[@]}"; do
-            gh api --method PUT \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/disable"
-            echo "Paused $workflow"
-          done
-
       - name: Azure login with GitHub OIDC
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -108,7 +84,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Resolve SharePoint document library
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -125,11 +101,10 @@ jobs:
           test "$DRIVE_ID" != "null"
           echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
 
-      - name: Bootstrap all historical monthly masters
+      - name: Reconcile completed historical months
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
-          BOOTSTRAP_BYPASS_GATE: "true"
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
           MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
@@ -141,36 +116,12 @@ jobs:
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
-          START_MONTH: ${{ inputs.start_month }}
-          END_MONTH: ${{ inputs.end_month }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: python src/bootstrap_history.py
+          HISTORY_START_MONTH: ${{ github.event_name == 'workflow_dispatch' && inputs.start_month || '2026-06' }}
+          HISTORY_END_MONTH: ${{ github.event_name == 'workflow_dispatch' && inputs.end_month || '' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: python src/reconcile_history.py
 
-      - name: Resume routine production workflows
-        if: ${{ success() && inputs.dry_run == false }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          workflows=(
-            mobiwork-sync.yml
-            mobiwork-images.yml
-            mobiwork-rebuild-month.yml
-            nightly-reconcile.yml
-            recovery-rebuild.yml
-            historical-reconcile.yml
-            production-smoke.yml
-            operations-health.yml
-          )
-          for workflow in "${workflows[@]}"; do
-            gh api --method PUT \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
-            echo "Resumed $workflow"
-          done
-
-      - name: Publish bootstrap summary
+      - name: Publish reconciliation summary
         if: ${{ always() }}
         shell: bash
         run: |
@@ -184,10 +135,10 @@ jobs:
               raise SystemExit(0)
           data = json.loads(path.read_text(encoding="utf-8"))
           lines = [
-              "## MobiWork full-history bootstrap",
+              "## MobiWork historical reconciliation",
               "",
               f"- Status: **{data.get('status', 'unknown')}**",
-              f"- Bootstrap complete: **{data.get('bootstrap_complete', False)}**",
+              f"- Complete: **{data.get('history_reconcile_complete', False)}**",
               f"- Range: **{data.get('start_month', '')} → {data.get('end_month', '')}**",
               f"- Months completed: **{data.get('month_count_completed', 0)}/{data.get('month_count_expected', 0)}**",
               f"- Failed report executions: **{data.get('failed_report_count', 0)}**",
@@ -198,19 +149,15 @@ jobs:
               lines.append(f"- Failed month: **{data['failed_month']}**")
           if data.get("error"):
               lines.append(f"- Error: `{data['error']}`")
-          if not data.get("bootstrap_complete"):
-              lines.append("- Routine automation remains **paused** until bootstrap succeeds.")
-          else:
-              lines.append("- Routine automation has been **resumed**.")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
           PY
 
-      - name: Upload bootstrap manifest
+      - name: Upload reconciliation manifest
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: mobiwork-bootstrap-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          name: mobiwork-history-reconcile-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/sync_manifest.json
           if-no-files-found: ignore
           retention-days: 30

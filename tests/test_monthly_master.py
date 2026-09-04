@@ -4,12 +4,15 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from monthly_master import (  # noqa: E402
     SYNC_DATE_COLUMN,
+    _assert_partition_applied,
     build_month_from_partitions,
     frames_from_records,
     is_legacy_report_file,
@@ -160,6 +163,65 @@ class MonthlyMasterTests(unittest.TestCase):
                 date(2026, 8, 21),
                 "flat",
                 upsert_keys=["makh"],
+            )
+
+    def test_quality_gate_rejects_dropped_flat_rows(self):
+        target = date(2026, 8, 21)
+        incoming = frames_from_records(
+            [{"id": "A"}, {"id": "B"}],
+            "flat",
+            target,
+        )
+        broken = {"Data": incoming["Data"].iloc[:1].copy()}
+
+        with self.assertRaisesRegex(RuntimeError, "quality gate failed"):
+            _assert_partition_applied(broken, incoming, target, "flat", [])
+
+    def test_quality_gate_rejects_dropped_configured_business_key(self):
+        target = date(2026, 8, 21)
+        incoming = frames_from_records(
+            [{"ID": "C001"}, {"ID": "C002"}],
+            "flat",
+            target,
+        )
+        broken = {"Data": incoming["Data"].iloc[:1].copy()}
+
+        with self.assertRaisesRegex(RuntimeError, "quality gate failed"):
+            _assert_partition_applied(broken, incoming, target, "flat", ["ID"])
+
+    def test_quality_gate_rejects_stale_order_detail_after_upsert(self):
+        day20 = date(2026, 8, 20)
+        day21 = date(2026, 8, 21)
+        original = {
+            "ma_phieu": "P20",
+            "san_pham": [
+                {"stt": 1, "ma_sp": "SP01", "so_luong": "2"},
+                {"stt": 2, "ma_sp": "SP02", "so_luong": "1"},
+            ],
+        }
+        updated = {
+            "ma_phieu": "P20",
+            "san_pham": [{"stt": 1, "ma_sp": "SP01", "so_luong": "5"}],
+        }
+        master = build_month_from_partitions([(day20, [original])], "order")
+        incoming = frames_from_records([updated], "order", day21)
+        merged = merge_partition(master, incoming, day21, "order")
+
+        stale_detail = frames_from_records([original], "order", day20)["ChiTietSP"].iloc[[1]]
+        broken = {name: frame.copy() for name, frame in merged.items()}
+        broken["ChiTietSP"] = pd.concat(
+            [broken["ChiTietSP"], stale_detail],
+            ignore_index=True,
+            sort=False,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "replaced order detail"):
+            _assert_partition_applied(
+                broken,
+                incoming,
+                day21,
+                "order",
+                ["ma_phieu"],
             )
 
     def test_order_month_rebuild_accepts_historical_lines_missing_stt(self):

@@ -17,12 +17,12 @@ permissions:
   contents: read
   id-token: write
 
-# Manual full-month recovery has priority over routine report/image refreshes.
-# It keeps the same production lock so SharePoint still has only one writer,
-# but triggering a rebuild cancels the current holder and starts recovery next.
+# Full-month recovery shares the production writer lock with routine sync/image jobs.
+# Never cancel an active holder: an interrupted writer can leave only some reports
+# updated. The rebuild waits for the lock, then repairs the month from source API.
 concurrency:
   group: mobiwork-sharepoint-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   rebuild:
@@ -47,6 +47,8 @@ jobs:
       - name: Compile and test rebuild command
         run: |
           python -m compileall -q src tests
+          python -m unittest discover -s tests -p "test_mobiwork.py"
+          python -m unittest discover -s tests -p "test_monthly_master.py"
           python -m unittest discover -s tests -p "test_rebuild_month.py"
 
       - name: Validate required credentials

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
@@ -114,6 +115,17 @@ def validate_records(records: list[dict[str, Any]], cfg: ReportConfig) -> None:
                 f"Report {cfg.key}: duplicate primary key {cfg.primary_key}={key}"
             )
         seen.add(key)
+
+
+def _page_signature(records: list[dict[str, Any]]) -> str:
+    """Return a deterministic signature used to detect APIs that repeat a page forever."""
+    return json.dumps(
+        records,
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
 
 
 class MobiWorkClient:
@@ -252,6 +264,7 @@ class MobiWorkClient:
         all_records: list[dict[str, Any]] = []
         raw_record_count = 0
         expected_total: int | None = None
+        seen_page_signatures: set[str] = set()
         page = 1
 
         while True:
@@ -296,7 +309,9 @@ class MobiWorkClient:
                     f"Report {cfg.key}: expected list, got {type(records).__name__}"
                 )
 
-            invalid_types = [type(row).__name__ for row in records if not isinstance(row, dict)]
+            invalid_types = [
+                type(row).__name__ for row in records if not isinstance(row, dict)
+            ]
             if invalid_types:
                 raise TypeError(
                     f"Report {cfg.key}: response data contains non-object rows: "
@@ -304,6 +319,15 @@ class MobiWorkClient:
                 )
 
             clean_records: list[dict[str, Any]] = records
+            if cfg.page_param and clean_records:
+                signature = _page_signature(clean_records)
+                if signature in seen_page_signatures:
+                    raise RuntimeError(
+                        f"Report {cfg.key}: API repeated page {page}; refusing to "
+                        "continue because pagination may be stuck or incomplete"
+                    )
+                seen_page_signatures.add(signature)
+
             raw_record_count += len(clean_records)
             all_records.extend(expand_records(clean_records, cfg.explode_field))
 
@@ -311,7 +335,10 @@ class MobiWorkClient:
                 break
             if expected_total is not None and raw_record_count >= expected_total:
                 break
-            if len(records) < cfg.page_size:
+            # Do not infer EOF from a short page. Some APIs return fewer rows than
+            # the requested page_size while additional pages still exist. Without a
+            # source total, only an explicit empty page safely confirms completion.
+            if not clean_records:
                 break
 
             page += 1
