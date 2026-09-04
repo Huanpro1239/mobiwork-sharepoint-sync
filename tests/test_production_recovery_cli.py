@@ -3,6 +3,7 @@ import unittest
 import io
 import os
 import json
+import contextlib
 from pathlib import Path
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
@@ -23,6 +24,7 @@ class ProductionRecoveryCLITests(unittest.TestCase):
         tmp = Path("output/test_manifest.json")
         tmp.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(json.dumps(manifest), encoding="utf-8")
+        orig_env = os.environ.get("SMOKE_MANIFEST_PATH")
         os.environ["SMOKE_MANIFEST_PATH"] = str(tmp)
 
         buf = io.StringIO()
@@ -32,6 +34,13 @@ class ProductionRecoveryCLITests(unittest.TestCase):
             recovery.main()
         finally:
             sys.stdout = old_stdout
+            # restore env and cleanup temp file
+            if orig_env is None:
+                os.environ.pop("SMOKE_MANIFEST_PATH", None)
+            else:
+                os.environ["SMOKE_MANIFEST_PATH"] = orig_env
+            with contextlib.suppress(Exception):
+                tmp.unlink()
         output = buf.getvalue().strip()
         parsed = json.loads(output)
         self.assertIn("eligible", parsed)

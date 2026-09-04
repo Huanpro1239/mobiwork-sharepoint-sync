@@ -31,26 +31,39 @@ class BootstrapGateCLITests(unittest.TestCase):
         fake_module.SemanticSharePointClient = FakeSemanticClient
 
         orig = sys.modules.get("sharepoint_semantic")
+        had_bootstrap = "bootstrap_gate" in sys.modules
         try:
+            # Inject fake SharePoint client module
             sys.modules["sharepoint_semantic"] = fake_module
             import importlib
-            if "bootstrap_gate" in sys.modules:
-                importlib.reload(sys.modules["bootstrap_gate"])
-            else:
-                import bootstrap_gate  # type: ignore
+            # Import bootstrap_gate module bound to a local name (avoids unused-import lint)
+            bootstrap_gate = importlib.import_module("bootstrap_gate")
+
             buf = io.StringIO()
             old_stdout = sys.stdout
+            orig_env = os.environ.get("SHAREPOINT_DRIVE_ID")
             try:
                 sys.stdout = buf
-                payload = sys.modules["bootstrap_gate"].run()
+                payload = bootstrap_gate.run()
             finally:
                 sys.stdout = old_stdout
+                # restore environment variable
+                if orig_env is None:
+                    os.environ.pop("SHAREPOINT_DRIVE_ID", None)
+                else:
+                    os.environ["SHAREPOINT_DRIVE_ID"] = orig_env
         finally:
-            # restore original module (or remove our fake)
+            # restore original sharepoint_semantic module (or remove our fake)
             if orig is not None:
                 sys.modules["sharepoint_semantic"] = orig
             else:
-                del sys.modules["sharepoint_semantic"]
+                sys.modules.pop("sharepoint_semantic", None)
+            # Reload or remove bootstrap_gate to avoid caching test side-effects
+            if had_bootstrap:
+                import importlib as _importlib
+                _importlib.reload(sys.modules["bootstrap_gate"])
+            else:
+                sys.modules.pop("bootstrap_gate", None)
 
         output = buf.getvalue().strip()
         # Should be valid JSON and match payload
