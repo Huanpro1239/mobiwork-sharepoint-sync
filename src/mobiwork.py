@@ -128,6 +128,54 @@ def _page_signature(records: list[dict[str, Any]]) -> str:
     )
 
 
+def _deduplicate_exact_primary_keys(
+    records: list[dict[str, Any]],
+    cfg: ReportConfig,
+) -> list[dict[str, Any]]:
+    """Drop only byte-equivalent business-key duplicates caused by page overlap.
+
+    MobiWork pagination can overlap boundary records when data changes while pages are
+    being fetched. An exact duplicate is safe to collapse. Two different payloads with
+    the same configured primary key are *not* guessed at: they remain a hard error so
+    the pipeline never silently chooses the wrong document/customer version.
+    """
+    if not cfg.primary_key or not records:
+        return records
+
+    seen: dict[tuple[Any, ...], str] = {}
+    unique: list[dict[str, Any]] = []
+    dropped = 0
+
+    for row in records:
+        key = tuple(row.get(field_name) for field_name in cfg.primary_key)
+        if any(value in (None, "") for value in key):
+            unique.append(row)
+            continue
+
+        fingerprint = _page_signature([row])
+        previous = seen.get(key)
+        if previous is None:
+            seen[key] = fingerprint
+            unique.append(row)
+            continue
+        if previous == fingerprint:
+            dropped += 1
+            continue
+
+        raise ValueError(
+            f"Report {cfg.key}: conflicting duplicate primary key "
+            f"{cfg.primary_key}={key}; refusing to guess which payload is authoritative"
+        )
+
+    if dropped:
+        LOG.warning(
+            "Report %s: collapsed %s exact duplicate row(s) caused by API/page overlap",
+            cfg.key,
+            dropped,
+        )
+    return unique
+
+
 class MobiWorkClient:
     def __init__(
         self,
@@ -353,5 +401,6 @@ class MobiWorkClient:
 
         if cfg.key == "visit":
             all_records = enrich_visit_records(all_records)
+        all_records = _deduplicate_exact_primary_keys(all_records, cfg)
         validate_records(all_records, cfg)
         return all_records
