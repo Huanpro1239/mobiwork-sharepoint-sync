@@ -145,11 +145,11 @@ def _build_or_update_month_group(
 ) -> dict[str, Any]:
     """Prepare one report/month with one SharePoint read and one final workbook write.
 
-    When a canonical monthly master already exists, target-day fetches are isolated:
-    one failed day is reported but does not block successful target dates in the same
-    month. When the canonical master is missing, the month must be rebuilt from day 01
-    through the latest requested date; any missing rebuild partition fails the whole
-    group to avoid publishing an incomplete canonical workbook.
+    Every requested target date is attempted so the manifest captures all source errors.
+    Publishing is handled by the caller and is atomic at report/month level: if any
+    requested target date fails, the prepared partial workbook is never published.
+    When the canonical master is missing, the month is rebuilt from day 01 through the
+    latest requested date and any missing rebuild partition fails the whole group.
     """
     if not target_dates:
         raise ValueError("target_dates must not be empty")
@@ -335,7 +335,7 @@ def run_incremental_all_reports(
     manifest: dict[str, Any],
     sync_scope: str = "lookback",
 ) -> list[dict[str, Any]]:
-    """Run reports independently while batching physical I/O by report and month."""
+    """Run reports independently with atomic publishing per report/month group."""
     target_dates = incremental_target_dates(sync_scope, lookback_days)
     month_groups = group_target_dates_by_month(target_dates)
     results: list[dict[str, Any]] = []
@@ -393,6 +393,29 @@ def run_incremental_all_reports(
                     else:
                         result["status"] = "failed"
                         result["error"] = "No source result was produced for target date"
+
+                failed_dates = [
+                    value
+                    for value in grouped_dates
+                    if result_map[(cfg.key, value)]["status"] == "failed"
+                ]
+                if failed_dates:
+                    failed_text = ", ".join(value.isoformat() for value in failed_dates)
+                    for value in grouped_dates:
+                        result = result_map[(cfg.key, value)]
+                        if result["status"] == "running":
+                            result["status"] = "failed"
+                            result["error"] = (
+                                "Publish blocked by report-month completeness gate; "
+                                f"failed target date(s): {failed_text}"
+                            )
+                    LOG.error(
+                        "Skipping partial report-month publish report=%s month=%s failed_dates=%s",
+                        cfg.key,
+                        anchor.strftime("%Y-%m"),
+                        failed_text,
+                    )
+                    continue
 
                 successful_dates = [
                     value
@@ -516,7 +539,8 @@ def run_incremental() -> dict[str, Any]:
     manifest["reports"] = [cfg.key for cfg in reports]
     manifest["sync_scope"] = sync_scope
     manifest["storage_model"] = "single_monthly_master_per_report"
-    manifest["execution_policy"] = "continue_on_report_error"
+    manifest["execution_policy"] = "continue_across_reports_atomic_within_report_month"
+    manifest["report_month_gate"] = "all_requested_target_dates_before_publish"
     manifest["xlsx_verification"] = "semantic_cell_content"
     manifest["publish_batching"] = "one_read_one_publish_per_report_month"
     manifest["upsert_policy"] = "explicit_configured_business_keys"

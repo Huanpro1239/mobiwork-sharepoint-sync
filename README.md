@@ -8,11 +8,13 @@ MobiWork Open API
         ├─ Report fetch + validation
         │        │
         │        ├─ pagination completeness / repeated-page guard
+        │        ├─ exact-overlap dedupe / conflict guard
         │        ├─ business-key validation
         │        ├─ employee-region enrichment cho Visit
         │        └─ monthly merge / full-month rebuild
         │                 │
         │                 ├─ partition quality gate
+        │                 ├─ report-month atomic publish gate
         │                 ▼
         │          Semantic SharePoint publish
         │                 │
@@ -55,13 +57,14 @@ Một bootstrap production (`dry_run=false`) sẽ:
 - giữ production writer lock trong toàn bộ lần chạy;
 - chờ writer đang chạy hoàn tất, không cancel job đang ghi SharePoint;
 - tạm **disable** các workflow routine trước khi rebuild;
+- **không disable `MobiWork Full Month Rebuild`**, để vẫn còn recovery tool nếu bootstrap fail;
 - rebuild từng tháng theo thứ tự cũ → mới;
 - mỗi tháng phải pass source completeness gate cho toàn bộ report;
 - dừng ngay trước các tháng sau nếu có một tháng lỗi;
 - ghi trạng thái vào `_sync_state/bootstrap.json`;
 - chỉ **enable lại** routine workflows sau khi tất cả tháng hoàn tất thành công.
 
-Nếu bootstrap fail hoặc bị cancel, routine automation vẫn bị pause để không cập nhật tiếp trên một historical baseline chưa đầy đủ. Sau khi sửa nguyên nhân, chạy lại bootstrap từ tháng chưa hoàn tất hoặc từ đầu range cần xác nhận.
+Nếu bootstrap fail hoặc bị cancel, routine automation vẫn bị pause để không cập nhật tiếp trên một historical baseline chưa đầy đủ. Manual full-month rebuild vẫn có thể chạy và bypass bootstrap readiness gate để phục hồi một tháng riêng lẻ. Sau khi sửa nguyên nhân, chạy lại bootstrap từ tháng chưa hoàn tất hoặc từ đầu range cần xác nhận.
 
 ## Data model production
 
@@ -84,18 +87,28 @@ Các report được khai báo tại `config/reports.json`:
 - `vung`
 - `vung_source`
 
-Vùng được xác định từ `ma_nv` theo `config/employee_regions.json`. Nếu xuất hiện mã nhân viên chưa được mapping, Visit fail ở strict mode thay vì âm thầm phân sai vùng.
+Vùng được xác định từ `ma_nv` theo `config/employee_regions.json`. Production **không làm mất cả report** khi xuất hiện prefix nhân viên mới chưa được mapping. Record vẫn được giữ với:
 
-> Dashboard/Power BI phải dùng cột `vung` để lọc Vùng. Không dùng `loai_kh` thay cho Vùng.
+```text
+vung_code   = UNMAPPED
+vung        = Chưa phân vùng
+vung_source = unmapped
+```
+
+Log sẽ cảnh báo để bổ sung mapping sau. Strict mode vẫn tồn tại cho test/validation khi cần. Không dùng `loai_kh` làm fallback vì sẽ phân sai Vùng.
+
+> Dashboard/Power BI phải dùng cột `vung` để lọc Vùng. Nên hiển thị riêng `Chưa phân vùng` để dễ phát hiện mã nhân viên mới cần mapping.
 
 Chi tiết xem [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md).
 
 ## Cơ chế bảo vệ dữ liệu
 
 - Paginated API không còn coi một page ngắn hơn `page_size` là EOF. Nếu source không có `total`, pipeline tiếp tục cho đến page rỗng; nếu API lặp lại cùng page, job fail thay vì ghi dữ liệu trùng/thiếu.
+- Nếu hai page chồng biên và trả **record hoàn toàn giống nhau** với cùng primary key, pipeline collapse exact duplicate an toàn. Nếu cùng business key nhưng payload khác nhau, job vẫn fail để không tự đoán version nào đúng.
 - Một workbook canonical cho mỗi report/tháng; `_sync_date` lưu partition ngày và được ẩn trong Excel.
 - Upsert cross-day dùng `upsert_keys` khai báo rõ trong `reports.json`, không suy luận từ tên cột.
 - Sau mỗi merge có **partition quality gate**: dữ liệu vừa fetch phải hiện diện đầy đủ trong partition kết quả; `order`/`bill` còn kiểm không để lại detail cũ của cùng `ma_phieu`.
+- Incremental/lookback có **report-month atomic publish gate**: nếu một target date trong cùng report/tháng fail thì workbook partial không được publish; canonical SharePoint cũ giữ nguyên để retry sau.
 - Staged SharePoint upload → semantic verification → promote → rollback/backup khi cần.
 - Không ghi lại workbook nếu nội dung nghiệp vụ không đổi.
 - Full-month rebuild không đọc master cũ; fetch lại toàn bộ ngày từ MobiWork.
@@ -119,7 +132,7 @@ Chi tiết xem [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md).
   - Ngày 2 mỗi tháng `03:30`: full rebuild tháng trước để khóa sổ.
 - `.github/workflows/historical-reconcile.yml`
   - Ngày 3 mỗi tháng `04:30`: full rebuild tuần tự **toàn bộ các tháng đã hoàn tất từ 2026-06 đến tháng trước**, nhằm bắt các thay đổi lịch sử nằm ngoài mọi lookback ngắn hạn.
-- `.github/workflows/mobiwork-rebuild-month.yml`: full-month rebuild thủ công/được recovery dispatcher gọi.
+- `.github/workflows/mobiwork-rebuild-month.yml`: full-month rebuild thủ công/được recovery dispatcher gọi; có thể chạy ngay cả khi bootstrap state chưa complete.
 - `.github/workflows/mobiwork-images.yml`: đồng bộ ảnh theo batch + checkpoint.
 - `.github/workflows/production-smoke.yml`: kiểm tra source ↔ SharePoint và one-shot bounded recovery.
 - `.github/workflows/operations-health.yml`: watchdog production.

@@ -25,7 +25,7 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             self.assertIn("cancel-in-progress: false", workflow)
             self.assertNotIn("queue: max", workflow)
 
-    def test_bootstrap_pauses_routines_and_resumes_only_after_success(self):
+    def test_bootstrap_pauses_routines_but_keeps_manual_recovery_available(self):
         bootstrap = self._read("mobiwork-bootstrap-history.yml")
 
         self.assertIn("workflow_dispatch:", bootstrap)
@@ -40,12 +40,17 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertIn("group: mobiwork-sharepoint-production", bootstrap)
         self.assertIn("cancel-in-progress: false", bootstrap)
         self.assertIn('test_mobiwork.py', bootstrap)
+        self.assertIn('test_region_mapping.py', bootstrap)
         self.assertIn('test_monthly_master.py', bootstrap)
+        self.assertIn('EMPLOYEE_REGION_STRICT: "false"', bootstrap)
+        self.assertIn(
+            "Manual mobiwork-rebuild-month.yml remains enabled for recovery.",
+            bootstrap,
+        )
 
         routine_workflows = (
             "mobiwork-sync.yml",
             "mobiwork-images.yml",
-            "mobiwork-rebuild-month.yml",
             "nightly-reconcile.yml",
             "recovery-rebuild.yml",
             "historical-reconcile.yml",
@@ -111,11 +116,15 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertIn('test_reconcile_history.py', history)
         self.assertIn("cancel-in-progress: false", history)
 
-    def test_rebuild_runs_partition_quality_tests_before_production(self):
+    def test_rebuild_is_recovery_safe_before_bootstrap_is_complete(self):
         rebuild = self._read("mobiwork-rebuild-month.yml")
 
+        self.assertIn('test_mobiwork.py', rebuild)
+        self.assertIn('test_region_mapping.py', rebuild)
         self.assertIn('test_monthly_master.py', rebuild)
         self.assertIn('test_rebuild_month.py', rebuild)
+        self.assertIn('BOOTSTRAP_BYPASS_GATE: "true"', rebuild)
+        self.assertIn('EMPLOYEE_REGION_STRICT: "false"', rebuild)
         self.assertIn("cancel-in-progress: false", rebuild)
 
     def test_removed_scoring_workflows_are_absent(self):

@@ -220,6 +220,73 @@ class PaginationIntegrityTests(unittest.TestCase):
         self.assertEqual(len(session.calls), 3)
         self.assertEqual([call[1]["page_number"] for call in session.calls], [1, 2, 3])
 
+    def test_exact_overlap_between_pages_is_collapsed_by_primary_key(self):
+        duplicate = {"ID": "B", "name": "Beta"}
+        session = FakeSession(
+            [
+                {"status": True, "data": [{"ID": "A", "name": "Alpha"}, duplicate]},
+                {"status": True, "data": [duplicate, {"ID": "C", "name": "Gamma"}]},
+                {"status": True, "data": []},
+            ]
+        )
+        client = MobiWorkClient(
+            "user",
+            "token",
+            min_interval_seconds=0,
+            max_retries=0,
+            session=session,
+        )
+        cfg = ReportConfig(
+            key="new_customer",
+            enabled=True,
+            name="Customer",
+            folder="Customer",
+            url="https://example.test/customer",
+            page_param="page_number",
+            page_size_param="page_size",
+            page_size=100,
+            data_path="data",
+            primary_key=["ID"],
+            required_fields=["ID"],
+        )
+
+        records = client.fetch_report_range(cfg, date(2026, 8, 1), date(2026, 8, 1))
+
+        self.assertEqual([row["ID"] for row in records], ["A", "B", "C"])
+        self.assertEqual(len(session.calls), 3)
+
+    def test_conflicting_overlap_for_same_primary_key_is_rejected(self):
+        session = FakeSession(
+            [
+                {"status": True, "data": [{"ID": "A", "name": "Old"}]},
+                {"status": True, "data": [{"ID": "A", "name": "New"}]},
+                {"status": True, "data": []},
+            ]
+        )
+        client = MobiWorkClient(
+            "user",
+            "token",
+            min_interval_seconds=0,
+            max_retries=0,
+            session=session,
+        )
+        cfg = ReportConfig(
+            key="new_customer",
+            enabled=True,
+            name="Customer",
+            folder="Customer",
+            url="https://example.test/customer",
+            page_param="page_number",
+            page_size_param="page_size",
+            page_size=100,
+            data_path="data",
+            primary_key=["ID"],
+            required_fields=["ID"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "conflicting duplicate primary key"):
+            client.fetch_report_range(cfg, date(2026, 8, 1), date(2026, 8, 1))
+
     def test_repeated_page_is_rejected_instead_of_looping_or_duplicating(self):
         page = [{"id": 1}, {"id": 2}]
         session = FakeSession(
