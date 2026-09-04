@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Protocol
+import logging
+LOG = logging.getLogger("mobiwork_sync")
 
 
 BOOTSTRAP_STATE_PATH = "_sync_state/bootstrap.json"
@@ -71,7 +73,7 @@ def run() -> dict[str, Any]:
     }
     _write_output("ready", "true" if ready else "false")
     _write_output("reason", reason.replace("\n", " "))
-    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    LOG.info(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return payload
 
 

@@ -6,6 +6,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+import logging
+LOG = logging.getLogger("mobiwork_sync")
 
 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -120,7 +122,7 @@ def main() -> None:
     plan = build_recovery_plan(manifest)
     write_plan(plan)
     write_github_outputs(plan)
-    print(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True))
+    LOG.info(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
