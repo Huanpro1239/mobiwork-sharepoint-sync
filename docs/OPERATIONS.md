@@ -17,6 +17,8 @@ dry_run     = false
 Bootstrap production thực hiện theo thứ tự:
 
 ```text
+wait active writer
+        ↓
 pause routine workflows
         ↓
 2026-06 full rebuild
@@ -34,8 +36,8 @@ resume routine workflows
 
 Quy tắc an toàn:
 
-- bootstrap giữ shared production writer lock trong toàn bộ lần chạy;
-- trước khi rebuild, nó disable `mobiwork-sync`, image sync, full-month recovery, nightly reconcile, production smoke và operations health;
+- bootstrap giữ shared production writer lock trong toàn bộ lần chạy và **không cancel** writer đang chạy;
+- trước khi rebuild, nó disable `mobiwork-sync`, image sync, full-month recovery, nightly reconcile, historical reconcile, production smoke và operations health;
 - mỗi tháng dùng full-month source gate: toàn bộ report và toàn bộ ngày của tháng đó phải build được trước khi publish set của tháng;
 - nếu một tháng fail, các tháng sau không chạy;
 - nếu bootstrap fail hoặc bị cancel, routine automation **vẫn bị disable**;
@@ -51,9 +53,11 @@ Tất cả lịch nghiệp vụ dùng múi giờ `Asia/Ho_Chi_Minh`.
 ```text
 HH:05 mỗi giờ       -> MobiWork DMS Sync: today
 09:00 mỗi ngày      -> MobiWork DMS Sync: yesterday -> queue image sync
-23:30 mỗi ngày      -> reconcile 7 completed days
+23:30 mỗi ngày      -> reconcile 14 completed days
 02:00 Chủ nhật      -> full rebuild tháng hiện tại
-02:30 ngày 1/tháng  -> full rebuild tháng trước để khóa sổ
+05:00 Chủ nhật      -> full rebuild tháng trước
+03:30 ngày 2/tháng  -> full rebuild tháng trước để khóa sổ
+04:30 ngày 3/tháng  -> reconcile toàn bộ lịch sử đã hoàn tất từ 2026-06
 11:30 mỗi ngày      -> production smoke
 mỗi 2 giờ :20       -> operations health watchdog
 ```
@@ -67,13 +71,18 @@ Mỗi report/tháng có một workbook canonical. Cột `_sync_date` xác địn
 Pipeline incremental:
 
 1. fetch source MobiWork;
-2. validate required fields/business keys;
-3. enrich Visit với Vùng theo mã nhân viên;
-4. merge partition hiện tại;
-5. cross-partition upsert theo `upsert_keys` khai báo trong `config/reports.json`;
-6. staged SharePoint upload;
-7. semantic verification;
-8. promote file canonical hoặc giữ/rollback file an toàn khi lỗi.
+2. với paginated report: tiếp tục đến `API total` hoặc page rỗng; không coi page ngắn là EOF;
+3. reject API repeated-page thay vì loop hoặc ghi dữ liệu trùng/thiếu;
+4. validate required fields/business keys;
+5. enrich Visit với Vùng theo mã nhân viên;
+6. merge partition hiện tại;
+7. cross-partition upsert theo `upsert_keys` khai báo trong `config/reports.json`;
+8. chạy partition quality gate để xác nhận dữ liệu vừa fetch tồn tại đầy đủ trong master kết quả;
+9. staged SharePoint upload;
+10. semantic verification;
+11. promote file canonical hoặc giữ/rollback file an toàn khi lỗi.
+
+Với `order`/`bill`, quality gate kiểm cả `DonHang[ma_phieu]`, `ChiTietSP[ma_phieu,stt]` và không cho detail cũ của một `ma_phieu` đã được thay thế còn sót trong master.
 
 Nếu canonical master chưa tồn tại, report được rebuild từ ngày 01 đến ngày mục tiêu. Nếu thiếu partition bắt buộc, pipeline không publish workbook chưa đầy đủ.
 
@@ -131,6 +140,26 @@ dry_run = false
 
 Tháng hiện tại rebuild đến ngày hiện tại. Tháng quá khứ rebuild đến ngày cuối tháng.
 
+## Historical reconciliation hàng tháng
+
+`MobiWork Historical Reconciliation` chạy `04:30` ngày 3 hàng tháng. Mục tiêu là bắt các chỉnh sửa/back-date nằm ngoài cửa sổ nightly 14 ngày và ngoài current/previous-month weekly recovery.
+
+Mặc định workflow rebuild tuần tự:
+
+```text
+2026-06 -> 2026-07 -> ... -> tháng trước
+```
+
+Mỗi tháng dùng đúng full-month source gate như manual rebuild. Nếu một tháng fail, các tháng sau không chạy trong lần đó. Workflow này **không thay đổi** `_sync_state/bootstrap.json`; nó chỉ yêu cầu bootstrap baseline đã ready trước khi chạy production.
+
+Có thể chạy thủ công với:
+
+```text
+start_month = 2026-06
+end_month   = [trống = tháng trước]
+dry_run     = false
+```
+
 ## Đồng bộ ảnh
 
 Image sync đọc metadata từ monthly master Viếng thăm trên SharePoint và lưu ảnh vào:
@@ -143,11 +172,11 @@ Nó dùng `Data anh/_state.json`, one-day overlap, `retry_from_date`, giới h�
 
 ## Concurrency và an toàn
 
-Report và image production dùng chung concurrency group `mobiwork-sharepoint-production` để tránh hai writer sửa SharePoint đồng thời.
+Report, image, full-month rebuild, historical reconciliation và bootstrap dùng chung concurrency group `mobiwork-sharepoint-production` để tránh hai writer sửa SharePoint đồng thời.
 
-- sync/image thường: `cancel-in-progress: false`;
-- full-month rebuild: cùng production lock nhưng `cancel-in-progress: true` để recovery thủ công có thể ưu tiên;
-- historical bootstrap: cùng production lock, `cancel-in-progress: true`, đồng thời pause routine workflows cho đến khi baseline hoàn tất.
+Tất cả writer dùng `cancel-in-progress: false`. Recovery/rebuild phải **chờ** writer hiện tại hoàn tất; không cắt ngang một job đang publish vì điều đó có thể để một số report đã mới trong khi report khác vẫn cũ.
+
+Bootstrap còn pause routine workflows sau khi nó lấy được production lock, và chỉ resume khi historical baseline hoàn tất thành công.
 
 Excel được so sánh theo nội dung worksheet thay vì chỉ dựa vào kích thước hoặc raw-file hash.
 
@@ -159,7 +188,7 @@ Nó kiểm cả image state. Với mismatch có thể sửa bằng reconciliatio
 
 ## Audit và giám sát
 
-Report/rebuild/bootstrap ghi `output/sync_manifest.json`; image sync ghi `output/image_sync_manifest.json`.
+Report/rebuild/bootstrap/historical reconciliation ghi `output/sync_manifest.json`; image sync ghi `output/image_sync_manifest.json`.
 
 Bootstrap còn ghi readiness state tại:
 
@@ -189,7 +218,9 @@ Report manifest cần kiểm:
 
 Full rebuild còn có `source_gate_passed`, `days_expected`, `days_fetched`, `all_days_fetched`.
 
-Bootstrap còn có `months_expected`, `months_completed`, `month_count_expected`, `month_count_completed`, `failed_month`, `bootstrap_complete`.
+Bootstrap có `months_expected`, `months_completed`, `month_count_expected`, `month_count_completed`, `failed_month`, `bootstrap_complete`.
+
+Historical reconciliation có `months_expected`, `months_completed`, `month_count_expected`, `month_count_completed`, `failed_month`, `history_reconcile_complete`.
 
 `operations-health.yml` kiểm độ mới của report sync, image sync và production smoke. Khi lỗi kéo dài, nó mở/cập nhật issue `[OPS] MobiWork automation unhealthy` và tự đóng khi phục hồi.
 
@@ -201,9 +232,11 @@ Bootstrap còn có `months_expected`, `months_completed`, `month_count_expected`
 4. Khi bootstrap chưa complete, giữ routine workflows ở trạng thái disabled.
 5. Sau bootstrap, nếu dữ liệu một vài ngày sai/nhập trễ, chạy `lookback` phù hợp.
 6. Nếu nghi một master tháng đã thiếu hoặc tích lũy sai, chạy `MobiWork Full Month Rebuild` cho tháng đó.
-7. Với ảnh, xem `image_sync_manifest.json`, đặc biệt `status`, `pending_remaining`, `failed_count`, `retry_from_date`.
-8. Phân biệt lỗi dữ liệu cố định với timeout/rate limit/API tạm thời trước khi retry nhiều lần.
-9. `dry_run=true` không ghi SharePoint và không được dùng khi mục tiêu là sửa dữ liệu production.
+7. Nếu nghi chỉnh sửa cũ hơn tháng trước không được bắt, chạy `MobiWork Historical Reconciliation` từ tháng lịch sử cần kiểm tra.
+8. Nếu API pagination báo repeated page hoặc total mismatch, không bỏ qua gate; kiểm source/API trước khi cho publish.
+9. Với ảnh, xem `image_sync_manifest.json`, đặc biệt `status`, `pending_remaining`, `failed_count`, `retry_from_date`.
+10. Phân biệt lỗi dữ liệu cố định với timeout/rate limit/API tạm thời trước khi retry nhiều lần.
+11. `dry_run=true` không ghi SharePoint và không được dùng khi mục tiêu là sửa dữ liệu production.
 
 ## Sau thay đổi schema/code
 
