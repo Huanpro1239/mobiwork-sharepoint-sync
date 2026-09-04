@@ -73,7 +73,8 @@ def run() -> dict[str, Any]:
     }
     _write_output("ready", "true" if ready else "false")
     _write_output("reason", reason.replace("\n", " "))
-    LOG.info(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    # CLI contract: emit machine-readable JSON to stdout for callers; logs go to stderr via logging_config
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
     return payload
 
 
