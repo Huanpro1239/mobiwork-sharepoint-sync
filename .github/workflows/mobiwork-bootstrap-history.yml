@@ -54,6 +54,7 @@ jobs:
       - name: Compile and test bootstrap command
         run: |
           python -m compileall -q src tests
+          python -m unittest discover -s tests -p "test_mobiwork.py"
           python -m unittest discover -s tests -p "test_monthly_master.py"
           python -m unittest discover -s tests -p "test_bootstrap_history.py"
           python -m unittest discover -s tests -p "test_rebuild_month.py"
@@ -87,6 +88,7 @@ jobs:
             mobiwork-rebuild-month.yml
             nightly-reconcile.yml
             recovery-rebuild.yml
+            historical-reconcile.yml
             production-smoke.yml
             operations-health.yml
           )
@@ -157,6 +159,7 @@ jobs:
             mobiwork-rebuild-month.yml
             nightly-reconcile.yml
             recovery-rebuild.yml
+            historical-reconcile.yml
             production-smoke.yml
             operations-health.yml
           )
