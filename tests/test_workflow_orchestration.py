@@ -62,6 +62,20 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertIn("/disable", bootstrap)
         self.assertIn("/enable", bootstrap)
 
+    def test_bootstrap_repairs_legacy_disabled_manual_rebuild_state(self):
+        bootstrap = self._read("mobiwork-bootstrap-history.yml")
+        enable_path = "actions/workflows/mobiwork-rebuild-month.yml/enable"
+
+        self.assertGreaterEqual(bootstrap.count(enable_path), 2)
+        self.assertIn(
+            "Ensured mobiwork-rebuild-month.yml is enabled for recovery.",
+            bootstrap,
+        )
+        self.assertIn(
+            "Confirmed mobiwork-rebuild-month.yml is enabled.",
+            bootstrap,
+        )
+
     def test_images_are_dispatched_after_successful_production_report_refresh(self):
         report = self._read("mobiwork-sync.yml")
         images = self._read("mobiwork-images.yml")
