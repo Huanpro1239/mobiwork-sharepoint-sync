@@ -94,20 +94,6 @@ jobs:
               --jq '.state'
           }
 
-          ensure_enabled() {
-            local workflow="$1"
-            local state
-            state="$(workflow_state "$workflow")"
-            if [ "$state" = "active" ]; then
-              echo "$workflow already enabled; no action needed."
-              return
-            fi
-            gh api --method PUT \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
-            echo "Enabled $workflow from state=$state"
-          }
-
           pause_if_active() {
             local workflow="$1"
             local state
@@ -123,8 +109,10 @@ jobs:
           }
 
           # Older bootstrap versions disabled the manual recovery workflow and could
-          # leave it disabled after failure. Repair that persisted GitHub state first.
-          ensure_enabled mobiwork-rebuild-month.yml
+          # leave it disabled after failure. GitHub treats enable as an idempotent PUT.
+          gh api --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-rebuild-month.yml/enable"
           echo "Ensured mobiwork-rebuild-month.yml is enabled for recovery."
 
           workflows=(
@@ -232,7 +220,9 @@ jobs:
             resume_if_needed "$workflow"
           done
 
-          resume_if_needed mobiwork-rebuild-month.yml
+          gh api --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-rebuild-month.yml/enable"
           echo "Confirmed mobiwork-rebuild-month.yml is enabled."
 
       - name: Publish bootstrap summary
