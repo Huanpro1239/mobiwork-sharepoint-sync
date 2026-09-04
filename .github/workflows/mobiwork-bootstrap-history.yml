@@ -24,7 +24,8 @@ permissions:
 
 # Bootstrap owns the production writer lock for the full historical run. It waits
 # for any active writer to finish instead of cancelling it, then disables routine
-# workflows. Routines resume only after every requested month succeeds.
+# writers/dispatchers. The manual full-month recovery workflow remains enabled so
+# an operator still has a safe recovery path after a failed bootstrap.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false
@@ -55,6 +56,7 @@ jobs:
         run: |
           python -m compileall -q src tests
           python -m unittest discover -s tests -p "test_mobiwork.py"
+          python -m unittest discover -s tests -p "test_region_mapping.py"
           python -m unittest discover -s tests -p "test_monthly_master.py"
           python -m unittest discover -s tests -p "test_bootstrap_history.py"
           python -m unittest discover -s tests -p "test_rebuild_month.py"
@@ -85,7 +87,6 @@ jobs:
           workflows=(
             mobiwork-sync.yml
             mobiwork-images.yml
-            mobiwork-rebuild-month.yml
             nightly-reconcile.yml
             recovery-rebuild.yml
             historical-reconcile.yml
@@ -98,6 +99,7 @@ jobs:
               "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/disable"
             echo "Paused $workflow"
           done
+          echo "Manual mobiwork-rebuild-month.yml remains enabled for recovery."
 
       - name: Azure login with GitHub OIDC
         if: ${{ inputs.dry_run == false }}
@@ -130,6 +132,8 @@ jobs:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
           BOOTSTRAP_BYPASS_GATE: "true"
+          # Preserve unknown employee prefixes as UNMAPPED instead of dropping Visit.
+          EMPLOYEE_REGION_STRICT: "false"
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
           MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
@@ -156,7 +160,6 @@ jobs:
           workflows=(
             mobiwork-sync.yml
             mobiwork-images.yml
-            mobiwork-rebuild-month.yml
             nightly-reconcile.yml
             recovery-rebuild.yml
             historical-reconcile.yml
@@ -169,6 +172,7 @@ jobs:
               "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/enable"
             echo "Resumed $workflow"
           done
+          echo "Manual mobiwork-rebuild-month.yml was kept enabled throughout."
 
       - name: Publish bootstrap summary
         if: ${{ always() }}
@@ -200,6 +204,7 @@ jobs:
               lines.append(f"- Error: `{data['error']}`")
           if not data.get("bootstrap_complete"):
               lines.append("- Routine automation remains **paused** until bootstrap succeeds.")
+              lines.append("- Manual full-month rebuild remains **available** for recovery.")
           else:
               lines.append("- Routine automation has been **resumed**.")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
