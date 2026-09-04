@@ -197,6 +197,44 @@ class AllReportsRunnerTests(unittest.TestCase):
         self.assertEqual(manifest["master_row_count"], 10)
         self.assertEqual(manifest["sharepoint_write_count"], 1)
 
+    def test_one_failed_date_blocks_same_report_month_publish(self):
+        report = ReportConfig(key="visit", enabled=True, name="visit", folder="01")
+        target_dates = [date(2026, 8, 31), date(2026, 8, 30), date(2026, 8, 29)]
+        failed_date = date(2026, 8, 30)
+        sharepoint = FakeSharePoint(fail_report="never")
+        manifest = runner.core._new_manifest("incremental", False)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            def fake_group(cfg, grouped_dates, mobiwork, sp, drive_id, dry_run):
+                bundle = self._fake_bundle(temp_path, cfg, grouped_dates)
+                bundle["source_rows"].pop(failed_date)
+                bundle["errors"] = {failed_date: "RuntimeError: simulated source failure"}
+                return bundle
+
+            with (
+                patch.object(runner.core, "target_dates", return_value=target_dates),
+                patch.object(runner, "_build_or_update_month_group", side_effect=fake_group),
+            ):
+                results = runner.run_incremental_all_reports(
+                    [report],
+                    FakeMobiWork(),
+                    sharepoint,
+                    "drive",
+                    3,
+                    False,
+                    manifest,
+                    sync_scope="lookback",
+                )
+
+        self.assertEqual(sharepoint.calls, [])
+        self.assertEqual(manifest["files"], [])
+        self.assertEqual([item["status"] for item in results], ["failed"] * 3)
+        self.assertIn("simulated source failure", results[1]["error"])
+        self.assertIn("completeness gate", results[0]["error"])
+        self.assertIn("completeness gate", results[2]["error"])
+
     def test_cross_month_lookback_publishes_once_per_month(self):
         report = ReportConfig(key="visit", enabled=True, name="visit", folder="01")
         target_dates = [date(2026, 9, 1), date(2026, 8, 31), date(2026, 8, 30)]
