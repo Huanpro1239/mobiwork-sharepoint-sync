@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from functools import lru_cache
@@ -10,6 +11,7 @@ from typing import Any
 
 DEFAULT_CONFIG_PATH = Path("config/employee_regions.json")
 _PREFIX_RE = re.compile(r"^([A-Za-z]+)")
+LOG = logging.getLogger("mobiwork_sync")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -60,11 +62,14 @@ def enrich_visit_records(
 
     ``loai_kh`` is customer classification and can cross an employee's assigned sales
     region. Region therefore comes only from ``ma_nv`` -> employee prefix -> region.
-    In strict mode, any unknown employee prefix fails the visit report so an incomplete
-    or misclassified monthly master is never published silently.
+
+    Production defaults to non-strict mode so a newly introduced employee prefix never
+    causes an otherwise valid Visit partition/month to disappear. Unknown employees are
+    preserved explicitly as ``UNMAPPED / Chưa phân vùng`` and logged for mapping cleanup.
+    Strict mode remains available for validation/tests through ``EMPLOYEE_REGION_STRICT``.
     """
     mapping = region_map or load_region_map()
-    is_strict = _env_bool("EMPLOYEE_REGION_STRICT", True) if strict is None else strict
+    is_strict = _env_bool("EMPLOYEE_REGION_STRICT", False) if strict is None else strict
     enriched: list[dict[str, Any]] = []
     unmapped: dict[str, str] = {}
 
@@ -78,19 +83,26 @@ def enrich_visit_records(
             row["vung"] = region["vung"]
             row["vung_source"] = "ma_nv_prefix"
         else:
-            row["vung_code"] = None
-            row["vung"] = None
+            row["vung_code"] = "UNMAPPED"
+            row["vung"] = "Chưa phân vùng"
             row["vung_source"] = "unmapped"
             unmapped[ma_nv or "<missing ma_nv>"] = prefix or "<no prefix>"
         enriched.append(row)
 
-    if unmapped and is_strict:
+    if unmapped:
         sample = ", ".join(
             f"{employee}({prefix})" for employee, prefix in sorted(unmapped.items())[:20]
         )
-        raise ValueError(
-            "Visit employee-region mapping is incomplete. "
-            f"Unmapped employees/prefixes: {sample}. "
-            "Update config/employee_regions.json; loai_kh is intentionally not used as fallback."
+        LOG.warning(
+            "Visit employee-region mapping incomplete; preserving %s row source(s) as "
+            "UNMAPPED. Sample employees/prefixes: %s",
+            len(unmapped),
+            sample,
         )
+        if is_strict:
+            raise ValueError(
+                "Visit employee-region mapping is incomplete. "
+                f"Unmapped employees/prefixes: {sample}. "
+                "Update config/employee_regions.json; loai_kh is intentionally not used as fallback."
+            )
     return enriched
