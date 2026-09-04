@@ -252,5 +252,5 @@ def _format_sheet(writer: pd.ExcelWriter, sheet_name: str) -> None:
             value = worksheet.cell(row=row, column=column).value
             if value is not None:
                 max_length = max(max_length, len(str(value)))
-            width = min(max(max_length + 2, 10), 40)
-            worksheet.column_dimensions[get_column_letter(column)].width = width
+        width = min(max(max_length + 2, 10), 40)
+        worksheet.column_dimensions[get_column_letter(column)].width = width
