@@ -13,7 +13,7 @@ class WorkflowOrchestrationTests(unittest.TestCase):
     def _read(name: str) -> str:
         return (WORKFLOWS / name).read_text(encoding="utf-8")
 
-    def test_shared_production_lock_uses_supported_concurrency_keys(self):
+    def test_shared_production_lock_never_interrupts_active_writer(self):
         report = self._read("mobiwork-sync.yml")
         images = self._read("mobiwork-images.yml")
         rebuild = self._read("mobiwork-rebuild-month.yml")
@@ -21,12 +21,8 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
         for workflow in (report, images, rebuild, bootstrap):
             self.assertIn("group: mobiwork-sharepoint-production", workflow)
+            self.assertIn("cancel-in-progress: false", workflow)
             self.assertNotIn("queue: max", workflow)
-
-        self.assertIn("cancel-in-progress: false", report)
-        self.assertIn("cancel-in-progress: false", images)
-        self.assertIn("cancel-in-progress: true", rebuild)
-        self.assertIn("cancel-in-progress: true", bootstrap)
 
     def test_bootstrap_pauses_routines_and_resumes_only_after_success(self):
         bootstrap = self._read("mobiwork-bootstrap-history.yml")
@@ -41,7 +37,8 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertIn("success() && inputs.dry_run == false", bootstrap)
         self.assertIn("run: python src/bootstrap_history.py", bootstrap)
         self.assertIn("group: mobiwork-sharepoint-production", bootstrap)
-        self.assertIn("cancel-in-progress: true", bootstrap)
+        self.assertIn("cancel-in-progress: false", bootstrap)
+        self.assertIn('test_monthly_master.py', bootstrap)
 
         routine_workflows = (
             "mobiwork-sync.yml",
@@ -78,22 +75,30 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertIn('today - timedelta(days=lookback)', report)
         self.assertIn("--arg from_date \"$from_date\"", report)
 
-    def test_nightly_reconciliation_defaults_to_seven_completed_days(self):
+    def test_nightly_reconciliation_defaults_to_fourteen_completed_days(self):
         nightly = self._read("nightly-reconcile.yml")
 
-        self.assertIn('default: "7"', nightly)
-        self.assertIn('days="${INPUT_LOOKBACK:-7}"', nightly)
-        self.assertIn('days="7"', nightly)
+        self.assertIn('default: "14"', nightly)
+        self.assertIn('days="${INPUT_LOOKBACK:-14}"', nightly)
+        self.assertIn('days="14"', nightly)
         self.assertIn('cron: "30 23 * * *"', nightly)
 
-    def test_recovery_rebuild_covers_weekly_current_month_and_month_close(self):
+    def test_recovery_rebuild_covers_current_previous_and_month_close(self):
         recovery = self._read("recovery-rebuild.yml")
 
         self.assertIn('cron: "0 2 * * 0"', recovery)
-        self.assertIn('cron: "30 2 1 * *"', recovery)
-        self.assertIn('scope = "previous_month" if schedule == "30 2 1 * *"', recovery)
+        self.assertIn('cron: "0 5 * * 0"', recovery)
+        self.assertIn('cron: "30 3 2 * *"', recovery)
+        self.assertIn('previous_month_schedules = {"0 5 * * 0", "30 3 2 * *"}', recovery)
         self.assertIn('actions/workflows/mobiwork-rebuild-month.yml/dispatches', recovery)
         self.assertIn('dry_run:"false"', recovery)
+
+    def test_rebuild_runs_partition_quality_tests_before_production(self):
+        rebuild = self._read("mobiwork-rebuild-month.yml")
+
+        self.assertIn('test_monthly_master.py', rebuild)
+        self.assertIn('test_rebuild_month.py', rebuild)
+        self.assertIn("cancel-in-progress: false", rebuild)
 
     def test_removed_scoring_workflows_are_absent(self):
         removed = {
