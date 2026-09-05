@@ -1,0 +1,85 @@
+name: One-shot Production Recovery
+
+on:
+  push:
+    branches:
+      - ops/production-recovery-20260905
+    paths:
+      - ".github/workflows/ops-production-recovery.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Run production recovery chain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          list_dispatch_ids() {
+            local workflow="$1"
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&event=workflow_dispatch&per_page=50" \
+              --jq '.workflow_runs[].id' || true
+          }
+
+          wait_for_new_run() {
+            local workflow="$1"
+            local baseline="$2"
+            local label="$3"
+            local ids id
+            for _ in $(seq 1 120); do
+              ids=$(list_dispatch_ids "$workflow")
+              for id in $ids; do
+                if ! grep -qx "$id" <<< "$baseline"; then
+                  echo "$id"
+                  return 0
+                fi
+              done
+              sleep 5
+            done
+            echo "::error::Timed out waiting for $label run to appear" >&2
+            return 1
+          }
+
+          sync_before=$(list_dispatch_ids "mobiwork-sync.yml")
+          image_before=$(list_dispatch_ids "mobiwork-images.yml")
+
+          jq -n '{ref:"main",inputs:{sync_scope:"today",lookback_days:"1",dry_run:"false"}}' \
+            | gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-sync.yml/dispatches" \
+                --input -
+          sync_id=$(wait_for_new_run "mobiwork-sync.yml" "$sync_before" "MobiWork DMS Sync")
+          echo "Production report run: $sync_id"
+          gh run watch "$sync_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 10
+
+          image_id=$(wait_for_new_run "mobiwork-images.yml" "$image_before" "MobiWork image sync")
+          echo "Production image run: $image_id"
+          gh run watch "$image_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 10
+
+          smoke_before=$(list_dispatch_ids "production-smoke.yml")
+          jq -n '{ref:"main",inputs:{target_date:""}}' \
+            | gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/production-smoke.yml/dispatches" \
+                --input -
+          smoke_id=$(wait_for_new_run "production-smoke.yml" "$smoke_before" "production smoke")
+          echo "Production smoke run: $smoke_id"
+          gh run watch "$smoke_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 10
+
+          health_before=$(list_dispatch_ids "operations-health.yml")
+          jq -n '{ref:"main"}' \
+            | gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/operations-health.yml/dispatches" \
+                --input -
+          health_id=$(wait_for_new_run "operations-health.yml" "$health_before" "operations health")
+          echo "Operations health run: $health_id"
+          gh run watch "$health_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 5
+
+          echo "Recovery chain completed successfully"
