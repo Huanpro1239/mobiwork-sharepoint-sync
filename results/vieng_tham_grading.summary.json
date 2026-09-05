@@ -1,0 +1,8 @@
+{
+  "source_images": 5253,
+  "graded_images": 40,
+  "completed_this_run": 20,
+  "remaining_images": 5213,
+  "engine": "local:openai/clip-vit-base-patch32+tesseract",
+  "output": "results/vieng_tham_grading.csv"
+}
