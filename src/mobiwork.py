@@ -12,7 +12,10 @@ from typing import Any
 import requests
 from requests.auth import HTTPBasicAuth
 
-from region_mapping import enrich_visit_records
+if __package__:
+    from .region_mapping import enrich_visit_records
+else:
+    from region_mapping import enrich_visit_records
 
 
 LOG = logging.getLogger("mobiwork_sync")
