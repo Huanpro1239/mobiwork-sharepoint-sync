@@ -1,0 +1,120 @@
+name: Data Cham Anh Backfill Temp
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONPATH: src
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip check
+
+      - name: Validate Microsoft OIDC configuration
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_CLIENT_ID"
+          test -n "$AZURE_TENANT_ID"
+
+      - name: Azure login with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Resolve SharePoint document library
+        shell: bash
+        run: |
+          set -euo pipefail
+          SITE_ID=$(az rest \
+            --method get \
+            --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' \
+            --query id -o tsv)
+          DRIVES=$(az rest \
+            --method get \
+            --url "https://graph.microsoft.com/v1.0/sites/$SITE_ID/drives" \
+            --output json)
+          DRIVE_ID=$(echo "$DRIVES" | jq -r '.value[] | select((.name | ascii_downcase) == "mobiworkdms") | .id' | head -n 1)
+          test -n "$DRIVE_ID"
+          test "$DRIVE_ID" != "null"
+          echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
+
+      - name: Backfill Data cham anh 2026-06 through 2026-09
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import date
+          from pathlib import Path
+
+          import main as core
+          from data_cham_anh_export import publish_data_cham_anh_month
+          from sharepoint import SemanticSharePointClient
+
+          reports = core.enabled_reports()
+          sharepoint = SemanticSharePointClient.from_env()
+          drive_id = os.environ["SHAREPOINT_DRIVE_ID"]
+          months = [(2026, 6), (2026, 7), (2026, 8), (2026, 9)]
+          results = []
+          for year, month in months:
+              anchor = date(year, month, 1)
+              result = publish_data_cham_anh_month(
+                  reports,
+                  sharepoint,
+                  drive_id,
+                  anchor,
+                  root_folder="05_DataChamAnh",
+                  output_dir=Path("output/backfill"),
+              )
+              results.append(result)
+              print("BACKFILL_RESULT " + json.dumps(result, ensure_ascii=False, sort_keys=True))
+
+          Path("output").mkdir(exist_ok=True)
+          Path("output/data_cham_anh_backfill_manifest.json").write_text(
+              json.dumps({"status": "success", "results": results}, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload backfill manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: data-cham-anh-backfill-${{ github.run_id }}
+          path: output/data_cham_anh_backfill_manifest.json
+          if-no-files-found: error
+          retention-days: 14
