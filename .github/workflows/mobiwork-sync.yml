@@ -192,6 +192,23 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_all_reports.py
 
+      - name: Build Data cham anh workbook
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
+          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
+        run: python src/run_data_cham_anh.py
+
       - name: Queue image sync after successful production report refresh
         if: ${{ success() && ((github.event_name == 'schedule' && env.SYNC_SCOPE == 'yesterday') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)) }}
         env:
