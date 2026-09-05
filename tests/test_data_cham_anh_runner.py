@@ -80,6 +80,16 @@ class DataChamAnhRunnerTests(unittest.TestCase):
         )
         self.assertEqual(anchors, [date(2026, 9, 3)])
 
+    def test_production_workflow_runs_combined_export_after_reports(self):
+        workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "mobiwork-sync.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        report_command = "python src/run_all_reports.py"
+        combined_command = "python src/run_data_cham_anh.py"
+        self.assertIn(report_command, workflow)
+        self.assertIn(combined_command, workflow)
+        self.assertLess(workflow.index(report_command), workflow.index(combined_command))
+
 
 if __name__ == "__main__":
     unittest.main()
