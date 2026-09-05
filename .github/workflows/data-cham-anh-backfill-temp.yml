@@ -89,7 +89,7 @@ jobs:
 
           import main as core
           from data_cham_anh_export import publish_data_cham_anh_month
-          from sharepoint import SemanticSharePointClient
+          from sharepoint_semantic import SemanticSharePointClient
 
           reports = core.enabled_reports()
           sharepoint = SemanticSharePointClient.from_env()
