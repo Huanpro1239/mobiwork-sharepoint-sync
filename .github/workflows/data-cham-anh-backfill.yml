@@ -13,6 +13,12 @@ on:
         required: false
         default: ""
         type: string
+  schedule:
+    # Daily self-heal after the 09:00 yesterday-finalization run. Rebuild both
+    # previous and current month from canonical SharePoint masters so a skipped
+    # Data cham anh publish is repaired automatically without refetching MobiWork.
+    - cron: "15 10 * * *"
+      timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
   contents: read
@@ -51,6 +57,36 @@ jobs:
           python -m unittest discover -s tests -p "test_data_cham_anh_export.py"
           python -m unittest discover -s tests -p "test_data_cham_anh_runner.py"
           python -m unittest discover -s tests -p "test_data_cham_anh_backfill.py"
+
+      - name: Resolve Data cham anh range
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_FROM_MONTH: ${{ inputs.from_month }}
+          INPUT_TO_MONTH: ${{ inputs.to_month }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+          current_month = today.strftime("%Y-%m")
+          previous_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+
+          if os.environ.get("EVENT_NAME") == "schedule":
+              from_month = previous_month
+              to_month = current_month
+          else:
+              from_month = os.environ.get("INPUT_FROM_MONTH", "").strip() or current_month
+              to_month = os.environ.get("INPUT_TO_MONTH", "").strip() or from_month
+
+          print(f"from_month={from_month}")
+          print(f"to_month={to_month}")
+          PY
+          echo "Resolved Data cham anh range: ${{ steps.range.outputs.from_month }} -> ${{ steps.range.outputs.to_month }}"
 
       - name: Validate Microsoft OIDC configuration
         env:
@@ -97,8 +133,8 @@ jobs:
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
           DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
-          DATA_CHAM_ANH_FROM_MONTH: ${{ inputs.from_month }}
-          DATA_CHAM_ANH_TO_MONTH: ${{ inputs.to_month }}
+          DATA_CHAM_ANH_FROM_MONTH: ${{ steps.range.outputs.from_month }}
+          DATA_CHAM_ANH_TO_MONTH: ${{ steps.range.outputs.to_month }}
           DATA_CHAM_ANH_MAX_MONTHS: "24"
         run: python src/run_data_cham_anh_backfill.py
 
