@@ -106,6 +106,45 @@ class DataChamAnhBackfillTests(unittest.TestCase):
         self.assertIn("group: mobiwork-sharepoint-production", workflow)
         self.assertIn('DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"', workflow)
 
+    def test_full_month_rebuild_refreshes_combined_workbook(self):
+        workflow_path = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "mobiwork-rebuild-month.yml"
+        )
+        workflow = workflow_path.read_text(encoding="utf-8")
+        rebuild_command = "python src/rebuild_month.py"
+        combined_command = "python src/run_data_cham_anh_backfill.py"
+        self.assertIn(rebuild_command, workflow)
+        self.assertIn(combined_command, workflow)
+        self.assertLess(workflow.index(rebuild_command), workflow.index(combined_command))
+        self.assertIn("DATA_CHAM_ANH_FROM_MONTH: ${{ inputs.target_month }}", workflow)
+        self.assertIn("DATA_CHAM_ANH_TO_MONTH: ${{ inputs.target_month }}", workflow)
+        self.assertIn('DATA_CHAM_ANH_MAX_MONTHS: "1"', workflow)
+
+    def test_bootstrap_refreshes_historical_combined_workbooks_before_resume(self):
+        workflow_path = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "mobiwork-bootstrap-history.yml"
+        )
+        workflow = workflow_path.read_text(encoding="utf-8")
+        bootstrap_command = "python src/bootstrap_history.py"
+        combined_command = "python src/run_data_cham_anh_backfill.py"
+        resume_step = "- name: Resume routine production workflows"
+        self.assertIn(bootstrap_command, workflow)
+        self.assertIn(combined_command, workflow)
+        self.assertIn(resume_step, workflow)
+        self.assertLess(workflow.index(bootstrap_command), workflow.index(combined_command))
+        self.assertLess(workflow.index(combined_command), workflow.index(resume_step))
+        self.assertIn("DATA_CHAM_ANH_FROM_MONTH: ${{ inputs.start_month }}", workflow)
+        self.assertIn(
+            "DATA_CHAM_ANH_TO_MONTH: ${{ env.DATA_CHAM_ANH_BOOTSTRAP_END_MONTH }}",
+            workflow,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
