@@ -58,6 +58,8 @@ jobs:
           python -m unittest discover -s tests -p "test_monthly_master.py"
           python -m unittest discover -s tests -p "test_rebuild_month.py"
           python -m unittest discover -s tests -p "test_reconcile_history.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_export.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_backfill.py"
 
       - name: Validate required credentials
         env:
@@ -121,6 +123,51 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/reconcile_history.py
 
+      - name: Resolve Data cham anh historical range
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        id: data_range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_START_MONTH: ${{ inputs.start_month }}
+          INPUT_END_MONTH: ${{ inputs.end_month }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+          previous_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+          if os.environ.get("EVENT_NAME") == "workflow_dispatch":
+              start_month = os.environ.get("INPUT_START_MONTH", "").strip() or "2026-06"
+              end_month = os.environ.get("INPUT_END_MONTH", "").strip() or previous_month
+          else:
+              start_month = "2026-06"
+              end_month = previous_month
+
+          print(f"from_month={start_month}")
+          print(f"to_month={end_month}")
+          PY
+
+      - name: Refresh Data cham anh historical workbooks
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
+          DATA_CHAM_ANH_FROM_MONTH: ${{ steps.data_range.outputs.from_month }}
+          DATA_CHAM_ANH_TO_MONTH: ${{ steps.data_range.outputs.to_month }}
+          DATA_CHAM_ANH_MAX_MONTHS: "120"
+        run: python src/run_data_cham_anh_backfill.py
+
       - name: Publish reconciliation summary
         if: ${{ always() }}
         shell: bash
@@ -153,11 +200,13 @@ jobs:
               handle.write("\n".join(lines) + "\n")
           PY
 
-      - name: Upload reconciliation manifest
+      - name: Upload reconciliation manifests
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: mobiwork-history-reconcile-${{ github.run_id }}-${{ github.run_attempt }}
-          path: output/sync_manifest.json
+          path: |
+            output/sync_manifest.json
+            output/data_cham_anh_backfill_manifest.json
           if-no-files-found: ignore
           retention-days: 30
