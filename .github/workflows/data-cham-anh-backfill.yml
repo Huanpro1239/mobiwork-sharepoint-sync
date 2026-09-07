@@ -86,6 +86,10 @@ jobs:
           print(f"from_month={from_month}")
           print(f"to_month={to_month}")
           PY
+
+      - name: Log resolved Data cham anh range
+        shell: bash
+        run: |
           echo "Resolved Data cham anh range: ${{ steps.range.outputs.from_month }} -> ${{ steps.range.outputs.to_month }}"
 
       - name: Validate Microsoft OIDC configuration
