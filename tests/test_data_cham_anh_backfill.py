@@ -102,9 +102,16 @@ class DataChamAnhBackfillTests(unittest.TestCase):
         )
         workflow = workflow_path.read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn('cron: "15 10 * * *"', workflow)
+        self.assertIn('timezone: "Asia/Ho_Chi_Minh"', workflow)
+        self.assertIn("previous_month", workflow)
+        self.assertIn("current_month", workflow)
         self.assertIn("python src/run_data_cham_anh_backfill.py", workflow)
         self.assertIn("group: mobiwork-sharepoint-production", workflow)
         self.assertIn('DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"', workflow)
+        self.assertIn("DATA_CHAM_ANH_FROM_MONTH: ${{ steps.range.outputs.from_month }}", workflow)
+        self.assertIn("DATA_CHAM_ANH_TO_MONTH: ${{ steps.range.outputs.to_month }}", workflow)
 
     def test_full_month_rebuild_refreshes_combined_workbook(self):
         workflow_path = (
@@ -142,6 +149,29 @@ class DataChamAnhBackfillTests(unittest.TestCase):
         self.assertIn("DATA_CHAM_ANH_FROM_MONTH: ${{ inputs.start_month }}", workflow)
         self.assertIn(
             "DATA_CHAM_ANH_TO_MONTH: ${{ env.DATA_CHAM_ANH_BOOTSTRAP_END_MONTH }}",
+            workflow,
+        )
+        self.assertGreaterEqual(workflow.count("data-cham-anh-backfill.yml"), 2)
+
+    def test_historical_reconciliation_refreshes_data_cham_anh_after_sources(self):
+        workflow_path = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "historical-reconcile.yml"
+        )
+        workflow = workflow_path.read_text(encoding="utf-8")
+        source_command = "python src/reconcile_history.py"
+        combined_command = "python src/run_data_cham_anh_backfill.py"
+        self.assertIn(source_command, workflow)
+        self.assertIn(combined_command, workflow)
+        self.assertLess(workflow.index(source_command), workflow.index(combined_command))
+        self.assertIn(
+            "DATA_CHAM_ANH_FROM_MONTH: ${{ steps.data_range.outputs.from_month }}",
+            workflow,
+        )
+        self.assertIn(
+            "DATA_CHAM_ANH_TO_MONTH: ${{ steps.data_range.outputs.to_month }}",
             workflow,
         )
 
