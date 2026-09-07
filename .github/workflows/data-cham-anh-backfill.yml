@@ -1,0 +1,158 @@
+name: Data Cham Anh Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_month:
+        description: "Start month in YYYY-MM format; blank = current month"
+        required: false
+        default: ""
+        type: string
+      to_month:
+        description: "End month in YYYY-MM format; blank = same as start month"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+# Share the same production lock as the main sync so monthly workbook writes do not overlap.
+concurrency:
+  group: mobiwork-sharepoint-production
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip check
+
+      - name: Data cham anh preflight
+        run: |
+          python -m compileall -q src
+          python -m unittest discover -s tests -p "test_data_cham_anh_export.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_runner.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_backfill.py"
+
+      - name: Validate Microsoft OIDC configuration
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_CLIENT_ID"
+          test -n "$AZURE_TENANT_ID"
+
+      - name: Azure login with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Resolve SharePoint document library
+        shell: bash
+        run: |
+          set -euo pipefail
+          SITE_ID=$(az rest \
+            --method get \
+            --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' \
+            --query id -o tsv)
+          DRIVES=$(az rest \
+            --method get \
+            --url "https://graph.microsoft.com/v1.0/sites/$SITE_ID/drives" \
+            --output json)
+          DRIVE_ID=$(echo "$DRIVES" | jq -r '.value[] | select((.name | ascii_downcase) == "mobiworkdms") | .id' | head -n 1)
+          test -n "$DRIVE_ID"
+          test "$DRIVE_ID" != "null"
+          echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
+
+      - name: Backfill Data cham anh workbooks
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
+          DATA_CHAM_ANH_FROM_MONTH: ${{ inputs.from_month }}
+          DATA_CHAM_ANH_TO_MONTH: ${{ inputs.to_month }}
+          DATA_CHAM_ANH_MAX_MONTHS: "24"
+        run: python src/run_data_cham_anh_backfill.py
+
+      - name: Publish backfill summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("output/data_cham_anh_backfill_manifest.json")
+          if not path.exists():
+              raise SystemExit(0)
+
+          data = json.loads(path.read_text(encoding="utf-8"))
+          lines = [
+              "## Data Cham Anh Backfill",
+              "",
+              f"- Status: **{data.get('status', 'unknown')}**",
+              f"- Requested months: **{data.get('requested_month_count', 0)}**",
+              f"- Successful months: **{data.get('successful_month_count', 0)}**",
+              f"- Failed months: **{data.get('failed_month_count', 0)}**",
+              f"- SharePoint root: `{data.get('root_folder', '')}`",
+          ]
+          results = data.get("results", [])
+          if results:
+              lines.extend([
+                  "",
+                  "| Month | Status | Data_anh rows | Data_don_hang rows | File | Error |",
+                  "|---|---|---:|---:|---|---|",
+              ])
+              for item in results:
+                  filename = item.get("filename", "")
+                  web_url = item.get("web_url")
+                  file_cell = f"[{filename}]({web_url})" if web_url else filename
+                  error = str(item.get("error", "")).replace("|", "\\|")
+                  lines.append(
+                      f"| {item.get('month', '')} | {item.get('status', '')} | "
+                      f"{int(item.get('data_anh_rows', 0)):,} | "
+                      f"{int(item.get('data_don_hang_rows', 0)):,} | "
+                      f"{file_cell} | {error} |"
+                  )
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          PY
+
+      - name: Upload backfill manifest
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: data-cham-anh-backfill-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/data_cham_anh_backfill_manifest.json
+          if-no-files-found: ignore
+          retention-days: 14
