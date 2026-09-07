@@ -121,6 +121,7 @@ jobs:
           workflows=(
             mobiwork-sync.yml
             mobiwork-images.yml
+            data-cham-anh-backfill.yml
             nightly-reconcile.yml
             recovery-rebuild.yml
             historical-reconcile.yml
@@ -209,7 +210,7 @@ jobs:
           DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
           DATA_CHAM_ANH_FROM_MONTH: ${{ inputs.start_month }}
           DATA_CHAM_ANH_TO_MONTH: ${{ env.DATA_CHAM_ANH_BOOTSTRAP_END_MONTH }}
-          DATA_CHAM_ANH_MAX_MONTHS: "24"
+          DATA_CHAM_ANH_MAX_MONTHS: "120"
         run: python src/run_data_cham_anh_backfill.py
 
       - name: Resume routine production workflows
@@ -244,6 +245,7 @@ jobs:
           workflows=(
             mobiwork-sync.yml
             mobiwork-images.yml
+            data-cham-anh-backfill.yml
             nightly-reconcile.yml
             recovery-rebuild.yml
             historical-reconcile.yml
