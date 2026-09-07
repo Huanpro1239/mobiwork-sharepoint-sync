@@ -337,7 +337,8 @@ class SharePointClient:
         )
         uploaded = response.json()
         LOG.info(
-            "Graph PUT result status=%s requested=%s returned_name=%s returned_id=%s returned_size=%s",
+            "Graph PUT result status=%s requested=%s "
+            "returned_name=%s returned_id=%s returned_size=%s",
             response.status_code,
             remote_path,
             uploaded.get("name"),
@@ -348,22 +349,30 @@ class SharePointClient:
         returned_name = str(uploaded.get("name", "")).strip()
         if returned_name and returned_name != filename:
             raise RuntimeError(
-                f"SharePoint created unexpected item for {remote_path!r}: "
-                f"returned_name={returned_name!r}"
+                "SharePoint created unexpected item for "
+                + repr(remote_path)
+                + ": returned_name="
+                + repr(returned_name)
             )
 
         materialized = self._wait_for_item_by_path(drive_id, remote_path)
         if not materialized:
             raise RuntimeError(
-                f"SharePoint upload response succeeded but path {remote_path!r} was not materialized"
+                "SharePoint upload response succeeded but path "
+                + repr(remote_path)
+                + " was not materialized"
             )
 
         response_id = str(uploaded.get("id", "")).strip()
         materialized_id = str(materialized.get("id", "")).strip()
         if response_id and materialized_id and response_id != materialized_id:
             raise RuntimeError(
-                f"SharePoint upload item mismatch for {remote_path!r}: "
-                f"response_id={response_id}, path_id={materialized_id}"
+                "SharePoint upload item mismatch for "
+                + repr(remote_path)
+                + ": response_id="
+                + str(response_id)
+                + ", path_id="
+                + str(materialized_id)
             )
 
         verified_source = {**uploaded, **materialized}
@@ -474,7 +483,11 @@ class SharePointClient:
                 LOG.exception("Unable to remove SharePoint backup %s", backup_name)
             return result
         except Exception:
-            LOG.exception("SharePoint staged replacement failed for %s; attempting rollback", filename)
+            LOG.exception(
+                "SharePoint staged replacement failed for %s; "
+                "attempting rollback",
+                filename,
+            )
             if promoted:
                 try:
                     self._rename_item(drive_id, temp_id, failed_name)
@@ -483,9 +496,15 @@ class SharePointClient:
             if backup_renamed:
                 try:
                     self._rename_item(drive_id, existing_id, filename)
-                    LOG.info("Restored previous SharePoint file after failed replacement: %s", filename)
+                    LOG.info(
+                        "Restored previous SharePoint file after failed replacement: %s",
+                        filename,
+                    )
                 except Exception:
-                    LOG.exception("CRITICAL: unable to restore SharePoint backup for %s", filename)
+                    LOG.exception(
+                        "CRITICAL: unable to restore SharePoint backup for %s",
+                        filename,
+                    )
             if not promoted:
                 try:
                     self._delete_item(drive_id, temp_id)

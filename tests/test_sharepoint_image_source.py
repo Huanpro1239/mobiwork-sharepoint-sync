@@ -26,7 +26,11 @@ class FakeSharePoint:
 
     def get_item_by_path(self, drive_id, remote_path):
         if remote_path in self.files:
-            return {"name": remote_path.rsplit("/", 1)[-1], "file": {}, "size": len(self.files[remote_path])}
+            return {
+                "name": remote_path.rsplit("/", 1)[-1],
+                "file": {},
+                "size": len(self.files[remote_path]),
+            }
         return None
 
     def list_folder_children(self, drive_id, remote_folder):

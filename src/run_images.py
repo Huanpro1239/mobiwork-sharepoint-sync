@@ -121,8 +121,7 @@ def run() -> dict:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s | %(levelname)s | %(message)s",
-    )
+    from logging_config import configure
+
+    configure()
     run()

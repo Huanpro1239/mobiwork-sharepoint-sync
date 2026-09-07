@@ -170,7 +170,11 @@ class AllReportsRunnerTests(unittest.TestCase):
 
             with (
                 patch.object(runner.core, "target_dates", return_value=target_dates),
-                patch.object(runner, "_build_or_update_month_group", side_effect=fake_group) as group_mock,
+                patch.object(
+                    runner,
+                    "_build_or_update_month_group",
+                    side_effect=fake_group,
+                ) as group_mock,
             ):
                 results = runner.run_incremental_all_reports(
                     [report],
@@ -249,7 +253,11 @@ class AllReportsRunnerTests(unittest.TestCase):
 
             with (
                 patch.object(runner.core, "target_dates", return_value=target_dates),
-                patch.object(runner, "_build_or_update_month_group", side_effect=fake_group) as group_mock,
+                patch.object(
+                    runner,
+                    "_build_or_update_month_group",
+                    side_effect=fake_group,
+                ) as group_mock,
             ):
                 results = runner.run_incremental_all_reports(
                     [report],
