@@ -51,6 +51,9 @@ jobs:
           python -m unittest discover -s tests -p "test_region_mapping.py"
           python -m unittest discover -s tests -p "test_monthly_master.py"
           python -m unittest discover -s tests -p "test_rebuild_month.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_export.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_runner.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_backfill.py"
 
       - name: Validate required credentials
         env:
@@ -110,11 +113,30 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: python src/rebuild_month.py
 
-      - name: Upload rebuild manifest
+      - name: Refresh Data cham anh for rebuilt month
+        if: ${{ inputs.dry_run == false }}
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
+          DATA_CHAM_ANH_FROM_MONTH: ${{ inputs.target_month }}
+          DATA_CHAM_ANH_TO_MONTH: ${{ inputs.target_month }}
+          DATA_CHAM_ANH_MAX_MONTHS: "1"
+        run: python src/run_data_cham_anh_backfill.py
+
+      - name: Upload rebuild manifests
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: mobiwork-rebuild-manifest-${{ github.run_id }}-${{ github.run_attempt }}
-          path: output/sync_manifest.json
+          path: |
+            output/sync_manifest.json
+            output/data_cham_anh_backfill_manifest.json
           if-no-files-found: ignore
           retention-days: 30
