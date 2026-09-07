@@ -62,6 +62,9 @@ jobs:
           python -m unittest discover -s tests -p "test_monthly_master.py"
           python -m unittest discover -s tests -p "test_bootstrap_history.py"
           python -m unittest discover -s tests -p "test_rebuild_month.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_export.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_runner.py"
+          python -m unittest discover -s tests -p "test_data_cham_anh_backfill.py"
 
       - name: Validate required credentials
         env:
@@ -178,6 +181,37 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: python src/bootstrap_history.py
 
+      - name: Resolve Data cham anh bootstrap range
+        if: ${{ inputs.dry_run == false }}
+        env:
+          END_MONTH_INPUT: ${{ inputs.end_month }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          end_month="$END_MONTH_INPUT"
+          if [ -z "$end_month" ]; then
+            end_month=$(TZ=Asia/Ho_Chi_Minh date +%Y-%m)
+          fi
+          echo "DATA_CHAM_ANH_BOOTSTRAP_END_MONTH=$end_month" >> "$GITHUB_ENV"
+          echo "Data cham anh bootstrap range: ${{ inputs.start_month }} -> $end_month"
+
+      - name: Rebuild Data cham anh historical workbooks
+        if: ${{ inputs.dry_run == false }}
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
+          SHAREPOINT_SITE_PATH: "/sites/Planning"
+          SHAREPOINT_LIBRARY: "MobiWorkDMS"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
+          DATA_CHAM_ANH_FROM_MONTH: ${{ inputs.start_month }}
+          DATA_CHAM_ANH_TO_MONTH: ${{ env.DATA_CHAM_ANH_BOOTSTRAP_END_MONTH }}
+          DATA_CHAM_ANH_MAX_MONTHS: "24"
+        run: python src/run_data_cham_anh_backfill.py
+
       - name: Resume routine production workflows
         if: ${{ success() && inputs.dry_run == false }}
         env:
@@ -262,11 +296,13 @@ jobs:
               handle.write("\n".join(lines) + "\n")
           PY
 
-      - name: Upload bootstrap manifest
+      - name: Upload bootstrap manifests
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: mobiwork-bootstrap-manifest-${{ github.run_id }}-${{ github.run_attempt }}
-          path: output/sync_manifest.json
+          path: |
+            output/sync_manifest.json
+            output/data_cham_anh_backfill_manifest.json
           if-no-files-found: ignore
           retention-days: 30
