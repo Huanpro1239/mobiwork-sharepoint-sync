@@ -15,9 +15,6 @@ on:
     # Rebuild the current month every Sunday to repair any older in-month gaps.
     - cron: "0 2 * * 0"
       timezone: "Asia/Ho_Chi_Minh"
-    # Rebuild the previous month every Sunday to catch late back-dated edits.
-    - cron: "0 5 * * 0"
-      timezone: "Asia/Ho_Chi_Minh"
     # Final month-close pass after the first full day of the new month.
     - cron: "30 3 2 * *"
       timezone: "Asia/Ho_Chi_Minh"
@@ -55,7 +52,7 @@ jobs:
           scope = os.environ.get("INPUT_SCOPE", "")
 
           if event_name == "schedule":
-              previous_month_schedules = {"0 5 * * 0", "30 3 2 * *"}
+              previous_month_schedules = {"30 3 2 * *"}
               scope = (
                   "previous_month"
                   if schedule in previous_month_schedules
@@ -100,5 +97,5 @@ jobs:
             echo "- Target month: **$TARGET_MONTH**"
             echo "- Rebuild workflow: \`mobiwork-rebuild-month.yml\`"
             echo "- Mode: full month from MobiWork API"
-            echo "- Policy: current month weekly + previous month weekly + month-close pass"
+            echo "- Policy: current month weekly + previous month at month close"
           } >> "$GITHUB_STEP_SUMMARY"

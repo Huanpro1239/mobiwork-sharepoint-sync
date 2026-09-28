@@ -22,7 +22,9 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "5 * * * *"
+    # Intraday refresh every 3 hours during business hours, Monday-Saturday.
+    # Completed days are finalized at 09:00 and reconciled nightly (D-1..D-3).
+    - cron: "5 7-19/3 * * 1-6"
       timezone: "Asia/Ho_Chi_Minh"
     - cron: "0 9 * * *"
       timezone: "Asia/Ho_Chi_Minh"
@@ -30,7 +32,6 @@ on:
 permissions:
   contents: read
   id-token: write
-  actions: write
 
 # Serialize SharePoint production writes. GitHub Actions supports only `group`
 # and `cancel-in-progress` in this block; keeping cancellation false protects the
@@ -62,12 +63,9 @@ jobs:
 
       - name: Production preflight
         run: |
+          # Unit tests run in CI on every change; production runs only verify
+          # that sources compile and the report config is usable.
           python -m compileall -q src
-          python -m unittest discover -s tests -p "test_mobiwork.py"
-          python -m unittest discover -s tests -p "test_monthly_master.py"
-          python -m unittest discover -s tests -p "test_data_cham_anh_export.py"
-          python -m unittest discover -s tests -p "test_data_cham_anh_runner.py"
-          python -m unittest discover -s tests -p "test_data_cham_anh_backfill.py"
           python - <<'PY'
           import json
           from pathlib import Path
@@ -88,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "schedule" ]; then
-            if [ "$EVENT_SCHEDULE" = "5 * * * *" ]; then
+            if [ "$EVENT_SCHEDULE" = "5 7-19/3 * * 1-6" ]; then
               scope="today"
             else
               scope="yesterday"
@@ -210,51 +208,10 @@ jobs:
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
+          # Intraday refreshes skip the full-month rebuild when no monthly master
+          # changed. The 09:00 finalization and manual runs always rebuild.
+          DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED: ${{ github.event_name == 'schedule' && env.SYNC_SCOPE == 'today' }}
         run: python src/run_data_cham_anh.py
-
-      - name: Queue image sync after successful production report refresh
-        if: ${{ success() && ((github.event_name == 'schedule' && env.SYNC_SCOPE == 'yesterday') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)) }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
-          SYNC_SCOPE_VALUE: ${{ env.SYNC_SCOPE }}
-          LOOKBACK_DAYS_VALUE: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          from_date=""
-
-          # Scheduled yesterday-finalization uses the persisted image state cursor.
-          # Manual production runs force the image window to cover the report scope
-          # that the operator just refreshed.
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            from_date=$(python - "$SYNC_SCOPE_VALUE" "$LOOKBACK_DAYS_VALUE" <<'PY'
-          import sys
-          from datetime import datetime, timedelta
-          from zoneinfo import ZoneInfo
-
-          scope = sys.argv[1]
-          lookback = int(sys.argv[2])
-          today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
-          if scope == "today":
-              target = today
-          elif scope == "yesterday":
-              target = today - timedelta(days=1)
-          elif scope == "lookback":
-              target = today - timedelta(days=lookback)
-          else:
-              raise SystemExit(f"Unsupported sync scope: {scope}")
-          print(target.isoformat())
-          PY
-            )
-          fi
-
-          jq -n --arg from_date "$from_date" \
-            '{ref:"main",inputs:{dry_run:"false",from_date:$from_date}}' \
-            | gh api --method POST \
-                "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-images.yml/dispatches" \
-                --input -
-          echo "Queued reliable image reconciliation from ${from_date:-state cursor}"
 
       - name: Publish run summary
         if: ${{ always() }}

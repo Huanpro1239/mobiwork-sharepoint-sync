@@ -13,11 +13,8 @@ on:
         required: false
         type: string
         default: ""
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/image-reconcile-now"
+  # Image copy to SharePoint is paused: Data cham anh links images directly from
+  # MobiWork (hinh_anh URL). Run manually only when a SharePoint copy is needed.
 
 permissions:
   contents: read

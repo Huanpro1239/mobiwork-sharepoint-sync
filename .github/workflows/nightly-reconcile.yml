@@ -6,7 +6,7 @@ on:
       lookback_days:
         description: "How many completed days to reconcile"
         required: true
-        default: "14"
+        default: "3"
   schedule:
     - cron: "30 23 * * *"
       timezone: "Asia/Ho_Chi_Minh"
@@ -34,9 +34,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            days="${INPUT_LOOKBACK:-14}"
+            days="${INPUT_LOOKBACK:-3}"
           else
-            days="14"
+            days="3"
           fi
           if ! [[ "$days" =~ ^[1-9][0-9]*$ ]] || [ "$days" -gt 31 ]; then
             echo "::error::lookback_days must be an integer between 1 and 31"
@@ -70,5 +70,4 @@ jobs:
             echo "- Scope: \`lookback\`"
             echo "- Completed days: **$LOOKBACK_DAYS**"
             echo "- Production workflow: \`mobiwork-sync.yml\`"
-            echo "- Image reconciliation will be queued automatically after a successful production refresh."
           } >> "$GITHUB_STEP_SUMMARY"

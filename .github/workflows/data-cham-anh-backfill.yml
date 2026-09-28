@@ -17,7 +17,7 @@ on:
     # Daily self-heal after the 09:00 yesterday-finalization run. Rebuild both
     # previous and current month from canonical SharePoint masters so a skipped
     # Data cham anh publish is repaired automatically without refetching MobiWork.
-    - cron: "15 10 * * *"
+    - cron: "15 10 * * 1"
       timezone: "Asia/Ho_Chi_Minh"
 
 permissions:

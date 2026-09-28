@@ -3,7 +3,7 @@ name: MobiWork Operations Health
 on:
   workflow_dispatch:
   schedule:
-    - cron: "20 */2 * * *"
+    - cron: "20 8 * * *"
       timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
@@ -31,9 +31,6 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-sync.yml/runs?branch=main&per_page=30" \
             > sync-runs.json
           gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-images.yml/runs?branch=main&per_page=30" \
-            > image-runs.json
-          gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/production-smoke.yml/runs?branch=main&per_page=10" \
             > smoke-runs.json
           gh api \
@@ -53,10 +50,11 @@ jobs:
 
           now = datetime.now(timezone.utc)
           # GitHub scheduled workflows are best-effort and can start materially
-          # later than their cron slot. The report sync is hourly, so allow up to
-          # four hours (several delayed/missed slots) before declaring an outage.
+          # later than their cron slot. Report sync runs every 3 business hours plus
+          # the 09:00 finalization and 23:30 nightly reconciliation, so a healthy
+          # pipeline always has a success within the last ~10 hours at 08:20.
           # A fresh queued/in-progress run also suppresses a stale-success alert.
-          SYNC_STALE_MINUTES = 240
+          SYNC_STALE_MINUTES = 720
           ACTIVE_RUN_GRACE_MINUTES = 90
 
           def parse_time(value):
@@ -117,7 +115,6 @@ jobs:
 
           sync_ages = successful_ages("sync-runs.json")
           sync_active_age = latest_active_age("sync-runs.json")
-          image_ages = successful_ages("image-runs.json")
           smoke_run = latest_completed("smoke-runs.json")
           definition_age = smoke_definition_age_minutes()
           reasons = []
@@ -133,13 +130,6 @@ jobs:
               reasons.append(
                   "Latest successful MobiWork DMS Sync is "
                   f"{sync_ages[0]:.0f} minutes old (>{SYNC_STALE_MINUTES})."
-              )
-
-          if not image_ages:
-              reasons.append("No successful MobiWork Images run was found in recent history.")
-          elif image_ages[0] > 2160:
-              reasons.append(
-                  f"Latest successful MobiWork Images run is {image_ages[0] / 60:.1f} hours old (>36)."
               )
 
           smoke_age = -1.0
@@ -175,7 +165,6 @@ jobs:
               handle.write(
                   f"sync_active_age_minutes={(sync_active_age if sync_active_age is not None else -1):.1f}\n"
               )
-              handle.write(f"image_age_minutes={(image_ages[0] if image_ages else -1):.1f}\n")
               handle.write(f"smoke_age_minutes={smoke_age:.1f}\n")
               handle.write(f"smoke_conclusion={smoke_conclusion}\n")
               handle.write(
@@ -254,7 +243,7 @@ jobs:
           if [ -n "$issue_number" ]; then
             gh issue comment "$issue_number" \
               --repo "$GITHUB_REPOSITORY" \
-              --body "Automation recovered. Report sync, image sync, and production consistency smoke are healthy again."
+              --body "Automation recovered. Report sync and production consistency smoke are healthy again."
             gh issue close "$issue_number" --repo "$GITHUB_REPOSITORY" --reason completed
             echo "Closed recovered incident issue #$issue_number"
           else
@@ -267,7 +256,6 @@ jobs:
           STATE: ${{ steps.evaluate.outputs.state }}
           SYNC_AGE: ${{ steps.evaluate.outputs.sync_age_minutes }}
           SYNC_ACTIVE_AGE: ${{ steps.evaluate.outputs.sync_active_age_minutes }}
-          IMAGE_AGE: ${{ steps.evaluate.outputs.image_age_minutes }}
           SMOKE_AGE: ${{ steps.evaluate.outputs.smoke_age_minutes }}
           SMOKE_CONCLUSION: ${{ steps.evaluate.outputs.smoke_conclusion }}
           SMOKE_DEFINITION_AGE: ${{ steps.evaluate.outputs.smoke_definition_age_minutes }}
@@ -279,7 +267,6 @@ jobs:
             echo "- State: **${STATE:-unknown}**"
             echo "- Latest successful report sync age: **${SYNC_AGE:-unknown} min**"
             echo "- Active report sync age: **${SYNC_ACTIVE_AGE:-unknown} min**"
-            echo "- Latest successful image sync age: **${IMAGE_AGE:-unknown} min**"
             echo "- Latest production smoke: **${SMOKE_CONCLUSION:-unknown}**, age **${SMOKE_AGE:-unknown} min**"
             echo "- Smoke workflow definition age: **${SMOKE_DEFINITION_AGE:-unknown} min**"
             if [ -s health.txt ]; then
