@@ -76,55 +76,65 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             bootstrap,
         )
 
-    def test_images_are_dispatched_after_successful_production_report_refresh(self):
+    def test_image_copy_to_sharepoint_is_manual_only(self):
         report = self._read("mobiwork-sync.yml")
         images = self._read("mobiwork-images.yml")
+        smoke = self._read("production-smoke.yml")
+        health = self._read("operations-health.yml")
 
-        self.assertIn("Queue image sync after successful production report refresh", report)
-        self.assertIn("env.SYNC_SCOPE == 'yesterday'", report)
-        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.dry_run == false", report)
-        self.assertIn("actions/workflows/mobiwork-images.yml/dispatches", report)
+        self.assertNotIn("mobiwork-images.yml/dispatches", report)
         self.assertNotIn("run: python src/run_images.py", report)
         self.assertNotIn("\n  schedule:\n", images)
+        self.assertNotIn("\n  push:\n", images)
+        self.assertIn("workflow_dispatch:", images)
+        self.assertEqual(smoke.count('SMOKE_CHECK_IMAGES: "false"'), 2)
+        self.assertNotIn('wait_for_new_run "mobiwork-images.yml"', smoke)
+        self.assertNotIn("mobiwork-images.yml/runs", health)
 
-    def test_manual_report_refresh_forces_image_window_for_same_scope(self):
+    def test_report_sync_runs_on_business_hours_schedule(self):
         report = self._read("mobiwork-sync.yml")
 
-        self.assertIn('if [ "$EVENT_NAME" = "workflow_dispatch" ]', report)
-        self.assertIn('if scope == "today":', report)
-        self.assertIn('elif scope == "yesterday":', report)
-        self.assertIn('elif scope == "lookback":', report)
-        self.assertIn('today - timedelta(days=lookback)', report)
-        self.assertIn("--arg from_date \"$from_date\"", report)
+        self.assertIn('cron: "5 7-19/3 * * 1-6"', report)
+        self.assertIn('if [ "$EVENT_SCHEDULE" = "5 7-19/3 * * 1-6" ]', report)
+        self.assertIn('cron: "0 9 * * *"', report)
+        self.assertNotIn('cron: "5 * * * *"', report)
+        self.assertIn("DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED", report)
 
-    def test_production_sync_preflight_covers_source_and_merge_integrity(self):
+    def test_production_sync_preflight_is_lightweight(self):
         report = self._read("mobiwork-sync.yml")
 
-        self.assertIn('test_mobiwork.py', report)
-        self.assertIn('test_monthly_master.py', report)
+        self.assertIn("python -m compileall -q src", report)
+        self.assertNotIn("python -m unittest", report)
 
-    def test_nightly_reconciliation_defaults_to_fourteen_completed_days(self):
+    def test_nightly_reconciliation_defaults_to_three_completed_days(self):
         nightly = self._read("nightly-reconcile.yml")
 
-        self.assertIn('default: "14"', nightly)
-        self.assertIn('days="${INPUT_LOOKBACK:-14}"', nightly)
-        self.assertIn('days="14"', nightly)
+        self.assertIn('default: "3"', nightly)
+        self.assertIn('days="${INPUT_LOOKBACK:-3}"', nightly)
+        self.assertIn('days="3"', nightly)
         self.assertIn('cron: "30 23 * * *"', nightly)
 
-    def test_recovery_rebuild_covers_current_previous_and_month_close(self):
+    def test_operations_health_runs_daily(self):
+        health = self._read("operations-health.yml")
+
+        self.assertIn('cron: "20 8 * * *"', health)
+        self.assertIn("SYNC_STALE_MINUTES = 720", health)
+
+    def test_recovery_rebuild_covers_current_month_and_month_close(self):
         recovery = self._read("recovery-rebuild.yml")
 
         self.assertIn('cron: "0 2 * * 0"', recovery)
-        self.assertIn('cron: "0 5 * * 0"', recovery)
+        self.assertNotIn('cron: "0 5 * * 0"', recovery)
         self.assertIn('cron: "30 3 2 * *"', recovery)
-        self.assertIn('previous_month_schedules = {"0 5 * * 0", "30 3 2 * *"}', recovery)
+        self.assertIn('previous_month_schedules = {"30 3 2 * *"}', recovery)
         self.assertIn('actions/workflows/mobiwork-rebuild-month.yml/dispatches', recovery)
         self.assertIn('dry_run:"false"', recovery)
 
     def test_monthly_history_reconcile_rescans_all_completed_history(self):
         history = self._read("historical-reconcile.yml")
 
-        self.assertIn('cron: "30 4 3 * *"', history)
+        self.assertNotIn("\n  schedule:\n", history)
+        self.assertIn("workflow_dispatch:", history)
         self.assertIn('default: "2026-06"', history)
         self.assertIn("run: python src/reconcile_history.py", history)
         self.assertIn('test_reconcile_history.py', history)

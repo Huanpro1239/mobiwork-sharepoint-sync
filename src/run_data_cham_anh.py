@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import main as core
@@ -66,10 +68,36 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
+def report_sync_left_masters_unchanged(
+    manifest_path: Path = Path("output") / "sync_manifest.json",
+) -> bool:
+    """Return True only when the preceding report sync succeeded with zero writes.
+
+    Any missing, unreadable, failed or ambiguous manifest returns False so the
+    combined workbook is rebuilt (fail-safe towards publishing).
+    """
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(manifest, dict) or manifest.get("status") != "success":
+        return False
+    if manifest.get("dry_run"):
+        return False
+    writes = manifest.get("sharepoint_write_count")
+    return isinstance(writes, int) and writes == 0
+
+
 def run() -> list[dict[str, Any]]:
     dry_run = _env_bool("DRY_RUN", False)
     if dry_run:
         LOG.info("Skipping Data cham anh SharePoint publish in dry-run mode")
+        return []
+
+    if _env_bool("DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED", False) and report_sync_left_masters_unchanged():
+        LOG.info(
+            "Skipping Data cham anh rebuild: report sync wrote no monthly master changes"
+        )
         return []
 
     sync_scope = os.environ.get("SYNC_SCOPE", "yesterday").strip().casefold()

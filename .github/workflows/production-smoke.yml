@@ -23,7 +23,7 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -102,6 +102,7 @@ jobs:
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
           SMOKE_TARGET_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_date || '' }}
+          SMOKE_CHECK_IMAGES: "false"
         run: python src/production_smoke.py
 
       - name: Preserve initial failure evidence
@@ -185,7 +186,6 @@ jobs:
           }
 
           sync_before=$(list_dispatch_ids "mobiwork-sync.yml")
-          image_before=$(list_dispatch_ids "mobiwork-images.yml")
 
           if [ "$REPORT_REPAIR" = "true" ]; then
             echo "Dispatching bounded report reconciliation for D-1..D-${LOOKBACK_DAYS}"
@@ -201,29 +201,10 @@ jobs:
             gh run watch "$sync_id" \
               --repo "$GITHUB_REPOSITORY" \
               --exit-status \
-              --interval 10
-
-            # A successful production report dispatch queues image reconciliation.
-            image_id=$(wait_for_new_run "mobiwork-images.yml" "$image_before" "image recovery")
-            echo "Recovery image run: $image_id"
-            gh run watch "$image_id" \
-              --repo "$GITHUB_REPOSITORY" \
-              --exit-status \
-              --interval 10
+              --interval 30
           elif [ "$IMAGE_REPAIR" = "true" ]; then
-            echo "Dispatching image-only reconciliation from $FROM_DATE"
-            gh workflow run mobiwork-images.yml \
-              --repo "$GITHUB_REPOSITORY" \
-              --ref main \
-              -f dry_run=false \
-              -f from_date="$FROM_DATE"
-
-            image_id=$(wait_for_new_run "mobiwork-images.yml" "$image_before" "image recovery")
-            echo "Recovery image run: $image_id"
-            gh run watch "$image_id" \
-              --repo "$GITHUB_REPOSITORY" \
-              --exit-status \
-              --interval 10
+            # SharePoint image copy is paused; run mobiwork-images.yml manually if needed.
+            echo "::warning::Image repair requested but automatic image sync is paused."
           else
             echo "::error::Recovery plan was eligible but contained no repair action"
             exit 1
@@ -248,6 +229,7 @@ jobs:
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
           SMOKE_TARGET_DATE: ${{ steps.recovery_plan.outputs.from_date }}
+          SMOKE_CHECK_IMAGES: "false"
         run: python src/production_smoke.py
 
       - name: Publish smoke and recovery summary
@@ -331,7 +313,7 @@ jobs:
           name: production-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/*.json
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7
 
       - name: Enforce final production consistency
         if: ${{ always() }}

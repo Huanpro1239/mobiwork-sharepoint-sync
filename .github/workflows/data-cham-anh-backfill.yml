@@ -17,7 +17,7 @@ on:
     # Daily self-heal after the 09:00 yesterday-finalization run. Rebuild both
     # previous and current month from canonical SharePoint masters so a skipped
     # Data cham anh publish is repaired automatically without refetching MobiWork.
-    - cron: "15 10 * * *"
+    - cron: "15 10 * * 1"
       timezone: "Asia/Ho_Chi_Minh"
 
 permissions:
@@ -195,4 +195,4 @@ jobs:
           name: data-cham-anh-backfill-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/data_cham_anh_backfill_manifest.json
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7

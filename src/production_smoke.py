@@ -283,35 +283,39 @@ def run_smoke(target_date: date | None = None) -> dict[str, Any]:
             }
         )
 
-    try:
-        image_state_payload = sharepoint.download_json(drive_id, "Data anh/_state.json")
-    except Exception as exc:
-        manifest["image_state"] = {
-            "status": "failed",
-            "failure_stage": "image_state_read",
-            "repairable": False,
-            "error": _failure_text(exc),
-        }
-        failures.append(f"images: {manifest['image_state']['error']}")
+    if os.environ.get("SMOKE_CHECK_IMAGES", "true").strip().casefold() in {"0", "false", "no", "off"}:
+        # SharePoint image copy is paused; Data cham anh links MobiWork image URLs.
+        manifest["image_state"] = {"status": "skipped", "repairable": False}
     else:
         try:
-            manifest["image_state"] = evaluate_image_state(image_state_payload, target)
-        except AssertionError as exc:
-            manifest["image_state"] = {
-                "status": "failed",
-                "failure_stage": "image_state_consistency",
-                "repairable": True,
-                "error": _failure_text(exc),
-            }
-            failures.append(f"images: {manifest['image_state']['error']}")
+            image_state_payload = sharepoint.download_json(drive_id, "Data anh/_state.json")
         except Exception as exc:
             manifest["image_state"] = {
                 "status": "failed",
-                "failure_stage": "image_state_invalid",
+                "failure_stage": "image_state_read",
                 "repairable": False,
                 "error": _failure_text(exc),
             }
             failures.append(f"images: {manifest['image_state']['error']}")
+        else:
+            try:
+                manifest["image_state"] = evaluate_image_state(image_state_payload, target)
+            except AssertionError as exc:
+                manifest["image_state"] = {
+                    "status": "failed",
+                    "failure_stage": "image_state_consistency",
+                    "repairable": True,
+                    "error": _failure_text(exc),
+                }
+                failures.append(f"images: {manifest['image_state']['error']}")
+            except Exception as exc:
+                manifest["image_state"] = {
+                    "status": "failed",
+                    "failure_stage": "image_state_invalid",
+                    "repairable": False,
+                    "error": _failure_text(exc),
+                }
+                failures.append(f"images: {manifest['image_state']['error']}")
 
     manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
     manifest["successful_report_count"] = sum(

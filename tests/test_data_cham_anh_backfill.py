@@ -103,7 +103,7 @@ class DataChamAnhBackfillTests(unittest.TestCase):
         workflow = workflow_path.read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("schedule:", workflow)
-        self.assertIn('cron: "15 10 * * *"', workflow)
+        self.assertIn('cron: "15 10 * * 1"', workflow)
         self.assertIn('timezone: "Asia/Ho_Chi_Minh"', workflow)
         self.assertIn("previous_month", workflow)
         self.assertIn("current_month", workflow)
