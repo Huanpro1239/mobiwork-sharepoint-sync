@@ -16,9 +16,8 @@ on:
         required: true
         type: boolean
         default: false
-  schedule:
-    - cron: "30 4 3 * *"
-      timezone: "Asia/Ho_Chi_Minh"
+  # Manual only: weekly current-month rebuild + month-close previous-month rebuild
+  # cover routine late edits. Run this to rescan all completed history on demand.
 
 permissions:
   contents: read
@@ -209,4 +208,4 @@ jobs:
             output/sync_manifest.json
             output/data_cham_anh_backfill_manifest.json
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7

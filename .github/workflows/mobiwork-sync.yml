@@ -286,7 +286,7 @@ jobs:
           name: mobiwork-sync-manifests-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/sync_manifest.json
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7
 
       - name: Upload dry-run Excel artifacts
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}

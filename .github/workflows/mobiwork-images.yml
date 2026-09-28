@@ -306,4 +306,4 @@ jobs:
           name: mobiwork-daily-image-sync-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/image_sync_manifest.json
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7

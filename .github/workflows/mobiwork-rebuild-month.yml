@@ -139,4 +139,4 @@ jobs:
             output/sync_manifest.json
             output/data_cham_anh_backfill_manifest.json
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7

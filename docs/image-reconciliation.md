@@ -14,4 +14,4 @@ Hourly image synchronization remains incremental for normal operation. Increment
 
 The workflow can also be started manually with an optional `from_date`. Scheduled and one-shot marker runs automatically use the first day of the previous calendar month, matching the two-month retention policy.
 
-A one-time `.github/image-reconcile-now` marker is used to trigger an immediate full reconciliation after this safety net is first deployed. Leaving the marker unchanged does not trigger future runs.
+Automatic image copy to SharePoint is paused; run the `MobiWork Daily Image Sync` workflow manually (optionally with `from_date`) when a SharePoint copy is needed.

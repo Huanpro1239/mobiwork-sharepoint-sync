@@ -32,5 +32,9 @@ Các chỉ số nên theo dõi hàng tuần:
 | data-cham-anh-backfill | 10:15 Thứ 2 | Tự sửa tháng trước + tháng hiện tại |
 | recovery-rebuild | CN 02:00 (tháng hiện tại), ngày 2 lúc 03:30 (tháng trước) | |
 | mobiwork-images | Chỉ chạy tay | Data cham anh dùng link ảnh gốc MobiWork (`hinh_anh`) |
+| historical-reconcile | Chỉ chạy tay | Quét lại toàn bộ lịch sử khi cần |
+| Dependabot | Hàng tháng, gộp 1 PR | |
+
+Artifact giữ 7 ngày.
 
 Preflight production chỉ `compileall` + kiểm tra config; unit test chạy trong CI. CI bỏ qua thay đổi chỉ ở `docs/` và `*.md`.

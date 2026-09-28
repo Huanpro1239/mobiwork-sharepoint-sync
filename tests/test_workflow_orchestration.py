@@ -133,7 +133,8 @@ class WorkflowOrchestrationTests(unittest.TestCase):
     def test_monthly_history_reconcile_rescans_all_completed_history(self):
         history = self._read("historical-reconcile.yml")
 
-        self.assertIn('cron: "30 4 3 * *"', history)
+        self.assertNotIn("\n  schedule:\n", history)
+        self.assertIn("workflow_dispatch:", history)
         self.assertIn('default: "2026-06"', history)
         self.assertIn("run: python src/reconcile_history.py", history)
         self.assertIn('test_reconcile_history.py', history)
