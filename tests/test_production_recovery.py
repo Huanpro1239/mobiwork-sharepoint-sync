@@ -23,35 +23,28 @@ class ProductionRecoveryPlanTests(unittest.TestCase):
                     "repairable": True,
                 }
             ],
-            "image_state": {"status": "success"},
         }
 
         plan = recovery.build_recovery_plan(manifest, today=date(2026, 9, 2))
 
         self.assertTrue(plan["eligible"])
         self.assertTrue(plan["report_repair"])
-        self.assertFalse(plan["image_repair"])
+        self.assertNotIn("image_repair", plan)
         self.assertEqual(plan["lookback_days"], 1)
         self.assertEqual(plan["repair_attempt_budget"], 1)
 
-    def test_image_only_failure_is_eligible(self):
+    def test_no_failed_report_means_nothing_to_repair(self):
         manifest = {
             "status": "failed",
             "target_date": "2026-09-01",
             "reports": [{"report": "visit", "status": "success"}],
-            "image_state": {
-                "status": "failed",
-                "failure_stage": "image_state_consistency",
-                "repairable": True,
-            },
         }
 
         plan = recovery.build_recovery_plan(manifest, today=date(2026, 9, 2))
 
-        self.assertTrue(plan["eligible"])
+        self.assertFalse(plan["eligible"])
         self.assertFalse(plan["report_repair"])
-        self.assertTrue(plan["image_repair"])
-        self.assertEqual(plan["from_date"], "2026-09-01")
+        self.assertIn("no repairable failure", plan["reason"])
 
     def test_source_failure_disables_automatic_repair(self):
         manifest = {
@@ -65,7 +58,6 @@ class ProductionRecoveryPlanTests(unittest.TestCase):
                     "repairable": False,
                 }
             ],
-            "image_state": {"status": "success"},
         }
 
         plan = recovery.build_recovery_plan(manifest, today=date(2026, 9, 2))
@@ -86,7 +78,6 @@ class ProductionRecoveryPlanTests(unittest.TestCase):
                     "repairable": True,
                 }
             ],
-            "image_state": {"status": "success"},
         }
 
         plan = recovery.build_recovery_plan(manifest, today=date(2026, 9, 2))
@@ -100,7 +91,6 @@ class ProductionRecoveryPlanTests(unittest.TestCase):
             "status": "success",
             "target_date": "2026-09-01",
             "reports": [{"report": "visit", "status": "success"}],
-            "image_state": {"status": "success"},
         }
 
         plan = recovery.build_recovery_plan(manifest, today=date(2026, 9, 2))

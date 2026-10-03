@@ -14,6 +14,7 @@ if str(SRC_DIR) not in sys.path:
 from data_cham_anh_export import (  # noqa: E402
     DATA_ANH_COLUMNS,
     DATA_DON_HANG_COLUMNS,
+    _iter_urls,
     build_data_anh_frame,
     build_data_don_hang_frame,
     publish_data_cham_anh_month,
@@ -53,6 +54,20 @@ def workbook_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
         for sheet_name, frame in sheets.items():
             frame.to_excel(writer, sheet_name=sheet_name, index=False)
     return buffer.getvalue()
+
+
+class ImageUrlParsingTests(unittest.TestCase):
+    def test_extracts_unique_urls_from_text_json_and_lists(self):
+        self.assertEqual(
+            list(_iter_urls("https://dmsimages.mobiwork.vn/a.jpg, https://dmsimages.mobiwork.vn/a.jpg;")),
+            ["https://dmsimages.mobiwork.vn/a.jpg"],
+        )
+        self.assertEqual(
+            list(_iter_urls('["https://x.vn/1.jpg", {"u": "https://x.vn/2.jpg"}]')),
+            ["https://x.vn/1.jpg", "https://x.vn/2.jpg"],
+        )
+        self.assertEqual(list(_iter_urls(None)), [])
+        self.assertEqual(list(_iter_urls("   ")), [])
 
 
 class DataChamAnhTransformTests(unittest.TestCase):

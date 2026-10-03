@@ -132,7 +132,6 @@ jobs:
 
           workflows=(
             mobiwork-sync.yml
-            mobiwork-images.yml
             data-cham-anh-backfill.yml
             nightly-reconcile.yml
             recovery-rebuild.yml
@@ -236,7 +235,6 @@ jobs:
 
           workflows=(
             mobiwork-sync.yml
-            mobiwork-images.yml
             data-cham-anh-backfill.yml
             nightly-reconcile.yml
             recovery-rebuild.yml

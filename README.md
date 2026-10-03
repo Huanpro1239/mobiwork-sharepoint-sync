@@ -1,6 +1,6 @@
 # MobiWork DMS → SharePoint
 
-Production data pipeline bằng Python để đồng bộ báo cáo và ảnh gốc từ MobiWork DMS sang thư viện SharePoint `MobiWorkDMS`.
+Production data pipeline bằng Python để nạp 4 báo cáo từ MobiWork DMS Open API (viếng thăm, mở mới khách hàng, đơn đặt hàng, đơn bán hàng) vào thư viện SharePoint `MobiWorkDMS`, kèm workbook **Data chấm ảnh** hằng tháng.
 
 ```text
 MobiWork Open API
@@ -21,13 +21,15 @@ MobiWork Open API
         │                 ▼
         │          Monthly master Excel
         │
-        └─ Image metadata từ Visit master
+        └─ Data chấm ảnh (từ monthly master Viếng thăm + Đơn bán hàng)
                   │
                   ▼
-          Data anh/YYYY-MM/...
+          05_DataChamAnh/YYYY/MM/Data_cham_anh_YYYY-MM.xlsx
+            ├─ Data_anh: mỗi link ảnh viếng thăm một dòng (link gốc MobiWork)
+            └─ Data_don_hang: chi tiết đơn bán hàng
 ```
 
-Dự án chỉ tạo **nguồn dữ liệu chuẩn**. Nó không chấm điểm ảnh và không tạo KPI nghiệp vụ.
+Dự án chỉ tạo **nguồn dữ liệu chuẩn**. Nó không tải/copy file ảnh lên SharePoint (Data chấm ảnh dùng link ảnh gốc của MobiWork), không chấm điểm ảnh và không tạo KPI nghiệp vụ.
 
 ## Bootstrap production trước khi chạy lịch
 
@@ -137,7 +139,6 @@ Tất cả lịch dùng múi giờ `Asia/Ho_Chi_Minh` (khóa `timezone:` trong `
 - Chỉ chạy thủ công:
   - `.github/workflows/historical-reconcile.yml`: full rebuild tuần tự toàn bộ các tháng đã hoàn tất từ `2026-06`, để bắt thay đổi lịch sử nằm ngoài mọi lookback ngắn hạn.
   - `.github/workflows/mobiwork-rebuild-month.yml`: full-month rebuild (cũng được recovery dispatcher gọi); chạy được cả khi bootstrap state chưa complete.
-  - `.github/workflows/mobiwork-images.yml`: copy ảnh sang SharePoint theo batch + checkpoint. Đang tạm dừng lịch vì Data chấm ảnh link thẳng tới ảnh MobiWork.
   - `.github/workflows/mobiwork-bootstrap-history.yml`: bootstrap lịch sử.
 - `.github/workflows/ci.yml`: compile, Ruff, unit tests và coverage.
 
@@ -157,7 +158,7 @@ Các writer production dùng chung concurrency lock và `cancel-in-progress: fal
 ```powershell
 python -m pip install -r requirements.txt
 python src\run_all_reports.py
-python src\run_images.py
+python src\run_data_cham_anh.py
 ```
 
 Sao chép `.env.example` thành `.env` và điền thông tin MobiWork/SharePoint trước khi chạy. Không commit `.env`, token, dữ liệu khách hàng, ảnh hoặc file export.
@@ -176,5 +177,4 @@ coverage report
 
 - Runbook: [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
 - Data contract: [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md)
-- Image sync: [`docs/image-sync.md`](docs/image-sync.md)
 - Security: [`SECURITY.md`](SECURITY.md)

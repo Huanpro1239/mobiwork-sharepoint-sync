@@ -74,41 +74,5 @@ class ProductionSmokeFrameTests(unittest.TestCase):
             smoke.compare_report_frames(actual, expected, target)
 
 
-class ProductionSmokeImageStateTests(unittest.TestCase):
-    def test_image_state_accepts_completed_clean_state(self):
-        result = smoke.evaluate_image_state(
-            {
-                "last_completed_sync_date": "2026-09-01",
-                "last_successful_sync_date": "2026-09-01",
-                "failed_count": 0,
-                "retry_from_date": None,
-            },
-            date(2026, 9, 1),
-        )
-        self.assertEqual(result["failed_count"], 0)
-
-    def test_image_state_rejects_lagging_cursor(self):
-        with self.assertRaisesRegex(AssertionError, "behind target date"):
-            smoke.evaluate_image_state(
-                {
-                    "last_completed_sync_date": "2026-08-31",
-                    "failed_count": 0,
-                    "retry_from_date": None,
-                },
-                date(2026, 9, 1),
-            )
-
-    def test_image_state_rejects_unresolved_retry(self):
-        with self.assertRaisesRegex(AssertionError, "unresolved work"):
-            smoke.evaluate_image_state(
-                {
-                    "last_completed_sync_date": "2026-09-01",
-                    "failed_count": 1,
-                    "retry_from_date": "2026-08-31",
-                },
-                date(2026, 9, 1),
-            )
-
-
 if __name__ == "__main__":
     unittest.main()

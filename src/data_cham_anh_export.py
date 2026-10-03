@@ -1,23 +1,57 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 from datetime import date
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
 if __package__:
     from .excel_export import _format_sheet, _validate_excel_size
-    from .image_sync import _iter_urls
     from .mobiwork import ReportConfig
     from .monthly_master import master_filename
 else:
     from excel_export import _format_sheet, _validate_excel_size
-    from image_sync import _iter_urls
     from mobiwork import ReportConfig
     from monthly_master import master_filename
+
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+
+
+def _iter_urls(value: Any) -> Iterable[str]:
+    """Yield unique image URLs from a MobiWork hinh_anh value (text, JSON or list)."""
+    if value is None:
+        return
+    if isinstance(value, dict):
+        for nested in value.values():
+            yield from _iter_urls(nested)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for nested in value:
+            yield from _iter_urls(nested)
+        return
+    text = str(value).strip()
+    if not text:
+        return
+    if text[:1] in {"[", "{"}:
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is not None and parsed != value:
+            yield from _iter_urls(parsed)
+            return
+    seen: set[str] = set()
+    for match in _URL_RE.findall(text):
+        url = match.rstrip(".,;)]}")
+        if url not in seen:
+            seen.add(url)
+            yield url
 
 
 DATA_ANH_COLUMNS = [

@@ -37,7 +37,7 @@ resume routine workflows
 Quy tắc an toàn:
 
 - bootstrap giữ shared production writer lock trong toàn bộ lần chạy và **không cancel** writer đang chạy;
-- trước khi rebuild, nó disable `mobiwork-sync`, image sync, full-month recovery, nightly reconcile, historical reconcile, production smoke và operations health;
+- trước khi rebuild, nó disable `mobiwork-sync`, Data chấm ảnh backfill, full-month recovery, nightly reconcile, historical reconcile, production smoke và operations health;
 - mỗi tháng dùng full-month source gate: toàn bộ report và toàn bộ ngày của tháng đó phải build được trước khi publish set của tháng;
 - nếu một tháng fail, các tháng sau không chạy;
 - nếu bootstrap fail hoặc bị cancel, routine automation **vẫn bị disable**;
@@ -59,12 +59,12 @@ Tất cả lịch nghiệp vụ dùng múi giờ `Asia/Ho_Chi_Minh`.
 10:15 thứ 2                  -> Data chấm ảnh backfill
 11:30 mỗi ngày               -> production smoke
 08:20 mỗi ngày               -> operations health watchdog
-thủ công                     -> historical reconcile, image sync, bootstrap
+thủ công                     -> historical reconcile, full-month rebuild, bootstrap
 ```
 
 GitHub chỉ giữ một run đang chờ trong concurrency group `mobiwork-sharepoint-production`; run đang chờ cũ hơn sẽ bị hủy khi có run mới xếp hàng. Watchdog cảnh báo nếu full-month rebuild gần nhất không thành công, nên một lần rebuild khóa sổ bị hủy sẽ không bị bỏ sót.
 
-Pipeline production kết thúc ở monthly master và ảnh gốc trên SharePoint. Không có bước chấm điểm ảnh hoặc tạo KPI nghiệp vụ.
+Pipeline production kết thúc ở monthly master của 4 báo cáo và workbook Data chấm ảnh trên SharePoint. Không tải/copy file ảnh, không chấm điểm ảnh và không tạo KPI nghiệp vụ.
 
 ## Monthly master
 
@@ -162,19 +162,19 @@ end_month   = [trống = tháng trước]
 dry_run     = false
 ```
 
-## Đồng bộ ảnh
+## Data chấm ảnh
 
-Image sync đọc metadata từ monthly master Viếng thăm trên SharePoint và lưu ảnh vào:
+`run_data_cham_anh.py` (sau mỗi lần report sync) và `run_data_cham_anh_backfill.py` (rebuild tháng, historical, bootstrap, backfill thứ 2) đọc monthly master Viếng thăm + Đơn bán hàng trên SharePoint và ghi:
 
 ```text
-Data anh/YYYY-MM/<Nhân viên>/<Mã KH>/...
+05_DataChamAnh/YYYY/MM/Data_cham_anh_YYYY-MM.xlsx
 ```
 
-Nó dùng `Data anh/_state.json`, one-day overlap, `retry_from_date`, giới hạn số ảnh mỗi batch và soft runtime budget. Khi còn mục tiêu chưa tải và batch vừa rồi có tiến triển, workflow tự gọi batch tiếp theo. URL lỗi được ghi trong manifest để production sau thử lại.
+Sheet `Data_anh` có một dòng cho mỗi link ảnh viếng thăm (link gốc `hinh_anh` của MobiWork, không copy ảnh). Sheet `Data_don_hang` là chi tiết đơn bán hàng. Workbook không đổi nội dung thì không ghi lại.
 
 ## Concurrency và an toàn
 
-Report, image, full-month rebuild, historical reconciliation và bootstrap dùng chung concurrency group `mobiwork-sharepoint-production` để tránh hai writer sửa SharePoint đồng thời.
+Report sync, Data chấm ảnh, full-month rebuild, historical reconciliation và bootstrap dùng chung concurrency group `mobiwork-sharepoint-production` để tránh hai writer sửa SharePoint đồng thời.
 
 Tất cả writer dùng `cancel-in-progress: false`. Recovery/rebuild phải **chờ** writer hiện tại hoàn tất; không cắt ngang một job đang publish vì điều đó có thể để một số report đã mới trong khi report khác vẫn cũ.
 
@@ -186,11 +186,11 @@ Excel được so sánh theo nội dung worksheet thay vì chỉ dựa vào kíc
 
 `production-smoke.yml` fetch lại MobiWork cho ngày mục tiêu và so dữ liệu source sau transform với đúng partition trong monthly master SharePoint.
 
-Nó kiểm cả image state. Với mismatch có thể sửa bằng reconciliation/image retry trong bounded one-shot recovery. Sau recovery, smoke chạy lại và workflow chỉ xanh khi consistency được xác nhận.
+Với mismatch có thể sửa, nó chạy một lần reconciliation có giới hạn (bounded one-shot recovery). Sau recovery, smoke chạy lại và workflow chỉ xanh khi consistency được xác nhận.
 
 ## Audit và giám sát
 
-Report/rebuild/bootstrap/historical reconciliation ghi `output/sync_manifest.json`; image sync ghi `output/image_sync_manifest.json`.
+Report/rebuild/bootstrap/historical reconciliation ghi `output/sync_manifest.json`; Data chấm ảnh backfill ghi `output/data_cham_anh_backfill_manifest.json`.
 
 Bootstrap còn ghi readiness state tại:
 
@@ -238,7 +238,7 @@ Sau khi publish thành công, bước dọn file legacy xóa các file `__sync_t
 6. Nếu nghi một master tháng đã thiếu hoặc tích lũy sai, chạy `MobiWork Full Month Rebuild` cho tháng đó.
 7. Nếu nghi chỉnh sửa cũ hơn tháng trước không được bắt, chạy `MobiWork Historical Reconciliation` từ tháng lịch sử cần kiểm tra.
 8. Nếu API pagination báo repeated page hoặc total mismatch, không bỏ qua gate; kiểm source/API trước khi cho publish.
-9. Với ảnh, xem `image_sync_manifest.json`, đặc biệt `status`, `pending_remaining`, `failed_count`, `retry_from_date`.
+9. Nếu Data chấm ảnh thiếu/sai, chạy `MobiWork Full Month Rebuild` cho tháng đó (bước cuối tự làm mới Data chấm ảnh) hoặc chờ backfill thứ 2.
 10. Phân biệt lỗi dữ liệu cố định với timeout/rate limit/API tạm thời trước khi retry nhiều lần.
 11. `dry_run=true` không ghi SharePoint và không được dùng khi mục tiêu là sửa dữ liệu production.
 

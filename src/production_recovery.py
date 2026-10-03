@@ -32,7 +32,6 @@ def build_recovery_plan(
             "eligible": False,
             "reason": f"invalid target_date: {target_raw!r}",
             "report_repair": False,
-            "image_repair": False,
             "lookback_days": 0,
             "from_date": target_raw,
             "repair_attempt_budget": 1,
@@ -52,14 +51,7 @@ def build_recovery_plan(
         if item.get("repairable") is not True
     ]
 
-    image = manifest.get("image_state") or {}
-    image_failed = image.get("status") == "failed"
-    image_repairable = image_failed and image.get("repairable") is True
-    if image_failed and not image_repairable:
-        unrepairable.append(f"images:{image.get('failure_stage', 'unknown')}")
-
     report_repair = bool(repairable_reports)
-    image_repair = bool(image_repairable)
     reasons: list[str] = []
     if manifest.get("status") != "failed":
         reasons.append("smoke is not failed")
@@ -71,7 +63,7 @@ def build_recovery_plan(
         )
     if unrepairable:
         reasons.append("one or more failures are not safe for automatic repair")
-    if not report_repair and not image_repair:
+    if not report_repair:
         reasons.append("no repairable failure was found")
 
     eligible = not reasons
@@ -82,7 +74,6 @@ def build_recovery_plan(
         "lookback_days": age_days if 1 <= age_days <= MAX_REPAIR_LOOKBACK_DAYS else 0,
         "from_date": target.isoformat(),
         "report_repair": report_repair,
-        "image_repair": image_repair,
         "repair_attempt_budget": 1,
         "repairable_reports": [item.get("report") for item in repairable_reports],
         "unrepairable_failures": unrepairable,
@@ -102,7 +93,6 @@ def write_github_outputs(plan: dict[str, Any]) -> None:
     values = {
         "eligible": str(bool(plan.get("eligible"))).lower(),
         "report_repair": str(bool(plan.get("report_repair"))).lower(),
-        "image_repair": str(bool(plan.get("image_repair"))).lower(),
         "lookback_days": str(int(plan.get("lookback_days") or 0)),
         "from_date": str(plan.get("from_date") or ""),
         "reason": str(plan.get("reason") or "").replace("\n", " "),

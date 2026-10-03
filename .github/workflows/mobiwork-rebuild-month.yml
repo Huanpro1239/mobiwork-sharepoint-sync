@@ -17,7 +17,7 @@ permissions:
   contents: read
   id-token: write
 
-# Full-month recovery shares the production writer lock with routine sync/image jobs.
+# Full-month recovery shares the production writer lock with routine sync jobs.
 # Never cancel an active holder: an interrupted writer can leave only some reports
 # updated. The rebuild waits for the lock, then repairs the month from source API.
 concurrency:
