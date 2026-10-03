@@ -6,7 +6,7 @@ Pipeline MobiWork → SharePoint áp dụng ba tối ưu chính:
 2. Lookback nhiều ngày được gộp theo báo cáo/tháng, nên mỗi monthly master chỉ cần tải và publish tối đa một lần trong một batch.
 3. Đồng bộ ảnh dùng folder index, đường dẫn xác định, checkpoint và giới hạn batch để giảm Graph API call và tiếp tục an toàn sau khi hết thời gian chạy.
 
-Nightly reconciliation chạy lúc 23:30 theo giờ Việt Nam, đối soát D-1 đến D-3 rồi gọi image reconciliation từ ngày sớm nhất. Operations health chạy mỗi hai giờ và theo dõi report sync, image sync cùng production smoke.
+Nightly reconciliation chạy lúc 23:30 theo giờ Việt Nam, đối soát D-1 đến D-3. Image sync hiện chỉ chạy thủ công. Operations health chạy lúc 08:20 hằng ngày và theo dõi report sync, full-month rebuild cùng production smoke.
 
 Các chỉ số nên theo dõi hàng tuần:
 

@@ -1,0 +1,43 @@
+name: Resolve SharePoint document library
+description: >-
+  Resolve the Microsoft Graph drive id of the production document library and
+  export it as SHAREPOINT_DRIVE_ID. Requires a prior azure/login step and the
+  SHAREPOINT_HOST, SHAREPOINT_SITE_PATH and SHAREPOINT_LIBRARY environment
+  variables (set once at workflow level).
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve drive id
+      shell: bash
+      run: |
+        set -euo pipefail
+        for name in SHAREPOINT_HOST SHAREPOINT_SITE_PATH SHAREPOINT_LIBRARY; do
+          if [ -z "${!name:-}" ]; then
+            echo "::error::$name is not configured."
+            exit 1
+          fi
+        done
+
+        site_path="/${SHAREPOINT_SITE_PATH#/}"
+        SITE_ID=$(az rest \
+          --method get \
+          --url "https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${site_path}?\$select=id" \
+          --query id -o tsv)
+
+        DRIVES=$(az rest \
+          --method get \
+          --url "https://graph.microsoft.com/v1.0/sites/$SITE_ID/drives" \
+          --output json)
+
+        DRIVE_ID=$(echo "$DRIVES" | jq -r --arg name "$SHAREPOINT_LIBRARY" \
+          '.value[] | select((.name | ascii_downcase) == ($name | ascii_downcase)) | .id' \
+          | head -n 1)
+        if [ -z "$DRIVE_ID" ] || [ "$DRIVE_ID" = "null" ]; then
+          echo "::error::Microsoft Graph did not return a document library named $SHAREPOINT_LIBRARY."
+          exit 1
+        fi
+
+        echo "SharePoint site id resolved"
+        echo "$SHAREPOINT_LIBRARY drive id resolved"
+        echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"

@@ -34,6 +34,9 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/actions/workflows/production-smoke.yml/runs?branch=main&per_page=10" \
             > smoke-runs.json
           gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/mobiwork-rebuild-month.yml/runs?branch=main&per_page=10" \
+            > rebuild-runs.json
+          gh api \
             "repos/${GITHUB_REPOSITORY}/commits?path=.github/workflows/production-smoke.yml&per_page=1" \
             > smoke-definition.json
 
@@ -55,6 +58,11 @@ jobs:
           # pipeline always has a success within the last ~10 hours at 08:20.
           # A fresh queued/in-progress run also suppresses a stale-success alert.
           SYNC_STALE_MINUTES = 720
+          # Full-month rebuilds are queued weekly (Sunday) and at month close by
+          # recovery-rebuild.yml. They share the production concurrency group, where
+          # GitHub silently cancels an older *pending* run when a newer one queues, so
+          # a cancelled or missing rebuild must be surfaced here instead of being lost.
+          REBUILD_STALE_MINUTES = 8 * 24 * 60
           ACTIVE_RUN_GRACE_MINUTES = 90
 
           def parse_time(value):
@@ -114,6 +122,9 @@ jobs:
               return (now - created).total_seconds() / 60.0
 
           sync_ages = successful_ages("sync-runs.json")
+          rebuild_ages = successful_ages("rebuild-runs.json")
+          rebuild_active_age = latest_active_age("rebuild-runs.json")
+          rebuild_run = latest_completed("rebuild-runs.json")
           sync_active_age = latest_active_age("sync-runs.json")
           smoke_run = latest_completed("smoke-runs.json")
           definition_age = smoke_definition_age_minutes()
@@ -156,6 +167,31 @@ jobs:
                       f"Latest successful production consistency smoke is {smoke_age / 60:.1f} hours old (>36)."
                   )
 
+          has_active_rebuild = (
+              rebuild_active_age is not None
+              and rebuild_active_age <= ACTIVE_RUN_GRACE_MINUTES
+          )
+          rebuild_conclusion = "missing"
+          if rebuild_run is None:
+              if not has_active_rebuild:
+                  reasons.append("No completed MobiWork Full Month Rebuild run was found in recent history.")
+          else:
+              rebuild_conclusion = str(rebuild_run.get("conclusion") or "unknown")
+              if rebuild_conclusion != "success" and not has_active_rebuild:
+                  reasons.append(
+                      "Latest MobiWork Full Month Rebuild did not succeed "
+                      "(a pending run cancelled by the shared production lock also lands here): "
+                      f"conclusion={rebuild_conclusion}, url={rebuild_run.get('html_url', '')}"
+                  )
+          if rebuild_run is not None and not has_active_rebuild and (
+              not rebuild_ages or rebuild_ages[0] > REBUILD_STALE_MINUTES
+          ):
+              age_text = f"{rebuild_ages[0] / 1440:.1f} days old" if rebuild_ages else "missing"
+              reasons.append(
+                  "Latest successful MobiWork Full Month Rebuild is "
+                  f"{age_text} (>{REBUILD_STALE_MINUTES // 1440} days)."
+              )
+
           healthy = not reasons
           state = "healthy" if healthy else "unhealthy"
           Path("health.txt").write_text("\n".join(reasons), encoding="utf-8")
@@ -167,6 +203,10 @@ jobs:
               )
               handle.write(f"smoke_age_minutes={smoke_age:.1f}\n")
               handle.write(f"smoke_conclusion={smoke_conclusion}\n")
+              handle.write(
+                  f"rebuild_age_minutes={(rebuild_ages[0] if rebuild_ages else -1):.1f}\n"
+              )
+              handle.write(f"rebuild_conclusion={rebuild_conclusion}\n")
               handle.write(
                   f"smoke_definition_age_minutes={(definition_age if definition_age is not None else -1):.1f}\n"
               )
@@ -243,7 +283,7 @@ jobs:
           if [ -n "$issue_number" ]; then
             gh issue comment "$issue_number" \
               --repo "$GITHUB_REPOSITORY" \
-              --body "Automation recovered. Report sync and production consistency smoke are healthy again."
+              --body "Automation recovered. Report sync, full-month rebuild and production consistency smoke are healthy again."
             gh issue close "$issue_number" --repo "$GITHUB_REPOSITORY" --reason completed
             echo "Closed recovered incident issue #$issue_number"
           else
@@ -259,6 +299,8 @@ jobs:
           SMOKE_AGE: ${{ steps.evaluate.outputs.smoke_age_minutes }}
           SMOKE_CONCLUSION: ${{ steps.evaluate.outputs.smoke_conclusion }}
           SMOKE_DEFINITION_AGE: ${{ steps.evaluate.outputs.smoke_definition_age_minutes }}
+          REBUILD_AGE: ${{ steps.evaluate.outputs.rebuild_age_minutes }}
+          REBUILD_CONCLUSION: ${{ steps.evaluate.outputs.rebuild_conclusion }}
         shell: bash
         run: |
           {
@@ -269,6 +311,7 @@ jobs:
             echo "- Active report sync age: **${SYNC_ACTIVE_AGE:-unknown} min**"
             echo "- Latest production smoke: **${SMOKE_CONCLUSION:-unknown}**, age **${SMOKE_AGE:-unknown} min**"
             echo "- Smoke workflow definition age: **${SMOKE_DEFINITION_AGE:-unknown} min**"
+            echo "- Latest full-month rebuild: **${REBUILD_CONCLUSION:-unknown}**, last success age **${REBUILD_AGE:-unknown} min**"
             if [ -s health.txt ]; then
               echo
               echo "### Findings"

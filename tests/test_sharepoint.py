@@ -258,6 +258,69 @@ class SharePointClientTests(unittest.TestCase):
         self.assertEqual(rename_calls[2].args[1:3], ("old-1", "BaoCaoViengTham_2026-08-21.xlsx"))
         client._delete_item.assert_called_once_with("drive-1", "temp-1")
 
+    def test_staged_swap_restores_backup_when_promoted_content_mismatches(self):
+        client = self.make_client()
+        existing = {"id": "old-1", "eTag": '"old-etag"', "file": {}}
+        client.ensure_folder_path = Mock(return_value="parent-1")
+        client._upload_new_content = Mock(return_value={"id": "temp-1", "size": 3})
+        client._rename_item = Mock(
+            side_effect=[
+                {"id": "old-1", "name": "backup"},
+                {"id": "temp-1", "name": "Report.xlsx"},
+                {"id": "temp-1", "name": "failed"},
+                {"id": "old-1", "name": "Report.xlsx"},
+            ]
+        )
+        client._verify_exact_item_content = Mock(side_effect=RuntimeError("content mismatch"))
+        client._delete_item = Mock()
+
+        with (
+            patch("src.sharepoint.uuid4") as uuid_mock,
+            self.assertRaisesRegex(RuntimeError, "content mismatch"),
+        ):
+            uuid_mock.return_value.hex = "abcdef1234567890"
+            client._staged_replace_content(
+                "drive-1", "folder", "Report.xlsx", b"abc", "application/octet-stream", existing
+            )
+
+        rename_calls = client._rename_item.call_args_list
+        self.assertEqual(len(rename_calls), 4)
+        self.assertEqual(rename_calls[0].args[3], '"old-etag"')
+        self.assertEqual(rename_calls[2].args[1], "temp-1")
+        self.assertTrue(rename_calls[2].args[2].startswith("__sync_failed_abcdef123456__"))
+        self.assertEqual(rename_calls[3].args[1:3], ("old-1", "Report.xlsx"))
+        # The promoted (bad) item is parked under a failed name, never deleted, and the
+        # previous canonical file is never removed when verification fails.
+        client._delete_item.assert_not_called()
+
+    def test_staged_swap_keeps_canonical_untouched_when_backup_rename_fails(self):
+        client = self.make_client()
+        existing = {"id": "old-1", "eTag": '"stale-etag"', "file": {}}
+        client.ensure_folder_path = Mock(return_value="parent-1")
+        client._upload_new_content = Mock(return_value={"id": "temp-1", "size": 3})
+        client._rename_item = Mock(side_effect=RuntimeError("412 precondition failed"))
+        client._verify_exact_item_content = Mock()
+        client._delete_item = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "412 precondition failed"):
+            client._staged_replace_content(
+                "drive-1", "folder", "Report.xlsx", b"abc", "application/octet-stream", existing
+            )
+
+        self.assertEqual(client._rename_item.call_count, 1)
+        client._verify_exact_item_content.assert_not_called()
+        client._delete_item.assert_called_once_with("drive-1", "temp-1")
+
+    def test_staged_swap_rejects_existing_item_without_id(self):
+        client = self.make_client()
+        client._upload_new_content = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "has no driveItem id"):
+            client._staged_replace_content(
+                "drive-1", "folder", "Report.xlsx", b"abc", "application/octet-stream", {}
+            )
+        client._upload_new_content.assert_not_called()
+
     def test_upload_rechecks_stale_size_metadata(self):
         credential = FakeCredential()
         session = FakeJsonSession(
