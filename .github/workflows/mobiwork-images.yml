@@ -28,6 +28,18 @@ concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false
 
+# Production SharePoint target. Override with repository variables
+# (Settings → Secrets and variables → Actions → Variables) instead of editing
+# every workflow; the literals are the current production defaults.
+env:
+  SHAREPOINT_HOST: ${{ vars.SHAREPOINT_HOST || 'vikodacomvn.sharepoint.com' }}
+  SHAREPOINT_SITE_PATH: ${{ vars.SHAREPOINT_SITE_PATH || '/sites/Planning' }}
+  SHAREPOINT_LIBRARY: ${{ vars.SHAREPOINT_LIBRARY || 'MobiWorkDMS' }}
+  # Python Graph clients mint a fresh GitHub OIDC assertion per token request
+  # (see src/sharepoint.py) so long runs never outlive the azure/login assertion.
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
 jobs:
   sync-images:
     runs-on: ubuntu-latest
@@ -35,10 +47,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
           cache: "pip"
@@ -132,34 +144,14 @@ jobs:
           echo "Microsoft OIDC configuration: available"
 
       - name: Azure login with GitHub OIDC
-        uses: azure/login@v3
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
 
       - name: Resolve SharePoint document library
-        shell: bash
-        run: |
-          set -euo pipefail
-          SITE_ID=$(az rest \
-            --method get \
-            --url 'https://graph.microsoft.com/v1.0/sites/vikodacomvn.sharepoint.com:/sites/Planning?$select=id' \
-            --query id -o tsv)
-
-          DRIVES=$(az rest \
-            --method get \
-            --url "https://graph.microsoft.com/v1.0/sites/$SITE_ID/drives" \
-            --output json)
-
-          DRIVE_ID=$(echo "$DRIVES" | jq -r '.value[] | select((.name | ascii_downcase) == "mobiworkdms") | .id' | head -n 1)
-          if [ -z "$DRIVE_ID" ] || [ "$DRIVE_ID" = "null" ]; then
-            echo "::error::Microsoft Graph did not return a document library named MobiWorkDMS."
-            exit 1
-          fi
-
-          echo "SHAREPOINT_DRIVE_ID=$DRIVE_ID" >> "$GITHUB_ENV"
-          echo "MobiWorkDMS drive id resolved"
+        uses: ./.github/actions/resolve-sharepoint-drive
 
       - name: Sync images from SharePoint visit data
         env:
@@ -167,9 +159,6 @@ jobs:
           LOG_LEVEL: "INFO"
           MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
           MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
-          SHAREPOINT_HOST: "vikodacomvn.sharepoint.com"
-          SHAREPOINT_SITE_PATH: "/sites/Planning"
-          SHAREPOINT_LIBRARY: "MobiWorkDMS"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
@@ -301,7 +290,7 @@ jobs:
 
       - name: Upload daily image sync manifest
         if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: mobiwork-daily-image-sync-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/image_sync_manifest.json

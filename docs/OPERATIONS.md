@@ -51,16 +51,18 @@ Nếu bootstrap fail, sửa nguyên nhân rồi chạy lại bootstrap. Không m
 Tất cả lịch nghiệp vụ dùng múi giờ `Asia/Ho_Chi_Minh`.
 
 ```text
-HH:05 mỗi giờ       -> MobiWork DMS Sync: today
-09:00 mỗi ngày      -> MobiWork DMS Sync: yesterday -> queue image sync
-23:30 mỗi ngày      -> reconcile 14 completed days
-02:00 Chủ nhật      -> full rebuild tháng hiện tại
-05:00 Chủ nhật      -> full rebuild tháng trước
-03:30 ngày 2/tháng  -> full rebuild tháng trước để khóa sổ
-04:30 ngày 3/tháng  -> reconcile toàn bộ lịch sử đã hoàn tất từ 2026-06
-11:30 mỗi ngày      -> production smoke
-mỗi 2 giờ :20       -> operations health watchdog
+07:05-19:05 mỗi 3 giờ, T2-T7 -> MobiWork DMS Sync: today
+09:00 mỗi ngày               -> MobiWork DMS Sync: yesterday + Data chấm ảnh
+23:30 mỗi ngày               -> reconcile 3 completed days (D-1..D-3)
+02:00 Chủ nhật               -> full rebuild tháng hiện tại
+03:30 ngày 2/tháng           -> full rebuild tháng trước để khóa sổ
+10:15 thứ 2                  -> Data chấm ảnh backfill
+11:30 mỗi ngày               -> production smoke
+08:20 mỗi ngày               -> operations health watchdog
+thủ công                     -> historical reconcile, image sync, bootstrap
 ```
+
+GitHub chỉ giữ một run đang chờ trong concurrency group `mobiwork-sharepoint-production`; run đang chờ cũ hơn sẽ bị hủy khi có run mới xếp hàng. Watchdog cảnh báo nếu full-month rebuild gần nhất không thành công, nên một lần rebuild khóa sổ bị hủy sẽ không bị bỏ sót.
 
 Pipeline production kết thúc ở monthly master và ảnh gốc trên SharePoint. Không có bước chấm điểm ảnh hoặc tạo KPI nghiệp vụ.
 
@@ -142,7 +144,7 @@ Tháng hiện tại rebuild đến ngày hiện tại. Tháng quá khứ rebuild
 
 ## Historical reconciliation hàng tháng
 
-`MobiWork Historical Reconciliation` chạy `04:30` ngày 3 hàng tháng. Mục tiêu là bắt các chỉnh sửa/back-date nằm ngoài cửa sổ nightly 14 ngày và ngoài current/previous-month weekly recovery.
+`MobiWork Historical Reconciliation` chỉ chạy thủ công. Mục tiêu là bắt các chỉnh sửa/back-date nằm ngoài cửa sổ nightly 3 ngày, ngoài weekly rebuild tháng hiện tại và ngoài lần khóa sổ tháng trước.
 
 Mặc định workflow rebuild tuần tự:
 
@@ -222,7 +224,9 @@ Bootstrap có `months_expected`, `months_completed`, `month_count_expected`, `mo
 
 Historical reconciliation có `months_expected`, `months_completed`, `month_count_expected`, `month_count_completed`, `failed_month`, `history_reconcile_complete`.
 
-`operations-health.yml` kiểm độ mới của report sync, image sync và production smoke. Khi lỗi kéo dài, nó mở/cập nhật issue `[OPS] MobiWork automation unhealthy` và tự đóng khi phục hồi.
+`operations-health.yml` kiểm độ mới của report sync, full-month rebuild (lần gần nhất phải `success`, có rebuild thành công trong 8 ngày) và production smoke. Khi lỗi kéo dài, nó mở/cập nhật issue `[OPS] MobiWork automation unhealthy` và tự đóng khi phục hồi.
+
+Sau khi publish thành công, bước dọn file legacy xóa các file `__sync_tmp_*`, `__sync_backup_*`, `__sync_failed_*` còn sót trong cùng thư mục tháng (file bị xóa vẫn nằm trong Recycle Bin của SharePoint). Nếu log có `CRITICAL: unable to restore SharePoint backup`, lấy lại file từ backup hoặc Recycle Bin **trước** lần publish tiếp theo của tháng đó.
 
 ## Xử lý sự cố
 
@@ -249,5 +253,9 @@ compile -> Ruff -> unit tests -> coverage -> CI green
 Nếu thay đổi schema monthly master hoặc mapping Vùng, production baseline nên được bootstrap/rebuild lại phạm vi tháng bị ảnh hưởng trước khi dashboard refresh.
 
 Secrets bắt buộc: `MOBIWORK_USER`, `MOBIWORK_TOKEN`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`.
+
+Repository variables tùy chọn (mặc định là production hiện tại): `SHAREPOINT_HOST`, `SHAREPOINT_SITE_PATH`, `SHAREPOINT_LIBRARY`.
+
+Python lấy Graph token bằng GitHub OIDC assertion mới mỗi lần xin token (cần `permissions: id-token: write` và `AZURE_CLIENT_ID`/`AZURE_TENANT_ID` trong env), nên job dài không bị `AADSTS700024` khi assertion của `azure/login` hết hạn sau ~5 phút.
 
 Data contract chi tiết: `docs/DATA_CONTRACT.md`.

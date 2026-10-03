@@ -11,11 +11,53 @@ from urllib.parse import quote
 from uuid import uuid4
 
 import requests
-from azure.identity import AzureCliCredential
+from azure.identity import AzureCliCredential, ClientAssertionCredential
 
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 LOG = logging.getLogger("mobiwork_sync")
+GITHUB_OIDC_AUDIENCE = "api://AzureADTokenExchange"
+
+
+def _github_oidc_assertion() -> str:
+    """Request a fresh GitHub Actions OIDC token for Entra workload federation.
+
+    GitHub OIDC tokens are short-lived (about five minutes). `azure/login` exchanges
+    one token at job start, so the Azure CLI cannot mint a new Graph token once that
+    assertion expires. Long jobs (full-month rebuild, bootstrap, image sync) fetch
+    MobiWork data for 30+ minutes before their first SharePoint call, so every Graph
+    token request must present a newly issued assertion instead.
+    """
+    request_url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "").strip()
+    request_token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "").strip()
+    if not request_url or not request_token:
+        raise RuntimeError("GitHub Actions OIDC token request environment is unavailable")
+
+    separator = "&" if "?" in request_url else "?"
+    response = requests.get(
+        f"{request_url}{separator}audience={quote(GITHUB_OIDC_AUDIENCE, safe='')}",
+        headers={"Authorization": f"Bearer {request_token}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    value = response.json().get("value")
+    if not isinstance(value, str) or not value:
+        raise RuntimeError("GitHub Actions OIDC token response has no value")
+    return value
+
+
+def default_graph_credential() -> Any:
+    """Prefer per-request GitHub OIDC federation; fall back to the Azure CLI login."""
+    client_id = os.environ.get("AZURE_CLIENT_ID", "").strip()
+    tenant_id = os.environ.get("AZURE_TENANT_ID", "").strip()
+    has_github_oidc = bool(
+        os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "").strip()
+        and os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "").strip()
+    )
+    if client_id and tenant_id and has_github_oidc:
+        LOG.info("Microsoft Graph credential: GitHub OIDC client assertion (refreshed per token)")
+        return ClientAssertionCredential(tenant_id, client_id, _github_oidc_assertion)
+    return AzureCliCredential()
 
 
 class SharePointClient:
@@ -41,7 +83,7 @@ class SharePointClient:
         if max_retries < 0 or max_retries > 20:
             raise ValueError("max_retries must be between 0 and 20")
 
-        self.credential = credential or AzureCliCredential()
+        self.credential = credential or default_graph_credential()
         self.session = session or requests.Session()
         self._token: str | None = None
         self._token_expires_on = 0.0

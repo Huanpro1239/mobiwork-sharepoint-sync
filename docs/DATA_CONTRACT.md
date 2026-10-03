@@ -61,6 +61,14 @@ Một khách hàng có thể mang `loai_kh` khác với Vùng phụ trách của
 
 Nếu `ma_nv` không map được sang Vùng, Visit fail ở strict mode. Mục tiêu là fail rõ ràng thay vì publish dữ liệu bị phân vùng sai. Quy tắc này áp dụng cả khi bootstrap dữ liệu lịch sử; không được fallback sang `loai_kh` chỉ để bootstrap chạy qua.
 
+### Tham chiếu workbook trên SharePoint
+
+Mỗi lần publish thay nội dung bằng staged replace: upload file tạm, đổi tên file cũ thành backup, promote file tạm thành tên canonical rồi xóa backup. Hệ quả cho consumer:
+
+- **driveItem ID đổi sau mỗi lần ghi** và lịch sử phiên bản SharePoint không nối tiếp giữa các lần publish;
+- Power BI/dashboard/Power Automate phải tham chiếu workbook theo **đường dẫn** (`<folder>/YYYY/MM/<Report>_YYYY-MM.xlsx`), không theo item ID hay link chia sẻ của một file cụ thể;
+- workbook không đổi nội dung nghiệp vụ thì không bị ghi lại, nên ID chỉ đổi khi dữ liệu đổi.
+
 ## 4. Completeness và validation
 
 Pipeline có nhiều lớp kiểm tra:

@@ -179,5 +179,43 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertIn("actions/workflows/mobiwork-images.yml/dispatches", images)
 
 
+    def test_operations_health_alerts_on_failed_or_missing_full_month_rebuild(self):
+        health = self._read("operations-health.yml")
+
+        self.assertIn("actions/workflows/mobiwork-rebuild-month.yml/runs", health)
+        self.assertIn("REBUILD_STALE_MINUTES = 8 * 24 * 60", health)
+        self.assertIn("Latest MobiWork Full Month Rebuild did not succeed", health)
+        self.assertIn("rebuild_conclusion=", health)
+
+    def test_sharepoint_writers_share_target_config_and_refreshing_oidc(self):
+        writers = (
+            "mobiwork-sync.yml",
+            "mobiwork-images.yml",
+            "mobiwork-rebuild-month.yml",
+            "mobiwork-bootstrap-history.yml",
+            "historical-reconcile.yml",
+            "data-cham-anh-backfill.yml",
+            "production-smoke.yml",
+        )
+        for name in writers:
+            workflow = self._read(name)
+            with self.subTest(workflow=name):
+                self.assertIn("uses: ./.github/actions/resolve-sharepoint-drive", workflow)
+                self.assertIn("vars.SHAREPOINT_HOST ||", workflow)
+                self.assertIn("AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}", workflow)
+                self.assertIn("AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}", workflow)
+                self.assertIn("id-token: write", workflow)
+                self.assertNotIn("sites/vikodacomvn.sharepoint.com:/sites/Planning", workflow)
+
+    def test_third_party_actions_are_pinned_to_commit_sha(self):
+        import re
+
+        pattern = re.compile(r"uses:\s*([\w.-]+/[\w./-]+)@(\S+)")
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            for action, ref in pattern.findall(path.read_text(encoding="utf-8")):
+                with self.subTest(workflow=path.name, action=action):
+                    self.assertRegex(ref, r"^[0-9a-f]{40}$")
+
+
 if __name__ == "__main__":
     unittest.main()

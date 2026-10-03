@@ -109,7 +109,7 @@ Chi tiết xem [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md).
 - Upsert cross-day dùng `upsert_keys` khai báo rõ trong `reports.json`, không suy luận từ tên cột.
 - Sau mỗi merge có **partition quality gate**: dữ liệu vừa fetch phải hiện diện đầy đủ trong partition kết quả; `order`/`bill` còn kiểm không để lại detail cũ của cùng `ma_phieu`.
 - Incremental/lookback có **report-month atomic publish gate**: nếu một target date trong cùng report/tháng fail thì workbook partial không được publish; canonical SharePoint cũ giữ nguyên để retry sau.
-- Staged SharePoint upload → semantic verification → promote → rollback/backup khi cần.
+- Staged SharePoint upload → semantic verification → promote → rollback/backup khi cần. Mỗi lần ghi tạo **driveItem mới** (item ID đổi, lịch sử phiên bản SharePoint không nối tiếp); tham chiếu file theo **đường dẫn**, không theo item ID hoặc link chia sẻ.
 - Không ghi lại workbook nếu nội dung nghiệp vụ không đổi.
 - Full-month rebuild không đọc master cũ; fetch lại toàn bộ ngày từ MobiWork.
 - Full-month rebuild có **global source gate**: tất cả report/tất cả ngày phải build thành công trước lần ghi SharePoint đầu tiên.
@@ -121,24 +121,36 @@ Chi tiết xem [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md).
 
 - `.github/workflows/mobiwork-bootstrap-history.yml`
   - one-time historical bootstrap trước khi production schedule tiếp tục.
+Tất cả lịch dùng múi giờ `Asia/Ho_Chi_Minh` (khóa `timezone:` trong `schedule`). GitHub có thể chạy lịch trễ vài chục phút đến vài giờ khi tải cao.
+
 - `.github/workflows/mobiwork-sync.yml`
-  - `HH:05`: refresh `today`.
-  - `09:00`: refresh `yesterday` và queue image sync.
+  - `07:05, 10:05, 13:05, 16:05, 19:05` thứ 2–thứ 7: refresh `today`.
+  - `09:00` hằng ngày: refresh `yesterday` (chốt ngày hôm qua) và rebuild Data chấm ảnh.
 - `.github/workflows/nightly-reconcile.yml`
-  - `23:30`: reconcile lại **14 ngày đã hoàn tất**.
+  - `23:30`: queue `mobiwork-sync` lookback **3 ngày đã hoàn tất** (D-1..D-3).
 - `.github/workflows/recovery-rebuild.yml`
   - Chủ nhật `02:00`: full rebuild tháng hiện tại.
-  - Chủ nhật `05:00`: full rebuild tháng trước để bắt late/back-dated edits.
   - Ngày 2 mỗi tháng `03:30`: full rebuild tháng trước để khóa sổ.
-- `.github/workflows/historical-reconcile.yml`
-  - Ngày 3 mỗi tháng `04:30`: full rebuild tuần tự **toàn bộ các tháng đã hoàn tất từ 2026-06 đến tháng trước**, nhằm bắt các thay đổi lịch sử nằm ngoài mọi lookback ngắn hạn.
-- `.github/workflows/mobiwork-rebuild-month.yml`: full-month rebuild thủ công/được recovery dispatcher gọi; có thể chạy ngay cả khi bootstrap state chưa complete.
-- `.github/workflows/mobiwork-images.yml`: đồng bộ ảnh theo batch + checkpoint.
-- `.github/workflows/production-smoke.yml`: kiểm tra source ↔ SharePoint và one-shot bounded recovery.
-- `.github/workflows/operations-health.yml`: watchdog production.
+- `.github/workflows/data-cham-anh-backfill.yml`: thứ 2 `10:15`, backfill workbook Data chấm ảnh.
+- `.github/workflows/production-smoke.yml`: `11:30` hằng ngày, kiểm tra source ↔ SharePoint và one-shot bounded recovery.
+- `.github/workflows/operations-health.yml`: `08:20` hằng ngày, watchdog production (report sync, full-month rebuild, production smoke).
+- Chỉ chạy thủ công:
+  - `.github/workflows/historical-reconcile.yml`: full rebuild tuần tự toàn bộ các tháng đã hoàn tất từ `2026-06`, để bắt thay đổi lịch sử nằm ngoài mọi lookback ngắn hạn.
+  - `.github/workflows/mobiwork-rebuild-month.yml`: full-month rebuild (cũng được recovery dispatcher gọi); chạy được cả khi bootstrap state chưa complete.
+  - `.github/workflows/mobiwork-images.yml`: copy ảnh sang SharePoint theo batch + checkpoint. Đang tạm dừng lịch vì Data chấm ảnh link thẳng tới ảnh MobiWork.
+  - `.github/workflows/mobiwork-bootstrap-history.yml`: bootstrap lịch sử.
 - `.github/workflows/ci.yml`: compile, Ruff, unit tests và coverage.
 
 Các writer production dùng chung concurrency lock và `cancel-in-progress: false`, vì vậy một job repair/rebuild sẽ **chờ** writer hiện tại hoàn tất thay vì cắt ngang một lần ghi SharePoint đang chạy.
+
+> GitHub chỉ giữ **một** run đang chờ trong mỗi concurrency group: khi có run mới xếp hàng, run *đang chờ* cũ hơn bị hủy (`cancelled`). Vì vậy `operations-health.yml` cảnh báo khi lần full-month rebuild gần nhất không `success` hoặc không có rebuild thành công trong 8 ngày. Khi nhận cảnh báo này, chạy lại `MobiWork Full Month Rebuild` cho tháng bị ảnh hưởng.
+
+### Cấu hình SharePoint và xác thực
+
+- Đích SharePoint khai báo một lần ở `env:` đầu mỗi workflow, đọc từ repository variables `SHAREPOINT_HOST`, `SHAREPOINT_SITE_PATH`, `SHAREPOINT_LIBRARY` (mặc định là production hiện tại). Đổi site/thư viện chỉ cần sửa variables, không sửa workflow.
+- Drive id được resolve bởi composite action `.github/actions/resolve-sharepoint-drive`.
+- Graph token trong Python được lấy bằng **GitHub OIDC client assertion mới cho mỗi lần xin token** (`ClientAssertionCredential`). Token OIDC của `azure/login` chỉ sống khoảng 5 phút, nên trước đây các job dài (rebuild cả tháng mất ~40 phút lấy dữ liệu) fail với `AADSTS700024` ở lần ghi SharePoint đầu tiên. Chạy cục bộ vẫn dùng `az login` (Azure CLI).
+- Action bên thứ ba được pin theo commit SHA; Dependabot cập nhật SHA kèm comment phiên bản.
 
 ## Chạy cục bộ
 
