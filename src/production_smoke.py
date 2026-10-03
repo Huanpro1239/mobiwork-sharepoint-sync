@@ -91,36 +91,6 @@ def compare_report_frames(
     return {"compared_rows": compared_rows}
 
 
-def evaluate_image_state(state: dict[str, Any] | None, target_date: date) -> dict[str, Any]:
-    if not state:
-        raise AssertionError("Data anh/_state.json is missing")
-
-    completed_raw = str(state.get("last_completed_sync_date") or "").strip()
-    if not completed_raw:
-        raise AssertionError("Image state has no last_completed_sync_date")
-    completed = date.fromisoformat(completed_raw)
-    if completed < target_date:
-        raise AssertionError(
-            f"Image state is behind target date: completed={completed}, target={target_date}"
-        )
-
-    failed_count = int(state.get("failed_count") or 0)
-    retry_from = str(state.get("retry_from_date") or "").strip() or None
-    if failed_count > 0 or retry_from:
-        raise AssertionError(
-            f"Image state still has unresolved work: failed_count={failed_count}, retry_from_date={retry_from}"
-        )
-
-    return {
-        "status": "success",
-        "last_completed_sync_date": completed.isoformat(),
-        "last_successful_sync_date": state.get("last_successful_sync_date"),
-        "failed_count": failed_count,
-        "retry_from_date": retry_from,
-        "repairable": False,
-    }
-
-
 def _failure_text(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"[:4000]
 
@@ -283,40 +253,6 @@ def run_smoke(target_date: date | None = None) -> dict[str, Any]:
             }
         )
 
-    if os.environ.get("SMOKE_CHECK_IMAGES", "true").strip().casefold() in {"0", "false", "no", "off"}:
-        # SharePoint image copy is paused; Data cham anh links MobiWork image URLs.
-        manifest["image_state"] = {"status": "skipped", "repairable": False}
-    else:
-        try:
-            image_state_payload = sharepoint.download_json(drive_id, "Data anh/_state.json")
-        except Exception as exc:
-            manifest["image_state"] = {
-                "status": "failed",
-                "failure_stage": "image_state_read",
-                "repairable": False,
-                "error": _failure_text(exc),
-            }
-            failures.append(f"images: {manifest['image_state']['error']}")
-        else:
-            try:
-                manifest["image_state"] = evaluate_image_state(image_state_payload, target)
-            except AssertionError as exc:
-                manifest["image_state"] = {
-                    "status": "failed",
-                    "failure_stage": "image_state_consistency",
-                    "repairable": True,
-                    "error": _failure_text(exc),
-                }
-                failures.append(f"images: {manifest['image_state']['error']}")
-            except Exception as exc:
-                manifest["image_state"] = {
-                    "status": "failed",
-                    "failure_stage": "image_state_invalid",
-                    "repairable": False,
-                    "error": _failure_text(exc),
-                }
-                failures.append(f"images: {manifest['image_state']['error']}")
-
     manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
     manifest["successful_report_count"] = sum(
         item.get("status") == "success" for item in manifest["reports"]
@@ -327,9 +263,6 @@ def run_smoke(target_date: date | None = None) -> dict[str, Any]:
     manifest["repairable_failure_count"] = sum(
         item.get("status") == "failed" and item.get("repairable") is True
         for item in manifest["reports"]
-    ) + int(
-        manifest.get("image_state", {}).get("status") == "failed"
-        and manifest.get("image_state", {}).get("repairable") is True
     )
     manifest["status"] = "success" if not failures else "failed"
     if failures:

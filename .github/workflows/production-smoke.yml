@@ -95,7 +95,6 @@ jobs:
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
           SMOKE_TARGET_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_date || '' }}
-          SMOKE_CHECK_IMAGES: "false"
         run: python src/production_smoke.py
 
       - name: Preserve initial failure evidence
@@ -121,7 +120,6 @@ jobs:
             "eligible": false,
             "reason": "initial smoke failed before producing a manifest",
             "report_repair": false,
-            "image_repair": false,
             "lookback_days": 0,
             "from_date": "",
             "repair_attempt_budget": 1,
@@ -130,7 +128,6 @@ jobs:
           JSON
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "report_repair=false" >> "$GITHUB_OUTPUT"
-            echo "image_repair=false" >> "$GITHUB_OUTPUT"
             echo "lookback_days=0" >> "$GITHUB_OUTPUT"
             echo "from_date=" >> "$GITHUB_OUTPUT"
             echo "reason=initial smoke failed before producing a manifest" >> "$GITHUB_OUTPUT"
@@ -145,7 +142,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPORT_REPAIR: ${{ steps.recovery_plan.outputs.report_repair }}
-          IMAGE_REPAIR: ${{ steps.recovery_plan.outputs.image_repair }}
           LOOKBACK_DAYS: ${{ steps.recovery_plan.outputs.lookback_days }}
           FROM_DATE: ${{ steps.recovery_plan.outputs.from_date }}
         shell: bash
@@ -195,9 +191,6 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --exit-status \
               --interval 30
-          elif [ "$IMAGE_REPAIR" = "true" ]; then
-            # SharePoint image copy is paused; run mobiwork-images.yml manually if needed.
-            echo "::warning::Image repair requested but automatic image sync is paused."
           else
             echo "::error::Recovery plan was eligible but contained no repair action"
             exit 1
@@ -219,7 +212,6 @@ jobs:
           SHAREPOINT_MAX_RETRIES: "6"
           SHAREPOINT_TIMEOUT_SECONDS: "120"
           SMOKE_TARGET_DATE: ${{ steps.recovery_plan.outputs.from_date }}
-          SMOKE_CHECK_IMAGES: "false"
         run: python src/production_smoke.py
 
       - name: Publish smoke and recovery summary
@@ -262,20 +254,6 @@ jobs:
               if item.get("error"):
                   lines.append(f"| ↳ error | `{item['error']}` |  |  |  |  |")
 
-          image = data.get("image_state", {})
-          lines.extend([
-              "",
-              "### Image state",
-              f"- Status: **{image.get('status', 'unknown')}**",
-              f"- Failure stage: `{image.get('failure_stage', '')}`",
-              f"- Repairable: **{image.get('repairable', False)}**",
-              f"- Last completed: `{image.get('last_completed_sync_date', '')}`",
-              f"- Failed count: **{image.get('failed_count', 0)}**",
-              f"- Retry from: `{image.get('retry_from_date') or ''}`",
-          ])
-          if image.get("error"):
-              lines.append(f"- Error: `{image['error']}`")
-
           plan_path = Path("output/recovery_plan.json")
           if plan_path.exists():
               plan = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -285,7 +263,6 @@ jobs:
                   f"- Eligible: **{plan.get('eligible', False)}**",
                   f"- Reason: `{plan.get('reason', '')}`",
                   f"- Report repair: **{plan.get('report_repair', False)}**",
-                  f"- Image repair: **{plan.get('image_repair', False)}**",
                   f"- Lookback days: **{plan.get('lookback_days', 0)}**",
                   f"- Recovery step: **{os.environ.get('RECOVERY_OUTCOME', 'skipped')}**",
                   f"- Verification step: **{os.environ.get('RECOVERY_VERIFY_OUTCOME', 'skipped')}**",

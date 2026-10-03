@@ -24,7 +24,7 @@ def _github_oidc_assertion() -> str:
 
     GitHub OIDC tokens are short-lived (about five minutes). `azure/login` exchanges
     one token at job start, so the Azure CLI cannot mint a new Graph token once that
-    assertion expires. Long jobs (full-month rebuild, bootstrap, image sync) fetch
+    assertion expires. Long jobs (full-month rebuild, bootstrap, historical reconcile) fetch
     MobiWork data for 30+ minutes before their first SharePoint call, so every Graph
     token request must present a newly issued assertion instead.
     """

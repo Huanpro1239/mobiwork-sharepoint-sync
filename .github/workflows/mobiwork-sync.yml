@@ -35,7 +35,7 @@ permissions:
 
 # Serialize SharePoint production writes. GitHub Actions supports only `group`
 # and `cancel-in-progress` in this block; keeping cancellation false protects the
-# active report/image run while a newer pending refresh may coalesce older work.
+# active report run while a newer pending refresh may coalesce older work.
 concurrency:
   group: mobiwork-sharepoint-production
   cancel-in-progress: false

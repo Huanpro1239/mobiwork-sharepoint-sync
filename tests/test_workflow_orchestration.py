@@ -15,12 +15,11 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
     def test_shared_production_lock_never_interrupts_active_writer(self):
         report = self._read("mobiwork-sync.yml")
-        images = self._read("mobiwork-images.yml")
         rebuild = self._read("mobiwork-rebuild-month.yml")
         bootstrap = self._read("mobiwork-bootstrap-history.yml")
         history = self._read("historical-reconcile.yml")
 
-        for workflow in (report, images, rebuild, bootstrap, history):
+        for workflow in (report, rebuild, bootstrap, history):
             self.assertIn("group: mobiwork-sharepoint-production", workflow)
             self.assertIn("cancel-in-progress: false", workflow)
             self.assertNotIn("queue: max", workflow)
@@ -50,7 +49,6 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
         routine_workflows = (
             "mobiwork-sync.yml",
-            "mobiwork-images.yml",
             "nightly-reconcile.yml",
             "recovery-rebuild.yml",
             "historical-reconcile.yml",
@@ -76,21 +74,34 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             bootstrap,
         )
 
-    def test_image_copy_to_sharepoint_is_manual_only(self):
+    def test_image_copy_removed_but_data_cham_anh_kept(self):
+        existing = {path.name for path in WORKFLOWS.glob("*.yml")}
+        self.assertNotIn("mobiwork-images.yml", existing)
+        self.assertIn("data-cham-anh-backfill.yml", existing)
+
+        removed_modules = {
+            "image_sync.py",
+            "image_sync_reliable.py",
+            "image_storage.py",
+            "run_images.py",
+            "sharepoint_image_source.py",
+        }
+        present = {path.name for path in (ROOT / "src").glob("*.py")}
+        self.assertTrue(removed_modules.isdisjoint(present))
+        self.assertIn("data_cham_anh_export.py", present)
+
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(workflow=path.name):
+                self.assertNotIn("mobiwork-images.yml", text)
+                self.assertNotIn("run_images.py", text)
+                self.assertNotIn("SMOKE_CHECK_IMAGES", text)
+                self.assertNotIn("IMAGE_REPAIR", text)
+
         report = self._read("mobiwork-sync.yml")
-        images = self._read("mobiwork-images.yml")
-        smoke = self._read("production-smoke.yml")
-        health = self._read("operations-health.yml")
-
-        self.assertNotIn("mobiwork-images.yml/dispatches", report)
-        self.assertNotIn("run: python src/run_images.py", report)
-        self.assertNotIn("\n  schedule:\n", images)
-        self.assertNotIn("\n  push:\n", images)
-        self.assertIn("workflow_dispatch:", images)
-        self.assertEqual(smoke.count('SMOKE_CHECK_IMAGES: "false"'), 2)
-        self.assertNotIn('wait_for_new_run "mobiwork-images.yml"', smoke)
-        self.assertNotIn("mobiwork-images.yml/runs", health)
-
+        rebuild = self._read("mobiwork-rebuild-month.yml")
+        self.assertIn("run: python src/run_data_cham_anh.py", report)
+        self.assertIn("run: python src/run_data_cham_anh_backfill.py", rebuild)
     def test_report_sync_runs_on_business_hours_schedule(self):
         report = self._read("mobiwork-sync.yml")
 
@@ -161,24 +172,6 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         existing = {path.name for path in WORKFLOWS.glob("*.yml")}
         self.assertTrue(removed.isdisjoint(existing))
 
-    def test_image_workflow_only_synchronizes_images(self):
-        images = self._read("mobiwork-images.yml")
-
-        self.assertIn("IMAGE_FAIL_ON_PARTIAL: \"false\"", images)
-        self.assertIn("python src/run_images.py", images)
-        self.assertNotIn("Trigger KPI", images)
-        self.assertNotIn("image-scoring-kpi.yml", images)
-        self.assertNotIn("IMAGE_KPI_", images)
-
-    def test_partial_image_failure_can_continue_only_when_forward_progress_exists(self):
-        images = self._read("mobiwork-images.yml")
-
-        self.assertIn('[ "$status" != "warming_up" ] && [ "$status" != "partial_failure" ]', images)
-        self.assertIn('[ "$uploaded" -le 0 ]', images)
-        self.assertIn("keeping retry cursor for the next production pass", images)
-        self.assertIn("actions/workflows/mobiwork-images.yml/dispatches", images)
-
-
     def test_operations_health_alerts_on_failed_or_missing_full_month_rebuild(self):
         health = self._read("operations-health.yml")
 
@@ -190,7 +183,6 @@ class WorkflowOrchestrationTests(unittest.TestCase):
     def test_sharepoint_writers_share_target_config_and_refreshing_oidc(self):
         writers = (
             "mobiwork-sync.yml",
-            "mobiwork-images.yml",
             "mobiwork-rebuild-month.yml",
             "mobiwork-bootstrap-history.yml",
             "historical-reconcile.yml",
