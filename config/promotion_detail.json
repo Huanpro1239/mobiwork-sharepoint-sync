@@ -1,0 +1,3229 @@
+{
+  "publish_enabled": true,
+  "allow_incomplete_publish": true,
+  "fetch_product_catalogue": true,
+  "fetch_customer_catalogue": true,
+  "customer_catalogue_start_date": "01/01/1900",
+  "program_codes": {},
+  "employees": {
+    "KHHO0303": {
+      "Vùng": "Miền Trung 1B",
+      "SS Code": "KHA04",
+      "SS Name": "Huỳnh Thanh Cường"
+    },
+    "KHHO0304": {
+      "Vùng": "Miền Trung 1B",
+      "SS Code": "KHA04",
+      "SS Name": "Huỳnh Thanh Cường"
+    }
+  },
+  "customers": {},
+  "products": {
+    "230100110": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100011": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100017": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100116": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100051": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100051": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100001": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100001": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100002": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100002": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100003": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100003": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100009": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100009": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100019": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100019": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100020": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100020": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100021": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100021": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100029": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100029": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100023": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100023": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100022": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100022": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100035": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100035": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100038": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100038": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100037": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100037": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130200005": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "230200005": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "230200006": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "130200006": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "230200014": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "130200014": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "130200015": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "230200015": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "130200007": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "230200007": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "230200008": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "130200008": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "130200009": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "230200009": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "130200010": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "230200010": {
+      "Brand": "iMen",
+      "Package": "1 Way"
+    },
+    "130500001": {
+      "Brand": "iTeen",
+      "Package": "1 Way"
+    },
+    "230500001": {
+      "Brand": "iTeen",
+      "Package": "1 Way"
+    },
+    "230200002": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200002": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200004": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200004": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230300003": {
+      "Brand": "iSport",
+      "Package": "1 Way"
+    },
+    "130300003": {
+      "Brand": "iSport",
+      "Package": "1 Way"
+    },
+    "130300004": {
+      "Brand": "iSport",
+      "Package": "1 Way"
+    },
+    "230300004": {
+      "Brand": "iSport",
+      "Package": "1 Way"
+    },
+    "130100058": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100058": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100072": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100072": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100073": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100073": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100081": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "2 Way"
+    },
+    "230100081": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "2 Way"
+    },
+    "130100085": {
+      "Brand": "Vikonest",
+      "Package": "1 Way"
+    },
+    "230100085": {
+      "Brand": "Vikonest",
+      "Package": "1 Way"
+    },
+    "130200020": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200020": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200019": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200019": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200018": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200018": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200017": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200017": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230100095": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100095": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100094": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100094": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100098": {
+      "Brand": "VikoNest",
+      "Package": "1 Way"
+    },
+    "130100098": {
+      "Brand": "VikoNest",
+      "Package": "1 Way"
+    },
+    "230100099": {
+      "Brand": "VikoNest",
+      "Package": "1 Way"
+    },
+    "130100099": {
+      "Brand": "VikoNest",
+      "Package": "1 Way"
+    },
+    "130100090": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100090": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100104": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100104": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100088": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100088": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100101": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100101": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100102": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100102": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130200025": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200025": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200024": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200024": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230100127": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100127": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100130": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100130": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100135": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100135": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100136": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100136": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100137": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100137": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130200032": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200032": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200033": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200033": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130100138": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100138": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100131": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100131": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100132": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100132": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100133": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100133": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100139": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100139": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100125": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100125": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100140": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100140": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100126": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100126": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100144": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100144": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100145": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100145": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100146": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100146": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100149": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100149": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100055": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100055": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100017": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100152": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100152": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100091": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100091": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100011": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100110": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100116": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100036": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100036": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100075": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100075": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100107": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100107": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100151": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100151": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100172": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100172": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100006": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100006": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100096": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100096": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100161": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100161": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100115": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100115": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100173": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100173": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100008": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "2 Way"
+    },
+    "230100008": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "2 Way"
+    },
+    "230100159": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100159": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100013": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "2 Way"
+    },
+    "230100013": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "2 Way"
+    },
+    "230100162": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100162": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100071": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100071": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100092": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100092": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100142": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100142": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100014": {
+      "Brand": "Semi Product",
+      "Package": "1 Way"
+    },
+    "130100014": {
+      "Brand": "Semi Product",
+      "Package": "1 Way"
+    },
+    "130100153": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100153": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100174": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100174": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100028": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100028": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230200026": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200026": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130100155": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100155": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100167": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100167": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100166": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100166": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100164": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100164": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100157": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100157": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100171": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100171": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100108": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100108": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230200001": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200001": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230100170": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100170": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100168": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100168": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100169": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100169": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100154": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100154": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100158": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100158": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230300005": {
+      "Brand": "Sport Drink",
+      "Package": "1 Way"
+    },
+    "130300005": {
+      "Brand": "Sport Drink",
+      "Package": "1 Way"
+    },
+    "130300006": {
+      "Brand": "Sport Drink",
+      "Package": "1 Way"
+    },
+    "230300006": {
+      "Brand": "Sport Drink",
+      "Package": "1 Way"
+    },
+    "230100004": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100004": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100005": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100005": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100027": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100027": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100032": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100032": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100106": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100106": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100112": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100112": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100117": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100117": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100121": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100121": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100128": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100128": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100129": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100129": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100141": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "2 Way"
+    },
+    "130100141": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "2 Way"
+    },
+    "130100143": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100143": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100148": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100148": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100150": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100150": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100156": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100156": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100160": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "230100160": {
+      "Brand": "Vikoda",
+      "Package": "2 Way"
+    },
+    "130100176": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100176": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100177": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "230100177": {
+      "Brand": "Vikoda",
+      "Package": "1 Way"
+    },
+    "130100178": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100178": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "230100179": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130100179": {
+      "Brand": "Đảnh Thạnh",
+      "Package": "1 Way"
+    },
+    "130200021": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200021": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "230200027": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    },
+    "130200027": {
+      "Brand": "Sumo",
+      "Package": "1 Way"
+    }
+  },
+  "unit_conversions": {
+    "130100051|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 2
+    },
+    "230100051|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 2
+    },
+    "230100001|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 3
+    },
+    "130100001|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 3
+    },
+    "230100002|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 4
+    },
+    "130100002|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 4
+    },
+    "130100003|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 5
+    },
+    "230100003|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 5
+    },
+    "130100009|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 6
+    },
+    "230100009|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 6
+    },
+    "230100019|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 7
+    },
+    "130100019|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 7
+    },
+    "130100020|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 8
+    },
+    "230100020|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 8
+    },
+    "130100021|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 9
+    },
+    "230100021|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 9
+    },
+    "230100029|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 10
+    },
+    "230100029|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 10
+    },
+    "130100029|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 10
+    },
+    "130100029|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 10
+    },
+    "230100023|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 11
+    },
+    "130100023|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 11
+    },
+    "130100022|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 12
+    },
+    "230100022|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 12
+    },
+    "230100035|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 13
+    },
+    "130100035|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 13
+    },
+    "130100038|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 14
+    },
+    "230100038|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 14
+    },
+    "130100037|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 15
+    },
+    "230100037|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 15
+    },
+    "230200005|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 16
+    },
+    "130200005|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 16
+    },
+    "130200006|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 17
+    },
+    "230200006|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 17
+    },
+    "130200014|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 18
+    },
+    "230200014|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 18
+    },
+    "130200015|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 19
+    },
+    "230200015|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 19
+    },
+    "230200007|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 20
+    },
+    "130200007|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 20
+    },
+    "130200008|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 21
+    },
+    "230200008|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 21
+    },
+    "130200009|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 22
+    },
+    "130200009|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 22
+    },
+    "230200009|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 22
+    },
+    "230200009|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 22
+    },
+    "230200010|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 23
+    },
+    "130200010|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 23
+    },
+    "130500001|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 24
+    },
+    "230500001|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 24
+    },
+    "130200002|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 25
+    },
+    "130200002|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 25
+    },
+    "230200002|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 25
+    },
+    "230200002|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 25
+    },
+    "230200004|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 26
+    },
+    "130200004|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 26
+    },
+    "230300003|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 27
+    },
+    "130300003|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 27
+    },
+    "230300004|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 28
+    },
+    "130300004|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 28
+    },
+    "130100058|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 29
+    },
+    "230100058|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 29
+    },
+    "130100072|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 30
+    },
+    "230100072|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 30
+    },
+    "130100073|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 31
+    },
+    "230100073|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 31
+    },
+    "230100081|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 32
+    },
+    "130100081|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 32
+    },
+    "230100085|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 33
+    },
+    "230100085|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 33
+    },
+    "130100085|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 33
+    },
+    "130100085|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 33
+    },
+    "230200020|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 34
+    },
+    "130200020|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 34
+    },
+    "130200019|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 35
+    },
+    "230200019|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 35
+    },
+    "130200018|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 36
+    },
+    "230200018|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 36
+    },
+    "230200017|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 37
+    },
+    "130200017|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 37
+    },
+    "130100095|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 38
+    },
+    "230100095|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 38
+    },
+    "130100094|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 39
+    },
+    "230100094|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 39
+    },
+    "230100098|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 40
+    },
+    "230100098|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 40
+    },
+    "130100098|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 40
+    },
+    "130100098|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 40
+    },
+    "230100099|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 41
+    },
+    "230100099|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 41
+    },
+    "130100099|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 41
+    },
+    "130100099|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 41
+    },
+    "130100090|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 42
+    },
+    "230100090|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 42
+    },
+    "130100104|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 43
+    },
+    "230100104|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 43
+    },
+    "230100088|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 44
+    },
+    "130100088|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 44
+    },
+    "230100101|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 45
+    },
+    "130100101|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 45
+    },
+    "130100102|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 46
+    },
+    "230100102|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 46
+    },
+    "130200025|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 47
+    },
+    "230200025|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 47
+    },
+    "130200024|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 48
+    },
+    "230200024|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 48
+    },
+    "130100127|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 49
+    },
+    "130100127|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 49
+    },
+    "230100127|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 49
+    },
+    "230100127|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 49
+    },
+    "130100130|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 50
+    },
+    "130100130|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 50
+    },
+    "230100130|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 50
+    },
+    "230100130|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 50
+    },
+    "230100135|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 51
+    },
+    "130100135|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 51
+    },
+    "230100136|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 52
+    },
+    "130100136|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 52
+    },
+    "230100137|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 53
+    },
+    "130100137|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 53
+    },
+    "130200032|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 54
+    },
+    "230200032|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 54
+    },
+    "130200033|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 55
+    },
+    "230200033|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 55
+    },
+    "130100138|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 56
+    },
+    "230100138|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 56
+    },
+    "230100131|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 57
+    },
+    "230100131|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 57
+    },
+    "130100131|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 57
+    },
+    "130100131|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 57
+    },
+    "230100132|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 58
+    },
+    "230100132|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 58
+    },
+    "130100132|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 58
+    },
+    "130100132|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 58
+    },
+    "230100133|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 59
+    },
+    "230100133|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 59
+    },
+    "130100133|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 59
+    },
+    "130100133|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 59
+    },
+    "230100139|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 60
+    },
+    "130100139|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 60
+    },
+    "230100125|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 61
+    },
+    "130100125|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 61
+    },
+    "130100140|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 62
+    },
+    "230100140|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 62
+    },
+    "230100126|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 63
+    },
+    "130100126|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.03333333333333333333333333333",
+      "units_per_pack": "30",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 63
+    },
+    "130100144|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 64
+    },
+    "230100144|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 64
+    },
+    "130100145|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 65
+    },
+    "230100145|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 65
+    },
+    "230100146|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 66
+    },
+    "230100146|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 66
+    },
+    "130100146|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 66
+    },
+    "130100146|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 66
+    },
+    "230100149|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 67
+    },
+    "130100149|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 67
+    },
+    "130100055|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 68
+    },
+    "230100055|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 68
+    },
+    "230100017|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 69
+    },
+    "130100017|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 69
+    },
+    "230100152|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.5",
+      "units_per_pack": "2",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 70
+    },
+    "130100152|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.5",
+      "units_per_pack": "2",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 70
+    },
+    "230100091|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 71
+    },
+    "230100091|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 71
+    },
+    "130100091|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 71
+    },
+    "130100091|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 71
+    },
+    "130100011|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 72
+    },
+    "230100011|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 72
+    },
+    "130100110|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 73
+    },
+    "230100110|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 73
+    },
+    "230100116|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 74
+    },
+    "130100116|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 74
+    },
+    "230100036|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 75
+    },
+    "130100036|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 75
+    },
+    "230100075|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 76
+    },
+    "130100075|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 76
+    },
+    "130100107|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 77
+    },
+    "230100107|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 77
+    },
+    "130100151|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.25",
+      "units_per_pack": "4",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 78
+    },
+    "230100151|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.25",
+      "units_per_pack": "4",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 78
+    },
+    "130100172|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.5",
+      "units_per_pack": "2",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 79
+    },
+    "230100172|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.5",
+      "units_per_pack": "2",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 79
+    },
+    "130100006|Chai": {
+      "target_unit": "Bình",
+      "factor": "1",
+      "units_per_pack": "1",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 80
+    },
+    "230100006|Chai": {
+      "target_unit": "Bình",
+      "factor": "1",
+      "units_per_pack": "1",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 80
+    },
+    "130100096|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 81
+    },
+    "130100096|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 81
+    },
+    "230100096|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 81
+    },
+    "230100096|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 81
+    },
+    "130100161|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 82
+    },
+    "230100161|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 82
+    },
+    "130100115|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 83
+    },
+    "230100115|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 83
+    },
+    "230100173|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 84
+    },
+    "130100173|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 84
+    },
+    "130100008|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 85
+    },
+    "230100008|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 85
+    },
+    "130100159|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 86
+    },
+    "230100159|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 86
+    },
+    "130100013|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 87
+    },
+    "230100013|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 87
+    },
+    "130100162|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 88
+    },
+    "230100162|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 88
+    },
+    "230100071|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 89
+    },
+    "130100071|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 89
+    },
+    "230100092|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 90
+    },
+    "130100092|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 90
+    },
+    "130100142|Chai": {
+      "target_unit": "Bình",
+      "factor": "1",
+      "units_per_pack": "1",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 91
+    },
+    "230100142|Chai": {
+      "target_unit": "Bình",
+      "factor": "1",
+      "units_per_pack": "1",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 91
+    },
+    "230100153|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 93
+    },
+    "130100153|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 93
+    },
+    "130100174|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 94
+    },
+    "230100174|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 94
+    },
+    "230100028|Chai": {
+      "target_unit": "Bình",
+      "factor": "1",
+      "units_per_pack": "1",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 95
+    },
+    "130100028|Chai": {
+      "target_unit": "Bình",
+      "factor": "1",
+      "units_per_pack": "1",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 95
+    },
+    "130200026|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 96
+    },
+    "230200026|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 96
+    },
+    "230100155|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 97
+    },
+    "130100155|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 97
+    },
+    "130100167|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 98
+    },
+    "230100167|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 98
+    },
+    "230100166|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 99
+    },
+    "130100166|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 99
+    },
+    "230100164|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 100
+    },
+    "130100164|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 100
+    },
+    "130100157|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 101
+    },
+    "230100157|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 101
+    },
+    "230100171|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 102
+    },
+    "130100171|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 102
+    },
+    "130100108|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 103
+    },
+    "230100108|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 103
+    },
+    "130200001|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 104
+    },
+    "230200001|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 104
+    },
+    "130100170|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 105
+    },
+    "230100170|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 105
+    },
+    "130100168|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 106
+    },
+    "230100168|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 106
+    },
+    "230100169|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 107
+    },
+    "230100169|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 107
+    },
+    "130100169|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 107
+    },
+    "130100169|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 107
+    },
+    "230100154|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 108
+    },
+    "130100154|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 108
+    },
+    "230100158|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 109
+    },
+    "130100158|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 109
+    },
+    "130300005|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 110
+    },
+    "230300005|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 110
+    },
+    "230300006|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 111
+    },
+    "130300006|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 111
+    },
+    "130100004|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.25",
+      "units_per_pack": "4",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 112
+    },
+    "230100004|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.25",
+      "units_per_pack": "4",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 112
+    },
+    "130100005|Chai": {
+      "target_unit": "Bình",
+      "factor": "1",
+      "units_per_pack": "1",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 113
+    },
+    "230100005|Chai": {
+      "target_unit": "Bình",
+      "factor": "1",
+      "units_per_pack": "1",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 113
+    },
+    "130100027|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 114
+    },
+    "130100027|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 114
+    },
+    "230100027|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 114
+    },
+    "230100027|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 114
+    },
+    "130100032|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 115
+    },
+    "130100032|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 115
+    },
+    "230100032|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 115
+    },
+    "230100032|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 115
+    },
+    "130100106|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 116
+    },
+    "230100106|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.08333333333333333333333333333",
+      "units_per_pack": "12",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 116
+    },
+    "230100112|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 117
+    },
+    "130100112|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 117
+    },
+    "230100117|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.5",
+      "units_per_pack": "2",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 118
+    },
+    "130100117|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.5",
+      "units_per_pack": "2",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 118
+    },
+    "230100121|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 119
+    },
+    "130100121|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 119
+    },
+    "130100128|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 120
+    },
+    "130100128|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 120
+    },
+    "230100128|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 120
+    },
+    "230100128|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 120
+    },
+    "230100129|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 121
+    },
+    "230100129|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 121
+    },
+    "130100129|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 121
+    },
+    "130100129|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 121
+    },
+    "230100141|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 122
+    },
+    "130100141|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 122
+    },
+    "130100143|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 123
+    },
+    "230100143|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 123
+    },
+    "130100148|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 124
+    },
+    "230100148|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 124
+    },
+    "130100150|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 125
+    },
+    "230100150|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 125
+    },
+    "230100156|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 126
+    },
+    "130100156|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 126
+    },
+    "230100160|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 127
+    },
+    "130100160|Chai": {
+      "target_unit": "Két",
+      "factor": "0.05",
+      "units_per_pack": "20",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 127
+    },
+    "130100176|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 128
+    },
+    "230100176|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 128
+    },
+    "230100177|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 129
+    },
+    "230100177|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 129
+    },
+    "130100177|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 129
+    },
+    "130100177|Lon": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 129
+    },
+    "130100178|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 130
+    },
+    "230100178|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 130
+    },
+    "130100179|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 131
+    },
+    "230100179|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 131
+    },
+    "130200021|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 132
+    },
+    "230200021|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 132
+    },
+    "130200027|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 133
+    },
+    "230200027|Chai": {
+      "target_unit": "Thùng",
+      "factor": "0.04166666666666666666666666667",
+      "units_per_pack": "24",
+      "source": "Danh Muc San Pham.xlsx",
+      "source_row": 133
+    }
+  },
+  "customer_codes": {
+    "KHHO030340": {
+      "Tỉnh": "KHÁNH HÒA",
+      "Loại KH": "1b",
+      "employee_code": "KHHO0303",
+      "DB Code": "B-KHHO-0288",
+      "Tên NPP": "TU TAI"
+    },
+    "KHHO031452": {
+      "Tỉnh": "KHÁNH HÒA",
+      "Loại KH": "1c",
+      "employee_code": "KHHO0304",
+      "DB Code": "B-KHHO-0288",
+      "Tên NPP": "TU TAI"
+    },
+    "KHHO031562": {
+      "Tỉnh": "KHÁNH HÒA",
+      "Loại KH": "1b",
+      "employee_code": "KHHO0304",
+      "DB Code": "B-KHHO-0288",
+      "Tên NPP": "TU TAI"
+    }
+  },
+  "reference_source": "Báo cáo chi tiết CTKM theo KH mẫu (1).xlsx; Sheet!A5:Z13",
+  "product_reference": {
+    "filename": "Danh Muc San Pham.xlsx",
+    "sha256": "93ed01d0bdf4bcf9632716eaf38f4578c0e9e60ef2ef3f13ccf8558dadf65c33",
+    "sheet": "DanhMucSanPham",
+    "product_code_count": 264,
+    "codes_without_pack": [
+      "130100014",
+      "230100014"
+    ]
+  }
+}

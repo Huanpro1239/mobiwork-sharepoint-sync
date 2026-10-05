@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "name": "BaoCaoTraThuong",
+  "folder": "06_BaoCaoTraThuong",
+  "filename": "BaoCaoTraThuong_Current.xlsx",
+  "catalog_url": "https://openapi.mobiwork.vn/OpenAPI/V1/PromotionBonus",
+  "report_url": "https://openapi.mobiwork.vn/OpenAPI/V1/PromotionBonusReport",
+  "catalog_page_size": 200
+}

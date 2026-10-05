@@ -111,6 +111,13 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertNotIn('cron: "5 * * * *"', report)
         self.assertIn("DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED", report)
 
+    def test_report_sync_refreshes_promotion_bonus_snapshot(self):
+        report = self._read("mobiwork-sync.yml")
+
+        self.assertIn("run: python src/promotion_bonus.py", report)
+        self.assertIn("output/promotion_bonus_manifest.json", report)
+        self.assertIn("group: mobiwork-sharepoint-production", report)
+
     def test_production_sync_preflight_is_lightweight(self):
         report = self._read("mobiwork-sync.yml")
 
@@ -211,3 +218,69 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PromotionBonusWorkflowTests(unittest.TestCase):
+    def test_bonus_failure_and_dry_run_artifacts(self):
+        text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
+        bonus = text.split('      - name: Sync Promotion Bonus current snapshot')[1].split('      - name: Publish run summary')[0]
+        self.assertNotIn('continue-on-error', bonus)
+        self.assertNotIn('if:', bonus)
+        shared = text.split('\nenv:\n')[1].split('\njobs:')[0]
+        self.assertIn('DRY_RUN:', shared)
+        self.assertIn('MOBIWORK_TOKEN:', shared)
+        self.assertNotIn('MOBIWORK_TOKEN:', bonus)
+        self.assertEqual(text.count('uses: azure/login@'), 1)
+        self.assertLess(text.index('run: python src/run_all_reports.py'), text.index('run: python src/promotion_bonus.py'))
+        self.assertLess(text.index('run: python src/run_data_cham_anh.py'), text.index('run: python src/promotion_bonus.py'))
+        self.assertIn('path: output/*.xlsx', text)
+        self.assertIn('output/promotion_bonus_manifest.json', text)
+
+    def test_summary_executes_for_success_failure_and_skipped(self):
+        import json
+        import os
+        import tempfile
+        import textwrap
+        from unittest.mock import patch
+        text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
+        code = textwrap.dedent(text.split("          python - <<'PY'\n          import json\n          import os\n")[1].split('          PY')[0])
+        code = 'import json\nimport os\n' + code
+        # Redirect only manifest reads; execute the exact embedded summary script.
+        original_path = Path
+        for status in ('success', 'failed', None):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / 'output').mkdir()
+                if status:
+                    (root / 'output/promotion_bonus_manifest.json').write_text(
+                        json.dumps(dict(status=status, program_count=3, data_row_count=7,
+                                        dry_run=True, error='report incomplete' if status == 'failed' else '')),
+                        encoding='utf-8')
+                summary = root / 'summary.md'
+                # Replace the pathlib import with the temporary filesystem mapping.
+                script = code.replace('from pathlib import Path', '')
+                with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary),
+                                             'PROMOTION_BONUS_OUTCOME': 'skipped'}):
+                    exec(compile(script, '<workflow summary>', 'exec'),
+                         {'Path': lambda value, root=root: original_path(root / value)})
+                content = summary.read_text(encoding='utf-8')
+                self.assertIn('Promotion Bonus Snapshot', content)
+                self.assertIn(status or 'skipped', content)
+                for label in ('Programs', 'Data rows', 'Target rows', 'Reward rows', 'Workbook bytes', 'Dry run'):
+                    self.assertIn(label, content)
+                if status == 'failed':
+                    self.assertIn('report incomplete', content)
+
+class PromotionDetailWorkflowTests(unittest.TestCase):
+    def test_detail_build_runs_after_sources_and_preserves_snapshot(self):
+        text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
+        self.assertLess(text.index('run: python src/run_all_reports.py'), text.index('run: python src/promotion_detail.py'))
+        self.assertLess(text.index('run: python src/promotion_bonus.py'), text.index('run: python src/promotion_detail.py'))
+        self.assertIn('output/promotion_detail_manifest.json', text)
+        self.assertIn('## Promotion detail report', text)
+        self.assertIn('path: output/*.xlsx', text)
+        import json
+        cfg = json.loads((ROOT / 'config/promotion_detail.json').read_text(encoding='utf-8'))
+        self.assertIs(cfg['publish_enabled'], True)
+        self.assertIs(cfg['allow_incomplete_publish'], True)
+        self.assertNotIn('publish_promotion_detail:', text)
+        self.assertNotIn('allow_incomplete_detail:', text)

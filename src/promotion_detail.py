@@ -1,0 +1,384 @@
+from __future__ import annotations
+
+import ast
+import json
+import logging
+import os
+import re
+from decimal import Decimal, InvalidOperation
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from data_cham_anh_export import _monthly_master_path
+from customer_catalogue import enrich_customer_config
+from main import load_reports
+from monthly_master import master_filename
+from promotion_bonus import _api_total, _expect_object_list, _frame, write_workbook
+from mobiwork import MobiWorkClient
+from run_all_reports import incremental_target_dates
+from run_data_cham_anh import month_anchors
+from sharepoint_semantic import SemanticSharePointClient
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = ROOT / "config/promotion_detail.json"
+COLUMNS = ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Route",
+           "Tên Nhân viên", "Mã NV", "Mã CTKM", "Mã Khách hàng", "Tên Khách hàng",
+           "Địa chỉ", "Số ĐT", "Loại KH", "Ngày Đơn hàng", "Mã Đơn hàng", "Brand",
+           "Package", "Mã sản phẩm", "Tên Sản phẩm", "Số lượng SELL-OUT", "THÀNH TIỀN",
+           "Sản phẩm Tặng", "Tên Sản phẩm Tặng", "Số lượng Khuyến mãi"]
+LOG = logging.getLogger("promotion_detail")
+
+
+def load_config() -> dict[str, Any]:
+    path = Path(os.environ.get("PROMOTION_DETAIL_CONFIG", str(CONFIG)))
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
+        raise ValueError("publish_enabled must be an explicit boolean")
+    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "allow_incomplete_publish"):
+        if type(cfg.get(flag, False)) is not bool:
+            raise ValueError(f"{flag} must be an explicit boolean")
+    for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
+        mapping = cfg.get(key, {})
+        if not isinstance(mapping, dict):
+            raise ValueError(f"{key} must be an object")
+        for value in mapping.values():
+            if key == "program_codes":
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError("Program code mappings must be nonempty strings")
+            elif not isinstance(value, dict):
+                raise ValueError(f"{key} mapping entries must be objects")
+    return cfg
+
+
+def text(value: Any) -> str:
+    if value is None or (not isinstance(value, (list, dict)) and pd.isna(value)):
+        return ""
+    return str(value).strip()
+
+
+def number(value: Any) -> Decimal:
+    try:
+        result = Decimal(text(value))
+    except InvalidOperation as exc:
+        raise ValueError("Missing or invalid numeric source value") from exc
+    if not result.is_finite():
+        raise ValueError("Non-finite numeric source value")
+    return result
+
+
+def promotion_list(value: Any) -> list[dict[str, Any]]:
+    if not text(value):
+        return []
+    if isinstance(value, list):
+        result = value
+    else:
+        try:
+            result = json.loads(str(value))
+        except ValueError:
+            result = ast.literal_eval(str(value))
+    if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+        raise ValueError("promotion must contain an array of objects")
+    return result
+
+
+def program_code(value: str, cfg: dict[str, Any]) -> str:
+    mapped = cfg.get("program_codes", {}).get(value)
+    if mapped:
+        return mapped
+    # Recognize the business-code convention in the supplied template, retaining _Q3.
+    match = re.match(r"^(\d+/TB/GT/\d+/\d{4}(?:_Q[1-4])?)(?:_|$)", value)
+    return match.group(1) if match else value
+
+
+def is_gift(row: dict[str, Any]) -> bool:
+    flag = text(row.get("is_km")).casefold()
+    if flag not in {"", "true", "false", "1", "0"}:
+        raise ValueError("Unrecognized is_km source flag")
+    label = text(row.get("loai_hang")).casefold()
+    if flag in {"false", "0"} and label == "khuyến mãi":
+        raise ValueError("Conflicting gift source flags")
+    return flag in {"true", "1"} or label == "khuyến mãi"
+
+
+def enrich_product_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Read the documented Product catalogue for brand and packaging-unit conversion."""
+    cfg = json.loads(json.dumps(cfg))
+    seen_pages, products = set(), {}
+    expected, count = None, 0
+    for page in range(1, 10_001):
+        payload = client.get_json("https://openapi.mobiwork.vn/OpenAPI/V1/Product",
+                                  {"page_size": 200, "page_number": page},
+                                  operation_key="promotion_detail_products", request_number=page)
+        total = _api_total(payload, "Product catalogue")
+        if expected is None:
+            expected = total
+        elif total is not None and total != expected:
+            raise ValueError("Product catalogue total changed")
+        rows = _expect_object_list(payload, "data", "Product catalogue")
+        signature = json.dumps(rows, sort_keys=True, ensure_ascii=False)
+        if rows and signature in seen_pages:
+            raise ValueError("Product catalogue repeated page")
+        seen_pages.add(signature)
+        count += len(rows)
+        for row in rows:
+            sku = text(row.get("ma_sp"))
+            if not sku:
+                # Some documented catalogue entries have null codes; they cannot map a Bill SKU.
+                continue
+            if sku in products and products[sku] != row:
+                raise ValueError("Conflicting Product catalogue SKU")
+            products[sku] = row
+        if not rows or (expected is not None and count >= expected):
+            break
+    else:
+        raise ValueError("Product catalogue pagination safety limit")
+    if expected is not None and count != expected:
+        raise ValueError("Product catalogue total mismatch")
+    for sku, row in products.items():
+        brand = text(row.get("nhan_hieu"))
+        if brand:
+            cfg.setdefault("products", {}).setdefault(sku, {}).setdefault("Brand", brand)
+        large, small = text(row.get("dvt_chan")), text(row.get("dvt_le"))
+        if large.casefold() in {"thùng", "két", "bình"} and small and small != large:
+            try:
+                factor = number(row.get("hsqd"))
+            except ValueError:
+                continue
+            if factor > 0:
+                cfg.setdefault("unit_conversions", {}).setdefault(f"{sku}|{small}",
+                    {"target_unit": large, "factor": str(Decimal(1) / factor),
+                     "source": "Product.dvt_chan/dvt_le/hsqd"})
+    cfg["product_catalogue_count"] = len(products)
+    return cfg
+
+
+def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    rows = detail.to_dict("records")
+    programs: dict[str, set[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        order = text(row.get("ma_phieu"))
+        line = text(row.get("stt"))
+        if not order or not line:
+            raise ValueError("Bill detail requires ma_phieu and stt")
+        key = (order, line)
+        if key in seen:
+            raise ValueError("Duplicate bill line; refusing inflated totals")
+        seen.add(key)
+        codes = programs.setdefault(order, set())
+        for entry in promotion_list(row.get("promotion")):
+            name = text(entry.get("ten_khuyen_mai")) or text(entry.get("id"))
+            if name:
+                codes.add(program_code(name, cfg))
+        name = text(row.get("ctkm")) or text(row.get("ctkmFull_ten_khuyen_mai"))
+        if name:
+            codes.add(program_code(name, cfg))
+        elif text(row.get("ctkmFull_id")):
+            codes.add(text(row["ctkmFull_id"]))
+
+    identities: dict[str, set[str]] = {}
+    for row in rows:
+        identities.setdefault(text(row.get("ma_kh")), set()).add(text(row.get("ID_khachhang")))
+    output, issues = [], []
+    for row in rows:
+        order = text(row["ma_phieu"])
+        if not programs[order]:
+            continue
+        gift = is_gift(row)
+        if gift:
+            row = dict(row)
+            for field in ("ma_sp", "ten_sp", "so_luong", "ma_dvt", "ten_dvt"):
+                if not text(row.get(field)):
+                    row[field] = row.get(f"{field}_km")
+        sku = text(row.get("ma_sp"))
+        unit = text(row.get("ten_dvt")) or text(row.get("ma_dvt"))
+        item = dict.fromkeys(COLUMNS, None)
+        key = {"Mã Đơn hàng": order, "Dòng nguồn": text(row["stt"])}
+
+        def issue(field: str, reason: str, key=key, sku=sku, unit=unit, row=row) -> None:
+            issues.append({**key, "Trường": field, "Lý do": reason,
+                           "Mã SP nguồn": sku, "ĐVT nguồn": unit,
+                           "Số lượng nguồn": row.get("so_luong")})
+
+        if not sku:
+            issue("Mã sản phẩm", "Thiếu mã sản phẩm nguồn")
+        aliases = {"Route": "tuyen_code", "Tên Nhân viên": "ten_nguoi_dat",
+                   "Mã NV": "ma_nv_dat", "Mã Khách hàng": "ma_kh", "Tên Khách hàng": "ten_kh",
+                   "Địa chỉ": "dia_chi", "Số ĐT": "sdt", "Loại KH": "loai_kh"}
+        for label, source in aliases.items():
+            item[label] = text(row.get(source)) or None
+        item["Mã Đơn hàng"] = order
+        item["Ngày Đơn hàng"] = row.get("ngay_dat") if text(row.get("ngay_dat")) else row.get("ngay_ban_hang")
+        if not text(item["Ngày Đơn hàng"]):
+            issue("Ngày Đơn hàng", "Thiếu ngày đơn hàng nghiệp vụ")
+            item["Ngày Đơn hàng"] = None
+        else:
+            try:
+                item["Ngày Đơn hàng"] = pd.Timestamp(item["Ngày Đơn hàng"]).to_pydatetime()
+                if item["Ngày Đơn hàng"].tzinfo is not None:
+                    raise ValueError("Ngày bán hàng có timezone chưa quy đổi")
+            except (ValueError, TypeError):
+                issue("Ngày Đơn hàng", "Ngày nghiệp vụ không hợp lệ")
+                item["Ngày Đơn hàng"] = None
+        item["Mã CTKM"] = "; ".join(sorted(programs[order]))
+        if gift:
+            direct = text(row.get("ctkm")) or text(row.get("ctkmFull_ten_khuyen_mai"))
+            direct = program_code(direct, cfg) if direct else text(row.get("ctkmFull_id"))
+            item["Mã CTKM"] = direct or item["Mã CTKM"]
+            if not direct:
+                issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
+        employee = cfg.get("employees", {}).get(text(row.get("ma_nv_dat")), {})
+        current_customer = cfg.get("customer_catalogue", {}).get(text(row.get("ID_khachhang")), {})
+        if current_customer.get("customer_code") and current_customer["customer_code"] != text(row.get("ma_kh")):
+            issue("Mã Khách hàng", "ID khách hàng khớp nhưng mã KH khác danh mục hiện tại")
+            current_customer = {}
+        for label in ("Tỉnh", "Loại KH", "Route", "Tên Khách hàng", "Địa chỉ", "Số ĐT"):
+            if not text(item[label]) and text(current_customer.get(label)):
+                item[label] = current_customer[label]
+        customer = cfg.get("customers", {}).get(text(row.get("ID_khachhang")), {})
+        code_mapping = cfg.get("customer_codes", {}).get(text(row.get("ma_kh")), {})
+        if code_mapping:
+            if len(identities[text(row.get("ma_kh"))]) != 1 or "" in identities[text(row.get("ma_kh"))]:
+                issue("Mã Khách hàng", "Mã KH tham chiếu thiếu ID hoặc dùng bởi nhiều ID")
+                code_mapping = {}
+            elif code_mapping.get("employee_code") != text(row.get("ma_nv_dat")):
+                issue("DB Code", "NVBH không khớp mapping tham chiếu; chưa xác định NPP")
+                code_mapping = {}
+        product = cfg.get("products", {}).get(sku, {})
+        for mapping in (employee, code_mapping, customer, product):
+            for label, value in mapping.items():
+                if label in {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"}:
+                    item[label] = value
+        for label in ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"]:
+            if not text(item[label]):
+                issue(label, "Thiếu mapping danh mục")
+        quantity_field = "Số lượng Khuyến mãi" if gift else "Số lượng SELL-OUT"
+        try:
+            quantity = number(row.get("so_luong"))
+            if unit.casefold() in {"thùng", "két", "bình"} or (gift and unit.casefold() == "cái"):
+                converted = quantity
+            else:
+                conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}")
+                if not isinstance(conversion, dict) or conversion.get("target_unit", "").casefold() not in {"thùng", "két", "bình"}:
+                    raise ValueError("Thiếu quy đổi sang KÉT/THÙNG/BÌNH")
+                factor = number(conversion.get("factor"))
+                if factor <= 0:
+                    raise ValueError("Hệ số quy đổi phải dương")
+                converted = quantity * factor
+            item[quantity_field] = float(converted)
+        except ValueError as exc:
+            issue(quantity_field, str(exc))
+        if gift:
+            item["Sản phẩm Tặng"] = sku
+            item["Tên Sản phẩm Tặng"] = text(row.get("ten_sp"))
+        else:
+            item["Mã sản phẩm"] = sku
+            item["Tên Sản phẩm"] = text(row.get("ten_sp"))
+            try:
+                item["THÀNH TIỀN"] = float(number(row.get("so_luong")) * number(row.get("gia_truoc_vat")))
+            except ValueError as exc:
+                issue("THÀNH TIỀN", str(exc))
+        output.append(item)
+    report = _frame(output, "BaoCao").reindex(columns=COLUMNS)
+    return report, _frame(issues, "CanBoSung")
+
+
+def unit_trace(detail: pd.DataFrame, report: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
+    orders = set(report["Mã Đơn hàng"])
+    result = []
+    for row in detail.to_dict("records"):
+        if text(row.get("ma_phieu")) not in orders:
+            continue
+        gift = is_gift(row)
+        sku = text(row.get("ma_sp")) or (text(row.get("ma_sp_km")) if gift else "")
+        unit = text(row.get("ten_dvt")) or text(row.get("ma_dvt"))
+        if not unit and gift:
+            unit = text(row.get("ten_dvt_km")) or text(row.get("ma_dvt_km"))
+        conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}", {})
+        target = unit if unit.casefold() in {"thùng", "két", "bình"} or (gift and unit.casefold() == "cái") else conversion.get("target_unit")
+        result.append({"Mã Đơn hàng": text(row.get("ma_phieu")), "Dòng nguồn": text(row.get("stt")),
+                       "Mã sản phẩm": sku, "Hàng tặng": gift, "ĐVT nguồn": unit,
+                       "ĐVT báo cáo": target, "Hệ số": conversion.get("factor", 1 if target == unit else None)})
+    return _frame(result, "DonViTinh")
+
+
+def run() -> dict[str, Any]:
+    dry = os.environ.get("DRY_RUN", "false").casefold() == "true"
+    manifest: dict[str, Any] = {"dataset": "promotion_detail", "dry_run": dry,
+                               "status": "running", "results": []}
+    manifest_path = Path("output/promotion_detail_manifest.json")
+    try:
+        cfg = load_config()
+        if os.environ.get("PUBLISH_PROMOTION_DETAIL", "false").casefold() == "true":
+            cfg["publish_enabled"] = True
+        allow_incomplete = (cfg.get("allow_incomplete_publish", False)
+                            or os.environ.get("ALLOW_INCOMPLETE_DETAIL", "false").casefold() == "true")
+        manifest["allow_incomplete_publish"] = allow_incomplete
+        if cfg.get("fetch_product_catalogue", False):
+            cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
+            manifest["product_catalogue_count"] = cfg["product_catalogue_count"]
+        if cfg.get("fetch_customer_catalogue", False):
+            cfg = enrich_customer_config(MobiWorkClient.from_env(), cfg)
+            manifest["customer_catalogue"] = cfg["customer_catalogue_audit"]
+        reports = load_reports(ROOT / "config/reports.json")
+        bill = next(r for r in reports if r.key == "bill" and r.enabled)
+        anchors = month_anchors(incremental_target_dates(os.environ.get("SYNC_SCOPE", "today"),
+                                                       int(os.environ.get("LOOKBACK_DAYS", "1"))))
+        sharepoint, drive = None, ""
+        if not dry:
+            sharepoint = SemanticSharePointClient.from_env()
+            drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
+            if not drive:
+                drive = sharepoint.get_drive_id(sharepoint.get_site_id())
+        prepared = []
+        for anchor in anchors:
+            if dry:
+                source = Path("output") / master_filename(bill.name, anchor)
+                content = source.read_bytes()
+            else:
+                content = sharepoint.download_file_bytes(drive, _monthly_master_path(bill, anchor))
+                if not content:
+                    raise ValueError("Required bill monthly master missing")
+            # dtype=object preserves identifiers and source cell values.
+            detail = pd.read_excel(BytesIO(content), sheet_name="ChiTietSP", dtype=object)
+            report, issues = build_report(detail, cfg)
+            path = write_workbook({"BaoCao": report, "CanBoSung": issues,
+                                   "DonViTinh": unit_trace(detail, report, cfg)},
+                                  f"BaoCaoChiTietCTKM_{anchor:%Y-%m}.xlsx")
+            result = {"month": f"{anchor:%Y-%m}", "rows": len(report), "issues": len(issues),
+                      "filename": path.name, "source_scope": "requested_dates" if dry else "monthly_master"}
+            allowed_fields = {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
+                              "Brand", "Package", "Loại KH"}
+            result["blocking_issues"] = int((~issues["Trường"].isin(allowed_fields)).sum()) if not issues.empty else 0
+            manifest["results"].append(result)
+            prepared.append((anchor, path, result))
+        incomplete = any(result["issues"] for _, _, result in prepared)
+        if not dry and cfg.get("publish_enabled", False) and any(result["blocking_issues"] for _, _, result in prepared):
+            raise ValueError("CTKM report has invalid source values or identity links. Nothing published.")
+        if incomplete and not dry and cfg.get("publish_enabled", False) and not allow_incomplete:
+            raise ValueError("CTKM report needs mappings; see CanBoSung sheet. Nothing published.")
+        if not dry and cfg.get("publish_enabled", False):
+            for anchor, path, result in prepared:
+                uploaded = sharepoint.upload_file(drive, path, f"07_BaoCaoChiTietCTKM/{anchor:%Y}/{anchor:%m}")
+                result["upload_skipped"] = bool(uploaded.get("upload_skipped"))
+                result["workbook_published"] = True
+                result["remote_path"] = f"07_BaoCaoChiTietCTKM/{anchor:%Y}/{anchor:%m}/{path.name}"
+        manifest["publish_enabled"] = bool(cfg.get("publish_enabled", False))
+        manifest["status"] = "needs_mapping" if incomplete else "success"
+        if incomplete and not dry and cfg.get("publish_enabled", False):
+            manifest["status"] = "published_with_issues"
+        return manifest
+    except Exception as exc:
+        manifest.update(status="failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    finally:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    run()

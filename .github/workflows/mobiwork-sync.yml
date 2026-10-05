@@ -51,6 +51,14 @@ env:
   # (see src/sharepoint.py) so long runs never outlive the azure/login assertion.
   AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+  MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+  MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+  MOBIWORK_MAX_RETRIES: "8"
+  MOBIWORK_TIMEOUT_SECONDS: "120"
+  SHAREPOINT_MAX_RETRIES: "6"
+  SHAREPOINT_TIMEOUT_SECONDS: "120"
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
 
 jobs:
   sync:
@@ -110,9 +118,6 @@ jobs:
           echo "Resolved sync scope: $scope"
 
       - name: Validate MobiWork secrets
-        env:
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
-          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -132,9 +137,6 @@ jobs:
 
       - name: Validate Microsoft OIDC configuration
         if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -168,17 +170,9 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
-          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
-          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
-          MOBIWORK_MAX_RETRIES: "8"
-          MOBIWORK_TIMEOUT_SECONDS: "120"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-          SHAREPOINT_MAX_RETRIES: "6"
-          SHAREPOINT_TIMEOUT_SECONDS: "120"
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_all_reports.py
 
       - name: Build Data cham anh workbook
@@ -187,20 +181,35 @@ jobs:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-          SHAREPOINT_MAX_RETRIES: "6"
-          SHAREPOINT_TIMEOUT_SECONDS: "120"
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
           # Intraday refreshes skip the full-month rebuild when no monthly master
           # changed. The 09:00 finalization and manual runs always rebuild.
           DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED: ${{ github.event_name == 'schedule' && env.SYNC_SCOPE == 'today' }}
         run: python src/run_data_cham_anh.py
 
+      - name: Sync Promotion Bonus current snapshot
+        id: promotion_bonus
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+        run: python src/promotion_bonus.py
+
+      - name: Build promotion detail report
+        id: promotion_detail
+        env:
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
+          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
+        run: python src/promotion_detail.py
+
       - name: Publish run summary
         if: ${{ always() }}
         shell: bash
+        env:
+          PROMOTION_BONUS_OUTCOME: ${{ steps.promotion_bonus.outcome }}
         run: |
           python - <<'PY'
           import json
@@ -259,6 +268,35 @@ jobs:
                       if item.get("error"):
                           lines.append(f"|  | ↳ error |  |  |  |  |  | `{item['error']}` |")
 
+          bonus_path = Path("output/promotion_bonus_manifest.json")
+          bonus = json.loads(bonus_path.read_text(encoding="utf-8")) if bonus_path.exists() else {}
+          lines.extend(["", "## Promotion Bonus Snapshot", "", "| Metric | Value |", "|---|---|"])
+          for label, key in [
+              ("Status", "status"), ("Programs", "program_count"),
+              ("Data rows", "data_row_count"), ("Target rows", "target_row_count"),
+              ("Reward rows", "reward_row_count"), ("Workbook bytes", "workbook_bytes"),
+              ("Dry run", "dry_run"),
+          ]:
+              fallback = os.environ.get("PROMOTION_BONUS_OUTCOME", "not run") if key == "status" else "—"
+              lines.append(f"| {label} | {bonus.get(key, fallback)} |")
+          if bonus.get("error"):
+              lines.append(f"- Promotion Bonus error: `{bonus['error']}`")
+
+          detail_path = Path("output/promotion_detail_manifest.json")
+          if detail_path.exists():
+              detail = json.loads(detail_path.read_text(encoding="utf-8"))
+              lines.extend(["", "## Promotion detail report", "",
+                            f"- Status: **{detail.get('status', 'unknown')}**",
+                            f"- SharePoint publish enabled: **{detail.get('publish_enabled', False)}**"])
+              lines.append(f"- Incomplete detail publication allowed this run: **{detail.get('allow_incomplete_publish', False)}**")
+              if detail.get("customer_catalogue"):
+                  catalogue = detail["customer_catalogue"]
+                  lines.append(f"- Customer catalogue: {catalogue['count']} IDs; {catalogue['unkeyed_rows']} rows without ID; join={catalogue['join_key']}")
+              for result in detail.get("results", []):
+                  lines.append(f"- {result['month']}: {result['rows']} rows; {result['issues']} missing mappings/values; source={result['source_scope']}")
+              if detail.get("error"):
+                  lines.append(f"- Error: `{detail['error']}`")
+
           if lines:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
                   handle.write("\n".join(lines) + "\n")
@@ -269,7 +307,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: mobiwork-sync-manifests-${{ github.run_id }}-${{ github.run_attempt }}
-          path: output/sync_manifest.json
+          path: |
+            output/sync_manifest.json
+            output/promotion_bonus_manifest.json
+            output/promotion_detail_manifest.json
           if-no-files-found: ignore
           retention-days: 7
 

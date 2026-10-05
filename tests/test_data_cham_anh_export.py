@@ -162,6 +162,7 @@ class DataChamAnhTransformTests(unittest.TestCase):
             data_anh = pd.read_excel(path, sheet_name="Data_anh", engine="openpyxl")
             data_don_hang = pd.read_excel(path, sheet_name="Data_don_hang", engine="openpyxl")
 
+            workbook.close()
         self.assertEqual(data_anh.columns.tolist(), DATA_ANH_COLUMNS)
         self.assertEqual(data_don_hang.columns.tolist(), DATA_DON_HANG_COLUMNS)
 

@@ -289,6 +289,34 @@ class MobiWorkClient:
 
         raise RuntimeError("Unreachable retry loop")
 
+    def get_json(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        *,
+        operation_key: str = "api",
+        request_number: int = 1,
+    ) -> dict[str, Any]:
+        """GET one MobiWork JSON object through the shared throttle/retry policy."""
+        response = self._get_with_retry(
+            url,
+            dict(params or {}),
+            operation_key,
+            request_number,
+        )
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise TypeError(
+                f"MobiWork operation={operation_key} expected an object response, "
+                f"got {type(payload).__name__}"
+            )
+        if payload.get("status") is False:
+            raise RuntimeError(
+                f"MobiWork operation={operation_key} returned status=false: "
+                f"{payload.get('message', '')}"
+            )
+        return payload
+
     def fetch_report(self, cfg: ReportConfig, target_date: date) -> list[dict[str, Any]]:
         return self.fetch_report_range(cfg, target_date, target_date)
 
