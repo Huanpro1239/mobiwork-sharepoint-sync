@@ -20,6 +20,25 @@ Tài liệu này là hợp đồng dữ liệu giữa MobiWork DMS, pipeline đ�
 | `order` | `DonDatHang_YYYY-MM.xlsx` | `DonHang` + `ChiTietSP` | `ma_phieu` | `ma_phieu` |
 | `bill` | `DonBanHang_YYYY-MM.xlsx` | `DonHang` + `ChiTietSP` | `ma_phieu` | `ma_phieu` |
 
+### Promotion Bonus snapshot contract
+
+`PromotionBonusReport` không thuộc monthly-master contract ở trên. API bắt buộc `id_ct` (tối đa 5 id/lần) và không có tham số ngày/as-of, vì vậy pipeline không được gắn dữ liệu hiện tại vào partition lịch sử.
+
+Canonical output:
+
+```text
+06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
+```
+
+Workbook có 4 sheet:
+
+- `ChuongTrinh`: catalogue từ `/OpenAPI/V1/PromotionBonus`;
+- `Data`: dữ liệu báo cáo trả thưởng theo khách hàng;
+- `ChiTieu`: `arrChiTieu` của từng chương trình;
+- `TraThuong`: `arrTraThuong` của từng chương trình.
+
+Mọi dòng lấy từ report được bổ sung `promotion_program_id` và `promotion_program_name`. Pipeline gọi một `id_ct` mỗi request dù API cho phép tối đa 5, nhằm giữ mapping program → row rõ ràng khi schema response không cam kết một khóa program trên mọi row. `total` của từng report phải khớp số row `data`; sai lệch làm job fail trước publish.
+
 Với `new_customer`:
 
 - `ID` là identity ổn định của record MobiWork và là khóa dùng để validate/upsert.
@@ -162,8 +181,8 @@ Các trường cần theo dõi gồm:
 
 Khi thêm/sửa report:
 
-1. cập nhật `config/reports.json`;
-2. khai báo `required_fields`, `primary_key`, `upsert_keys` khi có;
+1. cập nhật `config/reports.json` cho monthly report, hoặc `config/promotion_bonus.json` cho Promotion Bonus snapshot;
+2. khai báo `required_fields`, `primary_key`, `upsert_keys` khi monthly report có business key;
 3. thêm/đổi test trong `tests/`;
 4. chạy compile + Ruff + unit tests + coverage;
 5. chỉ merge khi CI xanh;
