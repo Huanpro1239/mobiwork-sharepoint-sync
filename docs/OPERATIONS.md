@@ -388,3 +388,25 @@ không quy đổi ly sang Thùng/Két và không coi là lỗi thiếu quy đổ
 ghi khóa đơn/dòng, SKU, ĐVT nguồn/đích, hệ số và dấu hiệu hàng tặng để kiểm tra.
 Không cộng hàng tặng khác đơn vị vào một tổng số lượng chung. Gate metadata vẫn
 áp dụng cho các trường mẫu còn thiếu.
+
+Danh mục quy đổi đã nhập từ `Danh Muc San Pham.xlsx`, sheet `DanhMucSanPham`:
+hai cột `MaSanPhamMoi_Vikoda`/`MaSanPhamMoi_VKD` cùng ánh xạ một sản phẩm;
+`Brand` → Brand, `Group` → Package, `Quy cách` và `ĐVT` → hệ số 1/quy cách.
+132 dòng có sản phẩm cung cấp 264 mã; hai mã bán thành phẩm không có quy cách
+chỉ bổ sung metadata. Cấu hình lưu tên file, SHA-256 và dòng nguồn để đối chiếu.
+Không đưa workbook nguồn vào Git. Danh mục này ưu tiên hơn dữ liệu Product API;
+API vẫn bổ sung các SKU chưa có trong file. Vật phẩm ly ngoài danh mục vẫn cần
+Package phù hợp nếu nghiệp vụ yêu cầu trường này.
+
+Cập nhật khi nhận phiên bản danh mục mới, từ thư mục repository:
+
+```powershell
+$env:PYTHONPATH = 'src'
+python -m import_product_reference 'D:\Vikoda\SO\Bao cao mau\DMSP\Danh Muc San Pham.xlsx'
+```
+
+Importer kiểm tra mã trùng mâu thuẫn, quy cách nguyên dương và đơn vị đóng gói;
+nếu lỗi thì giữ nguyên config. Khi thành công, thay hệ số cũ của các mã có trong
+file, giữ mapping nhân viên/khách hàng và các SKU ngoài file. ĐVT Chai dùng theo
+Bill đã kiểm tra; sản phẩm có `Brand 1=Lon` bổ sung cả ĐVT Lon. Tiền trước VAT
+vẫn tính bằng số lượng gốc, không nhân đơn giá với số thùng đã quy đổi.

@@ -200,6 +200,11 @@ class ProductCatalogueTests(unittest.TestCase):
         self.assertEqual(cfg['products']['SKU2']['Brand'], 'Brand2')
         self.assertAlmostEqual(float(cfg['unit_conversions']['SKU1|Chai']['factor']), 1/24)
         self.assertNotIn('SKU1|Chai', config()['unit_conversions'])
+        reference = config()
+        reference['unit_conversions']['SKU1|Chai'] = {'target_unit': 'Két', 'factor': '0.05'}
+        result = module.enrich_product_config(FakeMobiWork([{'total': 1, 'data': [
+            {'ma_sp': 'SKU1', 'dvt_chan': 'Thùng', 'dvt_le': 'Chai', 'hsqd': 24}]}]), reference)
+        self.assertEqual(result['unit_conversions']['SKU1|Chai'], reference['unit_conversions']['SKU1|Chai'])
 
     def test_catalogue_integrity_guards(self):
         from test_promotion_bonus import FakeMobiWork
