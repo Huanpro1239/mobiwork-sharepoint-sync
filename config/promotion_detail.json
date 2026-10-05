@@ -5,18 +5,7 @@
   "fetch_customer_catalogue": true,
   "customer_catalogue_start_date": "01/01/1900",
   "program_codes": {},
-  "employees": {
-    "KHHO0303": {
-      "Vùng": "Miền Trung 1B",
-      "SS Code": "KHA04",
-      "SS Name": "Huỳnh Thanh Cường"
-    },
-    "KHHO0304": {
-      "Vùng": "Miền Trung 1B",
-      "SS Code": "KHA04",
-      "SS Name": "Huỳnh Thanh Cường"
-    }
-  },
+  "employees": {},
   "customers": {},
   "products": {
     "230100110": {
@@ -3192,30 +3181,7 @@
       "source_row": 133
     }
   },
-  "customer_codes": {
-    "KHHO030340": {
-      "Tỉnh": "KHÁNH HÒA",
-      "Loại KH": "1b",
-      "employee_code": "KHHO0303",
-      "DB Code": "B-KHHO-0288",
-      "Tên NPP": "TU TAI"
-    },
-    "KHHO031452": {
-      "Tỉnh": "KHÁNH HÒA",
-      "Loại KH": "1c",
-      "employee_code": "KHHO0304",
-      "DB Code": "B-KHHO-0288",
-      "Tên NPP": "TU TAI"
-    },
-    "KHHO031562": {
-      "Tỉnh": "KHÁNH HÒA",
-      "Loại KH": "1b",
-      "employee_code": "KHHO0304",
-      "DB Code": "B-KHHO-0288",
-      "Tên NPP": "TU TAI"
-    }
-  },
-  "reference_source": "Báo cáo chi tiết CTKM theo KH mẫu (1).xlsx; Sheet!A5:Z13",
+  "customer_codes": {},
   "product_reference": {
     "filename": "Danh Muc San Pham.xlsx",
     "sha256": "93ed01d0bdf4bcf9632716eaf38f4578c0e9e60ef2ef3f13ccf8558dadf65c33",
@@ -3225,5 +3191,6 @@
       "130100014",
       "230100014"
     ]
-  }
+  },
+  "fetch_program_catalogue": true
 }

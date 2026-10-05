@@ -47,6 +47,14 @@ class FakeSharePoint:
 
 
 class IncrementalScopeTests(unittest.TestCase):
+    def test_month_to_date_includes_today_and_stays_in_current_month(self):
+        for day in (1, 5, 31):
+            now = datetime(2026, 10, day, 23, 59, tzinfo=runner.core.VN_TZ)
+            with patch.object(runner, "datetime") as clock:
+                clock.now.return_value = now
+                values = runner.incremental_target_dates("month_to_date", 1)
+            self.assertEqual(values, [date(2026, 10, d) for d in range(1, day + 1)])
+
     def test_today_scope_targets_current_vietnam_date(self):
         fixed_now = datetime(2026, 8, 22, 12, 30, tzinfo=runner.core.VN_TZ)
         with patch.object(runner, "datetime") as datetime_mock:

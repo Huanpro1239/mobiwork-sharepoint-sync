@@ -30,6 +30,39 @@ def config():
 
 
 class PromotionDetailTests(unittest.TestCase):
+    def test_internal_program_ids_resolve_on_sale_and_gift(self):
+        cfg = config()
+        client = Mock()
+        with patch.object(module, 'fetch_programs', return_value=[
+            {'_id': 'internal-id', 'name': '003/TB/GT/01/2026_Q4_CT TÍCH LŨY'},
+            {'_id': 'other-id', 'name': 'Chương trình miền Bắc'}]):
+            cfg = module.enrich_program_config(client, cfg)
+        sale = source(promotion='[{"id":"other-id"}]', ctkmFull_id='internal-id')
+        gift = source(stt=2, promotion='[]', ctkmFull_id='internal-id',
+                      is_km=True, loai_hang='Khuyến mãi')
+        report, _ = module.build_report(pd.DataFrame([sale, gift]), cfg)
+        self.assertEqual(report.iloc[0]['Mã CTKM'],
+                         '003/TB/GT/01/2026_Q4; Chương trình miền Bắc')
+        self.assertEqual(report.iloc[1]['Mã CTKM'], '003/TB/GT/01/2026_Q4')
+        self.assertEqual(list(report.columns), module.COLUMNS)
+        self.assertNotIn('internal-id', report.to_string())
+
+    def test_template_does_not_restrict_regions_or_supply_business_metadata(self):
+        cfg = module.load_config()
+        self.assertEqual(cfg['employees'], {})
+        self.assertEqual(cfg['customer_codes'], {})
+        rows = [source(ma_phieu='NORTH', ma_nv_dat='HNI0101'),
+                source(ma_phieu='SOUTH', ma_nv_dat='HCM0101'),
+                source(ma_phieu='UNKNOWN', ma_nv_dat='UNKNOWN01')]
+        report, issues = module.build_report(pd.DataFrame(rows), cfg)
+        self.assertEqual(len(report), 3)
+        self.assertEqual(report.iloc[0]['Vùng'], 'Miền Bắc')
+        self.assertEqual(report.iloc[1]['Vùng'], 'Miền Nam')
+        self.assertTrue(pd.isna(report.iloc[2]['Vùng']))
+        self.assertTrue(report['SS Code'].isna().all())
+        self.assertTrue(report['DB Code'].isna().all())
+        self.assertIn('Vùng', issues['Trường'].tolist())
+
     def test_sale_pre_vat_and_gift_are_separate_without_inflation(self):
         gift = source(stt=2, is_km=True, loai_hang='Khuyến mãi', so_luong=2,
                       ctkm='003/TB/GT/01/2026_Q3')
@@ -134,7 +167,7 @@ class PromotionDetailTests(unittest.TestCase):
                      patch.object(module, 'Path', side_effect=lambda value, actual_path=actual_path, tmp=tmp: actual_path(tmp) / value), \
                      patch.object(module, 'load_reports', return_value=[bill]), \
                      patch.object(module, 'incremental_target_dates', return_value=[date(2026, 10, 5)]), \
-                     patch.object(module, 'write_workbook', return_value=actual_path('report.xlsx')), \
+                     patch.object(module, 'write_detail_workbook', return_value=actual_path('report.xlsx')), \
                      patch.object(module.SemanticSharePointClient, 'from_env', return_value=sp) as factory, \
                      patch.dict(os.environ, {'DRY_RUN': 'true' if dry else 'false', 'SHAREPOINT_DRIVE_ID': 'drive',
                                              'ALLOW_INCOMPLETE_DETAIL': 'false',

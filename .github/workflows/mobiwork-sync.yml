@@ -3,6 +3,15 @@ name: MobiWork DMS Sync
 on:
   workflow_dispatch:
     inputs:
+      report_scope:
+        description: "Routine sync, or rebuild promotion detail for every existing Bill month"
+        required: true
+        type: choice
+        options:
+          - all_reports
+          - promotion_history
+          - promotion_api_audit
+        default: all_reports
       sync_scope:
         description: "Target: today, yesterday, or previous N days"
         required: true
@@ -11,6 +20,7 @@ on:
           - today
           - yesterday
           - lookback
+          - month_to_date
         default: today
       lookback_days:
         description: "Used only when sync_scope=lookback"
@@ -136,7 +146,7 @@ jobs:
           echo "MobiWork credentials: available"
 
       - name: Validate Microsoft OIDC configuration
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || (inputs.dry_run == false && inputs.report_scope != 'promotion_api_audit') || inputs.report_scope == 'promotion_history' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -155,7 +165,7 @@ jobs:
           echo "Microsoft OIDC configuration: available"
 
       - name: Azure login with GitHub OIDC
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || (inputs.dry_run == false && inputs.report_scope != 'promotion_api_audit') || inputs.report_scope == 'promotion_history' }}
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -163,10 +173,11 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Resolve SharePoint document library
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || (inputs.dry_run == false && inputs.report_scope != 'promotion_api_audit') || inputs.report_scope == 'promotion_history' }}
         uses: ./.github/actions/resolve-sharepoint-drive
 
       - name: Sync all MobiWork reports
+        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' }}
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -176,7 +187,7 @@ jobs:
         run: python src/run_all_reports.py
 
       - name: Build Data cham anh workbook
-        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        if: ${{ github.event_name == 'schedule' || (inputs.dry_run == false && inputs.report_scope == 'all_reports') }}
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -190,6 +201,7 @@ jobs:
         run: python src/run_data_cham_anh.py
 
       - name: Sync Promotion Bonus current snapshot
+        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' }}
         id: promotion_bonus
         env:
           PYTHONUNBUFFERED: "1"
@@ -197,12 +209,18 @@ jobs:
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
         run: python src/promotion_bonus.py
 
+      - name: Audit PromotionBonusReport API
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.report_scope == 'promotion_api_audit' }}
+        run: python src/promotion_api_audit.py
+
       - name: Build promotion detail report
+        if: ${{ inputs.report_scope != 'promotion_api_audit' }}
         id: promotion_detail
         env:
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
+          PROMOTION_DETAIL_SCOPE: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || 'touched' }}
         run: python src/promotion_detail.py
 
       - name: Publish run summary
@@ -288,6 +306,7 @@ jobs:
               lines.extend(["", "## Promotion detail report", "",
                             f"- Status: **{detail.get('status', 'unknown')}**",
                             f"- SharePoint publish enabled: **{detail.get('publish_enabled', False)}**"])
+              lines.append(f"- Source months: {', '.join(detail.get('source_months', []))}")
               lines.append(f"- Incomplete detail publication allowed this run: **{detail.get('allow_incomplete_publish', False)}**")
               if detail.get("customer_catalogue"):
                   catalogue = detail["customer_catalogue"]
@@ -310,6 +329,7 @@ jobs:
           path: |
             output/sync_manifest.json
             output/promotion_bonus_manifest.json
+            output/promotion_api_audit.json
             output/promotion_detail_manifest.json
           if-no-files-found: ignore
           retention-days: 7

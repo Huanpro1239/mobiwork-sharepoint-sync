@@ -361,13 +361,12 @@ không thay thế hoặc thêm history cho Promotion Bonus.
 
 Có thể chọn config runtime riêng bằng `PROMOTION_DETAIL_CONFIG` để không đưa mapping khách hàng vào Git.
 
-Mapping tham chiếu ban đầu đã trích từ file mẫu khách hàng gửi: 2 mã NVBH (Vùng/SS),
-3 mã KH (Tỉnh/Loại KH/NPP, chỉ áp dụng khi NVBH cũng khớp), 4 SKU (Brand/Package).
-`customer_codes` không coi mã KH là unique vô điều kiện: chỉ áp dụng khi source
-có đúng một ID khách hàng cho mã đó và employee_code khớp. Không dùng NPP của một
-khách hàng mẫu làm NPP mặc định cho toàn bộ nhân viên. Mapping này chỉ bao phủ các
-mã trong mẫu, không tự mở rộng sang khách hàng/sản phẩm khác. Hai file không chứa
-hệ số quy đổi Chai → Thùng/Két; `Package=1 way` không phải quy cách đóng gói.
+File mẫu chỉ quy định cơ cấu 26 cột và định dạng, không cung cấp mapping dữ liệu.
+Đã bỏ mapping Vùng/SS/NPP/Loại KH trích từ các dòng mẫu. Báo cáo không lọc theo
+miền, nhân viên hoặc khách hàng mẫu. Vùng dùng chung `config/employee_regions.json`
+theo prefix `ma_nv_dat`, bao gồm Bắc/Trung/Nam; mã chưa biết giữ trống và ghi issue.
+SS/NPP chưa có nguồn xác nhận giữ trống; Tỉnh/Loại KH lấy từ DMS theo ID khách hàng.
+Danh mục sản phẩm người dùng cung cấp vẫn là nguồn Brand/Package/quy đổi chính thức.
 
 Danh mục Product được lấy tự động qua
 [findProduct](https://dms.mobiwork.vn/openapi/#/Product/findProduct) với phân trang,
@@ -443,3 +442,34 @@ Nhánh thử nghiệm vẫn cần OIDC subject được Entra tin cậy; dùng c
 không làm token của nhánh thử nghiệm thành token nhánh production. Chưa merge
 PR thì lịch main chưa có các bước mới. Không đổi subject GitHub hay chạy mã nhánh
 thử nghiệm dưới token main để bỏ qua kiểm tra tin cậy.
+
+Xuất lịch sử CTKM theo mẫu: chạy cùng workflow `MobiWork DMS Sync`, chọn
+`report_scope=promotion_history`. Chế độ này đọc các folder năm/tháng có sẵn
+trong `04_DonBanHang`, kiểm tra workbook master chuẩn, rồi tạo mỗi tháng một
+file. Không refetch hoặc ghi đè các report đơn hàng/ảnh, không gán snapshot
+PromotionBonus hiện tại thành lịch sử. Dry-run lịch sử chỉ đọc SharePoint và
+tạo file local; không upload. Tháng tương lai bị loại; folder tháng thiếu master
+là lỗi, không tự tạo báo cáo rỗng. Giới hạn 120 tháng.
+
+Ngày `ngay_dat` (fallback `ngay_ban_hang`) xác định tháng báo cáo. Dòng thuộc
+tháng khác được đếm trong `outside_order_month_rows`; ngày lỗi vẫn giữ để gate
+chặn xuất. Manifest ghi source month, số dòng nguồn và SHA-256 workbook nguồn.
+Sheet BaoCao dùng header tại dòng 4, 26 cột, tiêu đề, màu header và độ rộng cột
+trích từ file mẫu, kèm tháng báo cáo. Không lưu dữ liệu mẫu khách hàng vào Git.
+
+Đối chiếu Paybonus chưa được khẳng định: API hiện trả Data rỗng; danh mục có
+cả chương trình đã khóa nhưng chưa tìm thấy mã Q3 cụ thể trong mẫu. Các dòng
+hiện tại dựa trên liên kết promotion/CTKM trên Bill; đơn tích lũy không có liên
+kết đó chưa được tự suy là thuộc chương trình. Cần đối chiếu phiên Paybonus web
+đã đăng nhập trước khi xác nhận độ phủ của chương trình trả thưởng và các đơn
+tích lũy. Không phân bổ tổng thưởng khách hàng vào từng đơn hoặc gọi thưởng đạt
+được là hàng tặng thực tế.
+
+### Tên và mã CTKM dễ đọc trong báo cáo chi tiết
+
+Đầu ra `BaoCao` giữ đúng 26 cột theo cơ cấu mẫu. `fetch_program_catalogue=true`
+tra danh mục PromotionBonus để đổi ID nội bộ sang mã nghiệp vụ trong tên chương
+trình, hoặc giữ tên DMS khi không có mã theo quy ước. Áp dụng cho promotion.id,
+ctkmFull_id ở cả dòng bán và hàng tặng; không thêm cột kỹ thuật vào BaoCao.
+Mã khách hàng/nhân viên/sản phẩm vẫn là mã nghiệp vụ nguồn, với tên ở cột riêng.
+Không dùng dòng mẫu làm dữ liệu danh mục hoặc tự đặt tên khi ID chưa tra được.

@@ -5,6 +5,9 @@ import json
 import logging
 import os
 import re
+import hashlib
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
@@ -16,8 +19,11 @@ from data_cham_anh_export import _monthly_master_path
 from customer_catalogue import enrich_customer_config
 from main import load_reports
 from monthly_master import master_filename
-from promotion_bonus import _api_total, _expect_object_list, _frame, write_workbook
+from promotion_bonus import _api_total, _expect_object_list, _frame, fetch_programs, load_config as load_bonus_config
+from promotion_months import discover_bill_months, select_order_month
+from promotion_workbook import write_detail_workbook
 from mobiwork import MobiWorkClient
+from region_mapping import employee_prefix, load_region_map
 from run_all_reports import incremental_target_dates
 from run_data_cham_anh import month_anchors
 from sharepoint_semantic import SemanticSharePointClient
@@ -37,7 +43,7 @@ def load_config() -> dict[str, Any]:
     cfg = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
         raise ValueError("publish_enabled must be an explicit boolean")
-    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "allow_incomplete_publish"):
+    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "fetch_program_catalogue", "allow_incomplete_publish"):
         if type(cfg.get(flag, False)) is not bool:
             raise ValueError(f"{flag} must be an explicit boolean")
     for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
@@ -50,6 +56,9 @@ def load_config() -> dict[str, Any]:
                     raise ValueError("Program code mappings must be nonempty strings")
             elif not isinstance(value, dict):
                 raise ValueError(f"{key} mapping entries must be objects")
+    cfg["employee_regions"] = load_region_map(
+        os.environ.get("EMPLOYEE_REGION_CONFIG") or str(ROOT / "config/employee_regions.json")
+    )
     return cfg
 
 
@@ -91,6 +100,19 @@ def program_code(value: str, cfg: dict[str, Any]) -> str:
     # Recognize the business-code convention in the supplied template, retaining _Q3.
     match = re.match(r"^(\d+/TB/GT/\d+/\d{4}(?:_Q[1-4])?)(?:_|$)", value)
     return match.group(1) if match else value
+
+
+def enrich_program_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Resolve internal program IDs to business codes/names from the DMS catalogue."""
+    result = json.loads(json.dumps(cfg))
+    programs = fetch_programs(client, load_bonus_config())
+    mapping = result.setdefault("program_codes", {})
+    for program in programs:
+        identity, name = text(program.get("_id")), text(program.get("name"))
+        if identity and name:
+            mapping.setdefault(identity, program_code(name, cfg))
+    result["program_catalogue_count"] = len(programs)
+    return result
 
 
 def is_gift(row: dict[str, Any]) -> bool:
@@ -177,7 +199,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         if name:
             codes.add(program_code(name, cfg))
         elif text(row.get("ctkmFull_id")):
-            codes.add(text(row["ctkmFull_id"]))
+            codes.add(program_code(text(row["ctkmFull_id"]), cfg))
 
     identities: dict[str, set[str]] = {}
     for row in rows:
@@ -196,6 +218,8 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         sku = text(row.get("ma_sp"))
         unit = text(row.get("ten_dvt")) or text(row.get("ma_dvt"))
         item = dict.fromkeys(COLUMNS, None)
+        if not gift:
+            item["Số lượng Khuyến mãi"] = 0
         key = {"Mã Đơn hàng": order, "Dòng nguồn": text(row["stt"])}
 
         def issue(field: str, reason: str, key=key, sku=sku, unit=unit, row=row) -> None:
@@ -226,11 +250,13 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         item["Mã CTKM"] = "; ".join(sorted(programs[order]))
         if gift:
             direct = text(row.get("ctkm")) or text(row.get("ctkmFull_ten_khuyen_mai"))
-            direct = program_code(direct, cfg) if direct else text(row.get("ctkmFull_id"))
+            direct = program_code(direct or text(row.get("ctkmFull_id")), cfg)
             item["Mã CTKM"] = direct or item["Mã CTKM"]
             if not direct:
                 issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
         employee = cfg.get("employees", {}).get(text(row.get("ma_nv_dat")), {})
+        region = cfg.get("employee_regions", {}).get(employee_prefix(text(row.get("ma_nv_dat"))), {})
+        item["Vùng"] = region.get("vung") or None
         current_customer = cfg.get("customer_catalogue", {}).get(text(row.get("ID_khachhang")), {})
         if current_customer.get("customer_code") and current_customer["customer_code"] != text(row.get("ma_kh")):
             issue("Mã Khách hàng", "ID khách hàng khớp nhưng mã KH khác danh mục hiện tại")
@@ -317,25 +343,36 @@ def run() -> dict[str, Any]:
         allow_incomplete = (cfg.get("allow_incomplete_publish", False)
                             or os.environ.get("ALLOW_INCOMPLETE_DETAIL", "false").casefold() == "true")
         manifest["allow_incomplete_publish"] = allow_incomplete
+        reports = load_reports(ROOT / "config/reports.json")
+        bill = next(r for r in reports if r.key == "bill" and r.enabled)
+        anchors = month_anchors(incremental_target_dates(os.environ.get("SYNC_SCOPE", "today"),
+                                                       int(os.environ.get("LOOKBACK_DAYS", "1"))))
+        scope = os.environ.get("PROMOTION_DETAIL_SCOPE", "touched")
+        if scope not in {"touched", "all_existing"}:
+            raise ValueError("PROMOTION_DETAIL_SCOPE must be touched or all_existing")
+        manifest["scope"] = scope
+        sharepoint, drive = None, ""
+        if not dry or scope == "all_existing":
+            sharepoint = SemanticSharePointClient.from_env()
+            drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
+            if not drive:
+                drive = sharepoint.get_drive_id(sharepoint.get_site_id())
+        if scope == "all_existing":
+            anchors = discover_bill_months(sharepoint, drive, bill,
+                                          datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date())
+        manifest["source_months"] = [anchor.strftime("%Y-%m") for anchor in anchors]
+        if cfg.get("fetch_program_catalogue", False):
+            cfg = enrich_program_config(MobiWorkClient.from_env(), cfg)
+            manifest["program_catalogue_count"] = cfg["program_catalogue_count"]
         if cfg.get("fetch_product_catalogue", False):
             cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
             manifest["product_catalogue_count"] = cfg["product_catalogue_count"]
         if cfg.get("fetch_customer_catalogue", False):
             cfg = enrich_customer_config(MobiWorkClient.from_env(), cfg)
             manifest["customer_catalogue"] = cfg["customer_catalogue_audit"]
-        reports = load_reports(ROOT / "config/reports.json")
-        bill = next(r for r in reports if r.key == "bill" and r.enabled)
-        anchors = month_anchors(incremental_target_dates(os.environ.get("SYNC_SCOPE", "today"),
-                                                       int(os.environ.get("LOOKBACK_DAYS", "1"))))
-        sharepoint, drive = None, ""
-        if not dry:
-            sharepoint = SemanticSharePointClient.from_env()
-            drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
-            if not drive:
-                drive = sharepoint.get_drive_id(sharepoint.get_site_id())
         prepared = []
         for anchor in anchors:
-            if dry:
+            if dry and scope == "touched":
                 source = Path("output") / master_filename(bill.name, anchor)
                 content = source.read_bytes()
             else:
@@ -344,12 +381,16 @@ def run() -> dict[str, Any]:
                     raise ValueError("Required bill monthly master missing")
             # dtype=object preserves identifiers and source cell values.
             detail = pd.read_excel(BytesIO(content), sheet_name="ChiTietSP", dtype=object)
+            source_rows = len(detail)
+            detail, outside_month = select_order_month(detail, anchor)
             report, issues = build_report(detail, cfg)
-            path = write_workbook({"BaoCao": report, "CanBoSung": issues,
+            path = write_detail_workbook({"BaoCao": report, "CanBoSung": issues,
                                    "DonViTinh": unit_trace(detail, report, cfg)},
-                                  f"BaoCaoChiTietCTKM_{anchor:%Y-%m}.xlsx")
+                                  f"BaoCaoChiTietCTKM_{anchor:%Y-%m}.xlsx", anchor)
             result = {"month": f"{anchor:%Y-%m}", "rows": len(report), "issues": len(issues),
-                      "filename": path.name, "source_scope": "requested_dates" if dry else "monthly_master"}
+                      "filename": path.name, "source_scope": "requested_dates" if dry and scope == "touched" else "monthly_master",
+                      "source_rows": source_rows, "outside_order_month_rows": outside_month,
+                      "source_sha256": hashlib.sha256(content).hexdigest()}
             allowed_fields = {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
                               "Brand", "Package", "Loại KH"}
             result["blocking_issues"] = int((~issues["Trường"].isin(allowed_fields)).sum()) if not issues.empty else 0
