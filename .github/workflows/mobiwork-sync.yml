@@ -21,6 +21,16 @@ on:
         required: true
         type: boolean
         default: false
+      publish_promotion_detail:
+        description: "Publish customer promotion detail for this manual run"
+        required: true
+        type: boolean
+        default: false
+      allow_incomplete_detail:
+        description: "Publish detail with known missing mappings retained in CanBoSung"
+        required: true
+        type: boolean
+        default: false
   schedule:
     # Intraday refresh every 3 hours during business hours, Monday-Saturday.
     # Completed days are finalized at 09:00 and reconciled nightly (D-1..D-3).
@@ -226,6 +236,8 @@ jobs:
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          PUBLISH_PROMOTION_DETAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_promotion_detail || false }}
+          ALLOW_INCOMPLETE_DETAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_incomplete_detail || false }}
         run: python src/promotion_detail.py
 
       - name: Publish run summary
@@ -311,6 +323,7 @@ jobs:
               lines.extend(["", "## Promotion detail report", "",
                             f"- Status: **{detail.get('status', 'unknown')}**",
                             f"- SharePoint publish enabled: **{detail.get('publish_enabled', False)}**"])
+              lines.append(f"- Incomplete detail publication allowed this run: **{detail.get('allow_incomplete_publish', False)}**")
               if detail.get("customer_catalogue"):
                   catalogue = detail["customer_catalogue"]
                   lines.append(f"- Customer catalogue: {catalogue['count']} IDs; {catalogue['unkeyed_rows']} rows without ID; join={catalogue['join_key']}")

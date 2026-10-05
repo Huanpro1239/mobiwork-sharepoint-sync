@@ -430,3 +430,10 @@ Metadata khách hàng chỉ tồn tại trong bộ nhớ, không ghi vào config
 lưu số lượng, tên trường, phạm vi ngày và khóa nối, không lưu tên/địa chỉ/điện thoại.
 Các giá trị này vẫn có trong workbook báo cáo theo mẫu. Thiếu ID hoặc không khớp
 được khách hàng vẫn ghi nhận các trường còn thiếu, không bịa giá trị thay thế.
+
+Manual workflow có `publish_promotion_detail=true` để bật xuất riêng lần chạy,
+không sửa mặc định của config. Khi người dùng yêu cầu xuất bản với các mapping
+đã biết là còn thiếu, dùng thêm `allow_incomplete_detail=true` và `dry_run=false`.
+Workbook giữ sheet `CanBoSung`; manifest ghi `published_with_issues`, số issue,
+đường dẫn remote và `workbook_published`. Hai cờ mặc định false; schedule không
+tự bỏ qua gate thiếu mapping. Các lỗi dữ liệu/khóa/phân trang vẫn dừng như trước.

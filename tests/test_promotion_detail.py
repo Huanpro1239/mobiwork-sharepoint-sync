@@ -106,12 +106,13 @@ class PromotionDetailTests(unittest.TestCase):
         from datetime import date
         from io import BytesIO
         from mobiwork import ReportConfig
-        for dry, missing, enabled in [(True, False, False), (True, True, True),
-                                      (False, False, True), (False, True, True),
-                                      (False, True, False)]:
+        for dry, missing, enabled, allow in [(True, False, False, False), (True, True, True, False),
+                                             (False, False, True, False), (False, True, True, False),
+                                             (False, True, False, False), (False, True, True, True),
+                                             (True, True, True, True)]:
             with self.subTest(dry=dry, missing=missing, enabled=enabled), tempfile.TemporaryDirectory() as tmp:
                 cfg = config()
-                cfg['publish_enabled'] = enabled
+                cfg['publish_enabled'] = enabled and not allow
                 if missing:
                     cfg['products'] = {}
                 config_path = Path(tmp) / 'config.json'
@@ -134,21 +135,29 @@ class PromotionDetailTests(unittest.TestCase):
                      patch.object(module, 'incremental_target_dates', return_value=[date(2026, 10, 5)]), \
                      patch.object(module, 'write_workbook', return_value=actual_path('report.xlsx')), \
                      patch.object(module.SemanticSharePointClient, 'from_env', return_value=sp) as factory, \
-                     patch.dict(os.environ, {'DRY_RUN': 'true' if dry else 'false', 'SHAREPOINT_DRIVE_ID': 'drive'}):
-                    if not dry and missing and enabled:
+                     patch.dict(os.environ, {'DRY_RUN': 'true' if dry else 'false', 'SHAREPOINT_DRIVE_ID': 'drive',
+                                             'ALLOW_INCOMPLETE_DETAIL': 'true' if allow else 'false',
+                                             'PUBLISH_PROMOTION_DETAIL': 'true' if allow and enabled else 'false'}):
+                    blocked = not dry and missing and enabled and not allow
+                    expected_status = ('published_with_issues' if missing and enabled and allow and not dry
+                                       else 'needs_mapping' if missing else 'success')
+                    if blocked:
                         with self.assertRaisesRegex(ValueError, 'Nothing published'):
                             module.run()
                     else:
                         result = module.run()
-                        self.assertEqual(result['status'], 'needs_mapping' if missing else 'success')
+                        self.assertEqual(result['status'], expected_status)
                     if dry:
                         factory.assert_not_called()
-                    if dry or missing or not enabled:
+                    if dry or blocked or not enabled:
                         sp.upload_file.assert_not_called()
                     else:
                         sp.upload_file.assert_called_once()
                     manifest = json.loads((output / 'promotion_detail_manifest.json').read_text(encoding='utf-8'))
-                    self.assertEqual(manifest['status'], 'failed' if not dry and missing and enabled else ('needs_mapping' if missing else 'success'))
+                    self.assertEqual(manifest['status'], 'failed' if blocked else expected_status)
+                    if not dry and enabled and not blocked:
+                        self.assertTrue(manifest['results'][0]['workbook_published'])
+                        self.assertIn('07_BaoCaoChiTietCTKM/2026/10/', manifest['results'][0]['remote_path'])
 
 class PromotionDetailConfigTests(unittest.TestCase):
     def test_invalid_config_cannot_enable_publish(self):

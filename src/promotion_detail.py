@@ -312,6 +312,10 @@ def run() -> dict[str, Any]:
     manifest_path = Path("output/promotion_detail_manifest.json")
     try:
         cfg = load_config()
+        if os.environ.get("PUBLISH_PROMOTION_DETAIL", "false").casefold() == "true":
+            cfg["publish_enabled"] = True
+        allow_incomplete = os.environ.get("ALLOW_INCOMPLETE_DETAIL", "false").casefold() == "true"
+        manifest["allow_incomplete_publish"] = allow_incomplete
         if cfg.get("fetch_product_catalogue", False):
             cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
             manifest["product_catalogue_count"] = cfg["product_catalogue_count"]
@@ -348,14 +352,18 @@ def run() -> dict[str, Any]:
             manifest["results"].append(result)
             prepared.append((anchor, path, result))
         incomplete = any(result["issues"] for _, _, result in prepared)
-        if incomplete and not dry and cfg.get("publish_enabled", False):
+        if incomplete and not dry and cfg.get("publish_enabled", False) and not allow_incomplete:
             raise ValueError("CTKM report needs mappings; see CanBoSung sheet. Nothing published.")
         if not dry and cfg.get("publish_enabled", False):
             for anchor, path, result in prepared:
                 uploaded = sharepoint.upload_file(drive, path, f"07_BaoCaoChiTietCTKM/{anchor:%Y}/{anchor:%m}")
                 result["upload_skipped"] = bool(uploaded.get("upload_skipped"))
+                result["workbook_published"] = True
+                result["remote_path"] = f"07_BaoCaoChiTietCTKM/{anchor:%Y}/{anchor:%m}/{path.name}"
         manifest["publish_enabled"] = bool(cfg.get("publish_enabled", False))
         manifest["status"] = "needs_mapping" if incomplete else "success"
+        if incomplete and not dry and cfg.get("publish_enabled", False):
+            manifest["status"] = "published_with_issues"
         return manifest
     except Exception as exc:
         manifest.update(status="failed", error=f"{type(exc).__name__}: {exc}")
