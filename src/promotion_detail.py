@@ -23,6 +23,7 @@ from promotion_bonus import _api_total, _expect_object_list, _frame
 from promotion_months import discover_bill_months, select_order_month
 from promotion_workbook import write_detail_workbook
 from mobiwork import MobiWorkClient
+from region_mapping import employee_prefix, load_region_map
 from run_all_reports import incremental_target_dates
 from run_data_cham_anh import month_anchors
 from sharepoint_semantic import SemanticSharePointClient
@@ -55,6 +56,9 @@ def load_config() -> dict[str, Any]:
                     raise ValueError("Program code mappings must be nonempty strings")
             elif not isinstance(value, dict):
                 raise ValueError(f"{key} mapping entries must be objects")
+    cfg["employee_regions"] = load_region_map(
+        os.environ.get("EMPLOYEE_REGION_CONFIG") or str(ROOT / "config/employee_regions.json")
+    )
     return cfg
 
 
@@ -238,6 +242,8 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
             if not direct:
                 issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
         employee = cfg.get("employees", {}).get(text(row.get("ma_nv_dat")), {})
+        region = cfg.get("employee_regions", {}).get(employee_prefix(text(row.get("ma_nv_dat"))), {})
+        item["Vùng"] = region.get("vung") or None
         current_customer = cfg.get("customer_catalogue", {}).get(text(row.get("ID_khachhang")), {})
         if current_customer.get("customer_code") and current_customer["customer_code"] != text(row.get("ma_kh")):
             issue("Mã Khách hàng", "ID khách hàng khớp nhưng mã KH khác danh mục hiện tại")

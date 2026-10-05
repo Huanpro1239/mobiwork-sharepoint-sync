@@ -30,6 +30,22 @@ def config():
 
 
 class PromotionDetailTests(unittest.TestCase):
+    def test_template_does_not_restrict_regions_or_supply_business_metadata(self):
+        cfg = module.load_config()
+        self.assertEqual(cfg['employees'], {})
+        self.assertEqual(cfg['customer_codes'], {})
+        rows = [source(ma_phieu='NORTH', ma_nv_dat='HNI0101'),
+                source(ma_phieu='SOUTH', ma_nv_dat='HCM0101'),
+                source(ma_phieu='UNKNOWN', ma_nv_dat='UNKNOWN01')]
+        report, issues = module.build_report(pd.DataFrame(rows), cfg)
+        self.assertEqual(len(report), 3)
+        self.assertEqual(report.iloc[0]['Vùng'], 'Miền Bắc')
+        self.assertEqual(report.iloc[1]['Vùng'], 'Miền Nam')
+        self.assertTrue(pd.isna(report.iloc[2]['Vùng']))
+        self.assertTrue(report['SS Code'].isna().all())
+        self.assertTrue(report['DB Code'].isna().all())
+        self.assertIn('Vùng', issues['Trường'].tolist())
+
     def test_sale_pre_vat_and_gift_are_separate_without_inflation(self):
         gift = source(stt=2, is_km=True, loai_hang='Khuyến mãi', so_luong=2,
                       ctkm='003/TB/GT/01/2026_Q3')

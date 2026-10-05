@@ -361,13 +361,12 @@ không thay thế hoặc thêm history cho Promotion Bonus.
 
 Có thể chọn config runtime riêng bằng `PROMOTION_DETAIL_CONFIG` để không đưa mapping khách hàng vào Git.
 
-Mapping tham chiếu ban đầu đã trích từ file mẫu khách hàng gửi: 2 mã NVBH (Vùng/SS),
-3 mã KH (Tỉnh/Loại KH/NPP, chỉ áp dụng khi NVBH cũng khớp), 4 SKU (Brand/Package).
-`customer_codes` không coi mã KH là unique vô điều kiện: chỉ áp dụng khi source
-có đúng một ID khách hàng cho mã đó và employee_code khớp. Không dùng NPP của một
-khách hàng mẫu làm NPP mặc định cho toàn bộ nhân viên. Mapping này chỉ bao phủ các
-mã trong mẫu, không tự mở rộng sang khách hàng/sản phẩm khác. Hai file không chứa
-hệ số quy đổi Chai → Thùng/Két; `Package=1 way` không phải quy cách đóng gói.
+File mẫu chỉ quy định cơ cấu 26 cột và định dạng, không cung cấp mapping dữ liệu.
+Đã bỏ mapping Vùng/SS/NPP/Loại KH trích từ các dòng mẫu. Báo cáo không lọc theo
+miền, nhân viên hoặc khách hàng mẫu. Vùng dùng chung `config/employee_regions.json`
+theo prefix `ma_nv_dat`, bao gồm Bắc/Trung/Nam; mã chưa biết giữ trống và ghi issue.
+SS/NPP chưa có nguồn xác nhận giữ trống; Tỉnh/Loại KH lấy từ DMS theo ID khách hàng.
+Danh mục sản phẩm người dùng cung cấp vẫn là nguồn Brand/Package/quy đổi chính thức.
 
 Danh mục Product được lấy tự động qua
 [findProduct](https://dms.mobiwork.vn/openapi/#/Product/findProduct) với phân trang,
