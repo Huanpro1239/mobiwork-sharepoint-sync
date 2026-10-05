@@ -50,6 +50,19 @@ class ProductionConfigIntegrityTests(unittest.TestCase):
     def test_bill_has_api_total_completeness_check(self):
         self.assertEqual(self.reports["bill"].get("total_path"), "total")
 
+    def test_promotion_bonus_snapshot_config_is_separate_from_historical_reports(self):
+        payload = json.loads(
+            (ROOT / "config" / "promotion_bonus.json").read_text(encoding="utf-8")
+        )
+        self.assertTrue(payload.get("enabled"))
+        self.assertEqual(payload.get("folder"), "06_BaoCaoTraThuong")
+        self.assertEqual(payload.get("filename"), "BaoCaoTraThuong_Current.xlsx")
+        self.assertTrue(payload.get("catalog_url", "").endswith("/OpenAPI/V1/PromotionBonus"))
+        self.assertTrue(
+            payload.get("report_url", "").endswith("/OpenAPI/V1/PromotionBonusReport")
+        )
+        self.assertLessEqual(int(payload.get("catalog_page_size", 0)), 200)
+
     def test_visit_region_master_has_only_supported_region_codes(self):
         payload = json.loads(
             (ROOT / "config" / "employee_regions.json").read_text(encoding="utf-8")
