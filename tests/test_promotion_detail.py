@@ -30,6 +30,23 @@ def config():
 
 
 class PromotionDetailTests(unittest.TestCase):
+    def test_internal_program_ids_resolve_on_sale_and_gift(self):
+        cfg = config()
+        client = Mock()
+        with patch.object(module, 'fetch_programs', return_value=[
+            {'_id': 'internal-id', 'name': '003/TB/GT/01/2026_Q4_CT TÍCH LŨY'},
+            {'_id': 'other-id', 'name': 'Chương trình miền Bắc'}]):
+            cfg = module.enrich_program_config(client, cfg)
+        sale = source(promotion='[{"id":"other-id"}]', ctkmFull_id='internal-id')
+        gift = source(stt=2, promotion='[]', ctkmFull_id='internal-id',
+                      is_km=True, loai_hang='Khuyến mãi')
+        report, _ = module.build_report(pd.DataFrame([sale, gift]), cfg)
+        self.assertEqual(report.iloc[0]['Mã CTKM'],
+                         '003/TB/GT/01/2026_Q4; Chương trình miền Bắc')
+        self.assertEqual(report.iloc[1]['Mã CTKM'], '003/TB/GT/01/2026_Q4')
+        self.assertEqual(list(report.columns), module.COLUMNS)
+        self.assertNotIn('internal-id', report.to_string())
+
     def test_template_does_not_restrict_regions_or_supply_business_metadata(self):
         cfg = module.load_config()
         self.assertEqual(cfg['employees'], {})

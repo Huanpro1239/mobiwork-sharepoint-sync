@@ -464,3 +464,12 @@ kết đó chưa được tự suy là thuộc chương trình. Cần đối chi
 đã đăng nhập trước khi xác nhận độ phủ của chương trình trả thưởng và các đơn
 tích lũy. Không phân bổ tổng thưởng khách hàng vào từng đơn hoặc gọi thưởng đạt
 được là hàng tặng thực tế.
+
+### Tên và mã CTKM dễ đọc trong báo cáo chi tiết
+
+Đầu ra `BaoCao` giữ đúng 26 cột theo cơ cấu mẫu. `fetch_program_catalogue=true`
+tra danh mục PromotionBonus để đổi ID nội bộ sang mã nghiệp vụ trong tên chương
+trình, hoặc giữ tên DMS khi không có mã theo quy ước. Áp dụng cho promotion.id,
+ctkmFull_id ở cả dòng bán và hàng tặng; không thêm cột kỹ thuật vào BaoCao.
+Mã khách hàng/nhân viên/sản phẩm vẫn là mã nghiệp vụ nguồn, với tên ở cột riêng.
+Không dùng dòng mẫu làm dữ liệu danh mục hoặc tự đặt tên khi ID chưa tra được.

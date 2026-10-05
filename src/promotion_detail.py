@@ -19,7 +19,7 @@ from data_cham_anh_export import _monthly_master_path
 from customer_catalogue import enrich_customer_config
 from main import load_reports
 from monthly_master import master_filename
-from promotion_bonus import _api_total, _expect_object_list, _frame
+from promotion_bonus import _api_total, _expect_object_list, _frame, fetch_programs, load_config as load_bonus_config
 from promotion_months import discover_bill_months, select_order_month
 from promotion_workbook import write_detail_workbook
 from mobiwork import MobiWorkClient
@@ -43,7 +43,7 @@ def load_config() -> dict[str, Any]:
     cfg = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
         raise ValueError("publish_enabled must be an explicit boolean")
-    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "allow_incomplete_publish"):
+    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "fetch_program_catalogue", "allow_incomplete_publish"):
         if type(cfg.get(flag, False)) is not bool:
             raise ValueError(f"{flag} must be an explicit boolean")
     for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
@@ -100,6 +100,19 @@ def program_code(value: str, cfg: dict[str, Any]) -> str:
     # Recognize the business-code convention in the supplied template, retaining _Q3.
     match = re.match(r"^(\d+/TB/GT/\d+/\d{4}(?:_Q[1-4])?)(?:_|$)", value)
     return match.group(1) if match else value
+
+
+def enrich_program_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Resolve internal program IDs to business codes/names from the DMS catalogue."""
+    result = json.loads(json.dumps(cfg))
+    programs = fetch_programs(client, load_bonus_config())
+    mapping = result.setdefault("program_codes", {})
+    for program in programs:
+        identity, name = text(program.get("_id")), text(program.get("name"))
+        if identity and name:
+            mapping.setdefault(identity, program_code(name, cfg))
+    result["program_catalogue_count"] = len(programs)
+    return result
 
 
 def is_gift(row: dict[str, Any]) -> bool:
@@ -186,7 +199,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         if name:
             codes.add(program_code(name, cfg))
         elif text(row.get("ctkmFull_id")):
-            codes.add(text(row["ctkmFull_id"]))
+            codes.add(program_code(text(row["ctkmFull_id"]), cfg))
 
     identities: dict[str, set[str]] = {}
     for row in rows:
@@ -237,7 +250,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         item["Mã CTKM"] = "; ".join(sorted(programs[order]))
         if gift:
             direct = text(row.get("ctkm")) or text(row.get("ctkmFull_ten_khuyen_mai"))
-            direct = program_code(direct, cfg) if direct else text(row.get("ctkmFull_id"))
+            direct = program_code(direct or text(row.get("ctkmFull_id")), cfg)
             item["Mã CTKM"] = direct or item["Mã CTKM"]
             if not direct:
                 issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
@@ -348,6 +361,9 @@ def run() -> dict[str, Any]:
             anchors = discover_bill_months(sharepoint, drive, bill,
                                           datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date())
         manifest["source_months"] = [anchor.strftime("%Y-%m") for anchor in anchors]
+        if cfg.get("fetch_program_catalogue", False):
+            cfg = enrich_program_config(MobiWorkClient.from_env(), cfg)
+            manifest["program_catalogue_count"] = cfg["program_catalogue_count"]
         if cfg.get("fetch_product_catalogue", False):
             cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
             manifest["product_catalogue_count"] = cfg["product_catalogue_count"]

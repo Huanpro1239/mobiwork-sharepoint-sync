@@ -3191,5 +3191,6 @@
       "130100014",
       "230100014"
     ]
-  }
+  },
+  "fetch_program_catalogue": true
 }
