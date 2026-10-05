@@ -198,6 +198,21 @@ jobs:
           DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED: ${{ github.event_name == 'schedule' && env.SYNC_SCOPE == 'today' }}
         run: python src/run_data_cham_anh.py
 
+      - name: Sync Promotion Bonus current snapshot
+        env:
+          PYTHONUNBUFFERED: "1"
+          LOG_LEVEL: "INFO"
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+          MOBIWORK_MAX_RETRIES: "8"
+          MOBIWORK_TIMEOUT_SECONDS: "120"
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_MAX_RETRIES: "6"
+          SHAREPOINT_TIMEOUT_SECONDS: "120"
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: python src/promotion_bonus.py
+
       - name: Publish run summary
         if: ${{ always() }}
         shell: bash
@@ -269,7 +284,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: mobiwork-sync-manifests-${{ github.run_id }}-${{ github.run_attempt }}
-          path: output/sync_manifest.json
+          path: |
+            output/sync_manifest.json
+            output/promotion_bonus_manifest.json
           if-no-files-found: ignore
           retention-days: 7
 
