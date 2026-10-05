@@ -378,3 +378,7 @@ mapping đã xác nhận trong config. Không suy ra Package từ ngành hàng h
 Catalogue hiện tại không chứng minh quy cách lịch sử nếu một SKU đã đổi đóng gói;
 đối với kỳ cũ cần xác nhận quy cách hoặc override phù hợp trong config. Unit test
 không gọi API thật. `fetch_product_catalogue=true` dùng secrets MobiWork hiện có.
+
+Nhận diện mã nghiệp vụ theo quy ước trong mẫu: `số/TB/GT/tháng/năm`, giữ hậu tố
+`_Q1.._Q4` nếu có. Chỉ tách phần tên dài khi khớp quy ước này; tên/mã khác giữ
+nguyên hoặc dùng `program_codes`, không cắt mọi chuỗi tại dấu `_`.

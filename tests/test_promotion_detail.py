@@ -212,3 +212,10 @@ class ProductCatalogueTests(unittest.TestCase):
         for payloads in cases:
             with self.subTest(payloads=payloads), self.assertRaises(ValueError):
                 module.enrich_product_config(FakeMobiWork(payloads), config())
+
+class PromotionBusinessCodeTests(unittest.TestCase):
+    def test_code_prefix_retains_quarter_suffix(self):
+        self.assertEqual(module.program_code('003/TB/GT/01/2026_Q3', {}), '003/TB/GT/01/2026_Q3')
+        self.assertEqual(module.program_code('003/TB/GT/01/2026_Q3_CHUONG_TRINH', {}), '003/TB/GT/01/2026_Q3')
+        self.assertEqual(module.program_code('576/TB/GT/10/2026_CHUONG_TRINH', {}), '576/TB/GT/10/2026')
+        self.assertEqual(module.program_code('custom_name', {}), 'custom_name')

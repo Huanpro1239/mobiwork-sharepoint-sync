@@ -4,6 +4,7 @@ import ast
 import json
 import logging
 import os
+import re
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
@@ -77,6 +78,15 @@ def promotion_list(value: Any) -> list[dict[str, Any]]:
     if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
         raise ValueError("promotion must contain an array of objects")
     return result
+
+
+def program_code(value: str, cfg: dict[str, Any]) -> str:
+    mapped = cfg.get("program_codes", {}).get(value)
+    if mapped:
+        return mapped
+    # Recognize the business-code convention in the supplied template, retaining _Q3.
+    match = re.match(r"^(\d+/TB/GT/\d+/\d{4}(?:_Q[1-4])?)(?:_|$)", value)
+    return match.group(1) if match else value
 
 
 def is_gift(row: dict[str, Any]) -> bool:
@@ -158,10 +168,10 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         for entry in promotion_list(row.get("promotion")):
             name = text(entry.get("ten_khuyen_mai")) or text(entry.get("id"))
             if name:
-                codes.add(cfg.get("program_codes", {}).get(name, name))
+                codes.add(program_code(name, cfg))
         name = text(row.get("ctkm")) or text(row.get("ctkmFull_ten_khuyen_mai"))
         if name:
-            codes.add(cfg.get("program_codes", {}).get(name, name))
+            codes.add(program_code(name, cfg))
         elif text(row.get("ctkmFull_id")):
             codes.add(text(row["ctkmFull_id"]))
 
@@ -212,7 +222,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         item["Mã CTKM"] = "; ".join(sorted(programs[order]))
         if gift:
             direct = text(row.get("ctkm")) or text(row.get("ctkmFull_ten_khuyen_mai"))
-            direct = cfg.get("program_codes", {}).get(direct, direct) if direct else text(row.get("ctkmFull_id"))
+            direct = program_code(direct, cfg) if direct else text(row.get("ctkmFull_id"))
             item["Mã CTKM"] = direct or item["Mã CTKM"]
             if not direct:
                 issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
