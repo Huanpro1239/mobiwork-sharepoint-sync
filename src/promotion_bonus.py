@@ -420,7 +420,7 @@ def run() -> dict[str, Any]:
             sharepoint.upload_json(
                 drive_id,
                 f"{cfg.folder}/_sync_state/promotion_bonus.json",
-                manifest,
+                {**manifest, "phase": "complete"},
             )
         manifest["phase"] = "complete"
         _write_manifest(manifest)

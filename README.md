@@ -89,6 +89,8 @@ Báo cáo trả thưởng là dataset snapshot riêng, cấu hình tại `config
 └─ TraThuong
 ```
 
+Tài liệu API chính thức: [Danh sách chương trình trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonus/findPromotionBonus) và [Báo cáo trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonusReport/findPromotionBonusReport). Chi tiết tham số và mapping nằm trong [data contract](docs/DATA_CONTRACT.md#promotion-bonus-snapshot-contract).
+
 Pipeline tự phân trang `/OpenAPI/V1/PromotionBonus` để lấy toàn bộ chương trình, sau đó gọi `/OpenAPI/V1/PromotionBonusReport` từng chương trình để giữ provenance chính xác. Snapshot được refresh trong workflow `MobiWork DMS Sync`; bootstrap/full-month rebuild 4 report lịch sử không giả lập backfill cho dataset này.
 
 `makh` của `new_customer` là mã nghiệp vụ và **không được giả định unique**: dữ liệu lịch sử đã có các record khác `ID` nhưng dùng lại cùng `makh`. Pipeline giữ đủ các record đó và dùng `ID` làm identity/upsert key. `order` và `bill` kiểm uniqueness header theo `ma_phieu`; detail kiểm theo `ma_phieu + stt`. `bill` còn đối chiếu `API total == fetched rows` trước khi chấp nhận dữ liệu.

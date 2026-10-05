@@ -22,6 +22,17 @@ Tài liệu này là hợp đồng dữ liệu giữa MobiWork DMS, pipeline đ�
 
 ### Promotion Bonus snapshot contract
 
+Nguồn contract: [findPromotionBonus](https://dms.mobiwork.vn/openapi/#/PromotionBonus/findPromotionBonus) và [findPromotionBonusReport](https://dms.mobiwork.vn/openapi/#/PromotionBonusReport/findPromotionBonusReport), đối chiếu ngày 2026-10-05. Host thực thi là `https://openapi.mobiwork.vn`; host `dms.mobiwork.vn` phục vụ tài liệu.
+
+| Operation | Endpoint GET | Tham số bắt buộc | Tham số tùy chọn |
+|---|---|---|---|
+| `findPromotionBonus` | `/OpenAPI/V1/PromotionBonus` | `page_size` (tối đa 200), `page_number` (từ 1) | `ma`, `fromdate`, `todate`, `ptype`, `isActive`, `isArchived` |
+| `findPromotionBonusReport` | `/OpenAPI/V1/PromotionBonusReport` | `id_ct` (tối đa 5 ID phân cách bằng dấu phẩy) | `projectID`, `assignTo`, `idcustomer`, `sttt` |
+
+Catalogue trả full document, gồm chi tiết chương trình trong `products`. Sheet `ChuongTrinh` giữ `products` dưới dạng JSON Unicode, bao gồm `khuyen_mai`; không bỏ chi tiết này hoặc tự tính lại mức thưởng. `ptype` dạng object được flatten thành các cột tương ứng. Không chuyển `startDate`/`endDate` thành ngày dựa chỉ vào giá trị ví dụ, vì schema không cam kết đơn vị timestamp.
+
+Luồng snapshot không truyền bộ lọc catalogue tùy chọn hoặc bộ lọc report tùy chọn để không loại bỏ chương trình/khách hàng. `fromdate`/`todate` (định dạng `dd/MM/yyyy`) thuộc catalogue; chúng không phải tham số as-of của report. API dùng Basic Auth với tài khoản Open API đã được phân quyền cho cả hai operation; credential chỉ lấy từ secrets hiện có. CI không tải Swagger hoặc thêm probe tài liệu.
+
 `PromotionBonusReport` không thuộc monthly-master contract ở trên. API bắt buộc `id_ct` (tối đa 5 id/lần) và không có tham số ngày/as-of, vì vậy pipeline không được gắn dữ liệu hiện tại vào partition lịch sử.
 
 Canonical output:

@@ -255,6 +255,30 @@ class PromotionBonusSafetyTests(unittest.TestCase):
                     else:
                         fetch_snapshot(client, config(), [{"_id": "a"}])
 
+    def test_documented_catalogue_products_survive_workbook_roundtrip(self):
+        import json
+        program = {
+            "_id": "6246ca92580d804c253bc22d", "name": "CT trả thưởng tháng 6",
+            "ptype": {"value": "1", "label": "Mua bán"},
+            "startDate": 1717200000000, "endDate": 1719791999999,
+            "isArchived": True,
+            "products": [{"_id": "product-1", "ma_san_pham": "SP001",
+                          "ten_san_pham": "Sản phẩm A", "khuyen_mai": []}],
+        }
+        client = FakeMobiWork([{"status": True, "total": 1, "data": [program]},
+                              {"status": True, "total": 0, "data": [],
+                               "arrChiTieu": [], "arrTraThuong": []}])
+        programs = fetch_programs(client, config())
+        frames = build_frames(fetch_snapshot(client, config(), programs))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_workbook(frames, "test.xlsx", Path(tmp))
+            catalogue = pd.read_excel(path, sheet_name="ChuongTrinh", engine="openpyxl")
+            self.assertEqual(json.loads(catalogue.iloc[0]["products"]), program["products"])
+            self.assertEqual(catalogue.iloc[0]["ptype_label"], "Mua bán")
+            self.assertEqual(catalogue.iloc[0]["startDate"], program["startDate"])
+        self.assertEqual(set(client.calls[0]["params"]), {"page_size", "page_number"})
+        self.assertEqual(client.calls[1]["params"], {"id_ct": program["_id"]})
+
     def test_invalid_report_program(self):
         with self.assertRaises(ValueError):
             fetch_snapshot(FakeMobiWork([]), config(), [{'_id': None}])
@@ -344,6 +368,7 @@ class PromotionBonusRunTests(unittest.TestCase):
                     args = sharepoint.upload_json.call_args.args
                     self.assertEqual(args[1], '06_BaoCaoTraThuong/_sync_state/promotion_bonus.json')
                     self.assertEqual(manifest['sharepoint_write_avoided'], noop)
+                    self.assertEqual(args[2]['phase'], 'complete')
                 return manifest
 
     def test_dry_run_builds_workbook_without_sharepoint(self):
