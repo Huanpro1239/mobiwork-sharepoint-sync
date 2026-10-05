@@ -110,6 +110,8 @@ class PromotionMonthTests(unittest.TestCase):
             self.assertEqual(sheet["L5"].data_type, "s")
             self.assertEqual(sheet["W5"].value, 1000)
             self.assertEqual(sheet["Z5"].value, 0)
+            self.assertEqual(sheet["Z5"].number_format, "#,##0")
+            self.assertEqual(sheet["W5"].number_format, "#,##0.00")
             self.assertEqual(sheet["P5"].data_type, "d")
             self.assertEqual(sheet.freeze_panes, "A5")
             self.assertEqual(sheet.auto_filter.ref, "A4:Z5")

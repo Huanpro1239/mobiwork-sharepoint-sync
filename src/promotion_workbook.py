@@ -59,7 +59,11 @@ def write_detail_workbook(frames, filename: str, month: date, output_dir: Path =
                         width = max(layout["widths"][cell.column - 1] - 2, 1)
                         lines = max(lines, sum(max(ceil(len(part) / width), 1) for part in str(cell.value or "").split("\n")))
                     if cell.column in {22, 23, 26}:
-                        cell.number_format = "#,##0.###" if cell.column != 23 else "#,##0.00"
+                        if cell.column == 23:
+                            cell.number_format = "#,##0.00"
+                        else:
+                            integer = isinstance(cell.value, (int, float)) and float(cell.value).is_integer()
+                            cell.number_format = "#,##0" if integer else "#,##0.######"
                     if cell.column == 16:
                         cell.number_format = "dd/mm/yyyy"
                 sheet.row_dimensions[row[0].row].height = min(400, 15 * lines)
