@@ -39,49 +39,42 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: TEMP probe MobiWork Swagger
+      - name: TEMP extract PromotionBonusReport schema
         shell: bash
         run: |
           python - <<'PY'
-          import re
-          import urllib.parse
+          import json
           import urllib.request
 
-          base = "https://dms.mobiwork.vn"
-          ui = base + "/openapi/"
+          url = "https://dms.mobiwork.vn/openapi/openapi.json?v=1.13"
+          req = urllib.request.Request(
+              url,
+              headers={"User-Agent": "Mozilla/5.0 GitHubActions schema probe"},
+          )
+          with urllib.request.urlopen(req, timeout=30) as resp:
+              spec = json.load(resp)
 
-          def fetch(url):
-              print(f"--- FETCH {url}")
-              req = urllib.request.Request(
-                  url,
-                  headers={"User-Agent": "Mozilla/5.0 GitHubActions schema probe"},
-              )
-              try:
-                  with urllib.request.urlopen(req, timeout=20) as resp:
-                      body = resp.read().decode("utf-8", "replace")
-                      print("STATUS", resp.status, "FINAL", resp.geturl(), "LEN", len(body))
-                      print(body[:12000])
-                      return body
-              except Exception as exc:
-                  print("ERROR", type(exc).__name__, exc)
-                  return ""
+          found = []
+          refs = set()
+          for path, methods in spec.get("paths", {}).items():
+              for method, op in methods.items():
+                  if not isinstance(op, dict):
+                      continue
+                  if (
+                      op.get("operationId") == "findPromotionBonusReport"
+                      or "PromotionBonusReport" in op.get("tags", [])
+                  ):
+                      found.append({"path": path, "method": method.upper(), "operation": op})
+                      blob = json.dumps(op)
+                      for token in blob.split('"'):
+                          if token.startswith("#/components/schemas/"):
+                              refs.add(token.rsplit("/", 1)[-1])
 
-          html = fetch(ui)
-          for src in re.findall(r'<script[^>]+src=["\']([^"\']+)', html, flags=re.I):
-              fetch(urllib.parse.urljoin(ui, src))
-
-          for path in [
-              "/openapi/v3/api-docs",
-              "/openapi/v2/api-docs",
-              "/openapi/api-docs",
-              "/openapi/swagger.json",
-              "/openapi/openapi.json",
-              "/v3/api-docs",
-              "/v2/api-docs",
-          ]:
-              body = fetch(base + path)
-              if "PromotionBonusReport" in body or "findPromotionBonusReport" in body:
-                  print("FOUND_PROMOTION_BONUS_SCHEMA_AT", base + path)
+          schemas = spec.get("components", {}).get("schemas", {})
+          print("PROMOTION_BONUS_OPERATIONS=")
+          print(json.dumps(found, ensure_ascii=False, indent=2))
+          print("PROMOTION_BONUS_SCHEMAS=")
+          print(json.dumps({name: schemas.get(name) for name in sorted(refs)}, ensure_ascii=False, indent=2))
           PY
 
       - name: Install dependencies
