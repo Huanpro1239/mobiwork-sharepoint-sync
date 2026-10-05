@@ -13,6 +13,7 @@ from typing import Any
 import pandas as pd
 
 from data_cham_anh_export import _monthly_master_path
+from customer_catalogue import enrich_customer_config
 from main import load_reports
 from monthly_master import master_filename
 from promotion_bonus import _api_total, _expect_object_list, _frame, write_workbook
@@ -36,6 +37,9 @@ def load_config() -> dict[str, Any]:
     cfg = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
         raise ValueError("publish_enabled must be an explicit boolean")
+    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue"):
+        if type(cfg.get(flag, False)) is not bool:
+            raise ValueError(f"{flag} must be an explicit boolean")
     for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
         mapping = cfg.get(key, {})
         if not isinstance(mapping, dict):
@@ -227,6 +231,13 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
             if not direct:
                 issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
         employee = cfg.get("employees", {}).get(text(row.get("ma_nv_dat")), {})
+        current_customer = cfg.get("customer_catalogue", {}).get(text(row.get("ID_khachhang")), {})
+        if current_customer.get("customer_code") and current_customer["customer_code"] != text(row.get("ma_kh")):
+            issue("Mã Khách hàng", "ID khách hàng khớp nhưng mã KH khác danh mục hiện tại")
+            current_customer = {}
+        for label in ("Tỉnh", "Loại KH", "Route", "Tên Khách hàng", "Địa chỉ", "Số ĐT"):
+            if not text(item[label]) and text(current_customer.get(label)):
+                item[label] = current_customer[label]
         customer = cfg.get("customers", {}).get(text(row.get("ID_khachhang")), {})
         code_mapping = cfg.get("customer_codes", {}).get(text(row.get("ma_kh")), {})
         if code_mapping:
@@ -304,6 +315,9 @@ def run() -> dict[str, Any]:
         if cfg.get("fetch_product_catalogue", False):
             cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
             manifest["product_catalogue_count"] = cfg["product_catalogue_count"]
+        if cfg.get("fetch_customer_catalogue", False):
+            cfg = enrich_customer_config(MobiWorkClient.from_env(), cfg)
+            manifest["customer_catalogue"] = cfg["customer_catalogue_audit"]
         reports = load_reports(ROOT / "config/reports.json")
         bill = next(r for r in reports if r.key == "bill" and r.enabled)
         anchors = month_anchors(incremental_target_dates(os.environ.get("SYNC_SCOPE", "today"),

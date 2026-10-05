@@ -410,3 +410,21 @@ nếu lỗi thì giữ nguyên config. Khi thành công, thay hệ số cũ củ
 file, giữ mapping nhân viên/khách hàng và các SKU ngoài file. ĐVT Chai dùng theo
 Bill đã kiểm tra; sản phẩm có `Brand 1=Lon` bổ sung cả ĐVT Lon. Tiền trước VAT
 vẫn tính bằng số lượng gốc, không nhân đơn giá với số thùng đã quy đổi.
+
+Customer catalogue dùng GET `/OpenAPI/V1/Customer`, độc lập với report khách hàng
+mở mới theo ngày. `fetch_customer_catalogue=true` tải phân trang theo ngày tạo
+từ `customer_catalogue_start_date` (01/01/1900) đến ngày hiện tại Việt Nam, không
+lọc active/nhân viên/phòng ban. Total, trang lặp và ID trùng được kiểm tra trước
+khi tạo report; không dừng ở trang ngắn nếu API không trả total.
+
+Nối `Customer.ID` với `Bill.ID_khachhang`, đồng thời kiểm tra `makh` nếu có;
+không nối theo tên hay mã KH đơn lẻ. `tinh_thanh_moi` bổ sung Tỉnh, `loai_kh`
+bổ sung Loại KH và `code_router` bổ sung Route. Tên/địa chỉ/điện thoại và các
+giá trị trên Bill chỉ bổ sung khi trống; mapping xác nhận trong config ưu tiên.
+Không suy SS/NPP từ `nv_pt`, `nhom_kh`, `kenh` hay địa chỉ. Catalogue là dữ liệu
+hiện tại, chưa chứng minh phân loại khách hàng tại thời điểm đơn lịch sử.
+
+Metadata khách hàng chỉ tồn tại trong bộ nhớ, không ghi vào config Git. Manifest
+lưu số lượng, tên trường, phạm vi ngày và khóa nối, không lưu tên/địa chỉ/điện thoại.
+Các giá trị này vẫn có trong workbook báo cáo theo mẫu. Thiếu ID hoặc không khớp
+được khách hàng vẫn ghi nhận các trường còn thiếu, không bịa giá trị thay thế.
