@@ -111,6 +111,13 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertNotIn('cron: "5 * * * *"', report)
         self.assertIn("DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED", report)
 
+    def test_report_sync_refreshes_promotion_bonus_snapshot(self):
+        report = self._read("mobiwork-sync.yml")
+
+        self.assertIn("run: python src/promotion_bonus.py", report)
+        self.assertIn("output/promotion_bonus_manifest.json", report)
+        self.assertIn("group: mobiwork-sharepoint-production", report)
+
     def test_production_sync_preflight_is_lightweight(self):
         report = self._read("mobiwork-sync.yml")
 
