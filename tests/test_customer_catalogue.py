@@ -72,7 +72,7 @@ class CustomerCatalogueTests(unittest.TestCase):
             [{"total": 2, "data": [customer(), customer(loai_kh="other")]}],
             [{"total": 2, "data": [customer()]}, {"total": 3, "data": []}],
             [{"total": 2, "data": [customer()]}, {"total": 2, "data": []}],
-            [{"data": [customer(loai_kh=["unexpected"])]}],
+            [{"data": [customer(ID=["unexpected"])]}],
             [{"data": None}],
         ]
         for payloads in cases:
@@ -83,6 +83,15 @@ class CustomerCatalogueTests(unittest.TestCase):
         cfg = enrich_customer_config(self.client([{"total": 1, "data": [customer(ID=None)]}]), config())
         self.assertEqual(cfg["customer_catalogue"], {})
         self.assertEqual(cfg["customer_catalogue_audit"]["unkeyed_rows"], 1)
+
+    def test_structured_routes_are_not_guessed_and_other_metadata_is_kept(self):
+        cfg = enrich_customer_config(self.client([{"total": 1, "data": [
+            customer(code_router=["R1", "R2"])]}]), config())
+        self.assertEqual(cfg["customer_catalogue"]["customer-id"]["Route"], "")
+        self.assertEqual(cfg["customer_catalogue"]["customer-id"]["Loại KH"], "1b")
+        self.assertEqual(cfg["customer_catalogue_audit"]["structured_fields_not_mapped"], {"code_router": 1})
+        report, _ = build_report(pd.DataFrame([source(tuyen_code="ORDER_ROUTE")]), cfg)
+        self.assertEqual(report.iloc[0]["Route"], "ORDER_ROUTE")
 
     def test_invalid_start_date_fails_before_request(self):
         client = self.client([])

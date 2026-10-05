@@ -419,7 +419,9 @@ khi tạo report; không dừng ở trang ngắn nếu API không trả total.
 
 Nối `Customer.ID` với `Bill.ID_khachhang`, đồng thời kiểm tra `makh` nếu có;
 không nối theo tên hay mã KH đơn lẻ. `tinh_thanh_moi` bổ sung Tỉnh, `loai_kh`
-bổ sung Loại KH và `code_router` bổ sung Route. Tên/địa chỉ/điện thoại và các
+bổ sung Loại KH và `code_router` dạng chuỗi bổ sung Route. Trường danh sách/object
+được đếm ở `structured_fields_not_mapped`, không tự chọn tuyến của đơn từ danh
+sách tuyến khách hàng hiện tại. Tên/địa chỉ/điện thoại và các
 giá trị trên Bill chỉ bổ sung khi trống; mapping xác nhận trong config ưu tiên.
 Không suy SS/NPP từ `nv_pt`, `nhom_kh`, `kenh` hay địa chỉ. Catalogue là dữ liệu
 hiện tại, chưa chứng minh phân loại khách hàng tại thời điểm đơn lịch sử.

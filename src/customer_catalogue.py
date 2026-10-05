@@ -31,6 +31,7 @@ def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[
     customers: dict[str, Any] = {}
     seen_pages: set[str] = set()
     fields: set[str] = set()
+    structured_fields: dict[str, int] = {}
     expected, count, unkeyed = None, 0, 0
     for page in range(1, 10_001):
         payload = client.get_json("https://openapi.mobiwork.vn/OpenAPI/V1/Customer",
@@ -53,7 +54,15 @@ def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[
             if not identity:
                 unkeyed += 1
                 continue
-            metadata = {label: value(row, source) for label, source in FIELDS.items()}
+            metadata = {}
+            for label, source in FIELDS.items():
+                if isinstance(row.get(source), (dict, list, bool)):
+                    # Customer routes can be arrays. A current list of assigned routes
+                    # does not identify the route used by a historical order.
+                    structured_fields[source] = structured_fields.get(source, 0) + 1
+                    metadata[label] = ""
+                else:
+                    metadata[label] = value(row, source)
             metadata["customer_code"] = value(row, "makh")
             if identity in customers:
                 raise ValueError("Duplicate Customer catalogue ID; refusing ambiguous mapping")
@@ -68,6 +77,7 @@ def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[
     result["customer_catalogue"] = customers
     result["customer_catalogue_audit"] = {"count": len(customers), "unkeyed_rows": unkeyed,
                                           "source_rows": count, "fields": sorted(fields),
+                                          "structured_fields_not_mapped": structured_fields,
                                           "from_date": start, "to_date": end,
                                           "date_type": "cdate", "join_key": "ID=ID_khachhang"}
     return result
