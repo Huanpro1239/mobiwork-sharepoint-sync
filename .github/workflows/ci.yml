@@ -43,7 +43,6 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          import json
           import urllib.request
 
           url = "https://dms.mobiwork.vn/openapi/openapi.json?v=1.13"
@@ -52,29 +51,14 @@ jobs:
               headers={"User-Agent": "Mozilla/5.0 GitHubActions schema probe"},
           )
           with urllib.request.urlopen(req, timeout=30) as resp:
-              spec = json.load(resp)
+              body = resp.read().decode("utf-8", "replace")
 
-          found = []
-          refs = set()
-          for path, methods in spec.get("paths", {}).items():
-              for method, op in methods.items():
-                  if not isinstance(op, dict):
-                      continue
-                  if (
-                      op.get("operationId") == "findPromotionBonusReport"
-                      or "PromotionBonusReport" in op.get("tags", [])
-                  ):
-                      found.append({"path": path, "method": method.upper(), "operation": op})
-                      blob = json.dumps(op)
-                      for token in blob.split('"'):
-                          if token.startswith("#/components/schemas/"):
-                              refs.add(token.rsplit("/", 1)[-1])
-
-          schemas = spec.get("components", {}).get("schemas", {})
-          print("PROMOTION_BONUS_OPERATIONS=")
-          print(json.dumps(found, ensure_ascii=False, indent=2))
-          print("PROMOTION_BONUS_SCHEMAS=")
-          print(json.dumps({name: schemas.get(name) for name in sorted(refs)}, ensure_ascii=False, indent=2))
+          for needle in ["findPromotionBonusReport", '"PromotionBonusReport"']:
+              idx = body.find(needle)
+              print(f"NEEDLE={needle} INDEX={idx}")
+              if idx >= 0:
+                  print(body[max(0, idx - 12000): idx + 22000])
+                  print("END_PROMOTION_BONUS_SNIPPET")
           PY
 
       - name: Install dependencies
