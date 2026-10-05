@@ -192,3 +192,9 @@ coverage report
 - Runbook: [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
 - Data contract: [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md)
 - Security: [`SECURITY.md`](SECURITY.md)
+
+Báo cáo chi tiết CTKM theo KH được build riêng bởi `src/promotion_detail.py` từ
+chi tiết Bill, theo 26 cột mẫu. W là tiền trước VAT; Z là hàng tặng thực tế. Một
+đơn có nhiều CTKM được ghi chung một ô ở dòng bán, giữ mỗi dòng bán đúng một lần;
+hàng tặng là dòng riêng để không nhân đôi số liệu. Xem quy tắc mapping, ĐVT và gate
+publish tại [Operations](docs/OPERATIONS.md#báo-cáo-chi-tiết-ctkm-theo-khách-hàng).

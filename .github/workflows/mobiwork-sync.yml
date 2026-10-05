@@ -214,6 +214,15 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/promotion_bonus.py
 
+      - name: Build promotion detail report
+        id: promotion_detail
+        env:
+          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
+          SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
+          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: python src/promotion_detail.py
+
       - name: Publish run summary
         if: ${{ always() }}
         shell: bash
@@ -291,6 +300,17 @@ jobs:
           if bonus.get("error"):
               lines.append(f"- Promotion Bonus error: `{bonus['error']}`")
 
+          detail_path = Path("output/promotion_detail_manifest.json")
+          if detail_path.exists():
+              detail = json.loads(detail_path.read_text(encoding="utf-8"))
+              lines.extend(["", "## Promotion detail report", "",
+                            f"- Status: **{detail.get('status', 'unknown')}**",
+                            f"- SharePoint publish enabled: **{detail.get('publish_enabled', False)}**"])
+              for result in detail.get("results", []):
+                  lines.append(f"- {result['month']}: {result['rows']} rows; {result['issues']} missing mappings/values; source={result['source_scope']}")
+              if detail.get("error"):
+                  lines.append(f"- Error: `{detail['error']}`")
+
           if lines:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
                   handle.write("\n".join(lines) + "\n")
@@ -304,6 +324,7 @@ jobs:
           path: |
             output/sync_manifest.json
             output/promotion_bonus_manifest.json
+            output/promotion_detail_manifest.json
           if-no-files-found: ignore
           retention-days: 7
 

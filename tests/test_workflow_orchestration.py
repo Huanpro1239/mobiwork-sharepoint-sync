@@ -265,3 +265,15 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
                     self.assertIn(label, content)
                 if status == 'failed':
                     self.assertIn('report incomplete', content)
+
+class PromotionDetailWorkflowTests(unittest.TestCase):
+    def test_detail_build_runs_after_sources_and_preserves_snapshot(self):
+        text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
+        self.assertLess(text.index('run: python src/run_all_reports.py'), text.index('run: python src/promotion_detail.py'))
+        self.assertLess(text.index('run: python src/promotion_bonus.py'), text.index('run: python src/promotion_detail.py'))
+        self.assertIn('output/promotion_detail_manifest.json', text)
+        self.assertIn('## Promotion detail report', text)
+        self.assertIn('path: output/*.xlsx', text)
+        import json
+        cfg = json.loads((ROOT / 'config/promotion_detail.json').read_text(encoding='utf-8'))
+        self.assertIs(cfg['publish_enabled'], False)

@@ -1,0 +1,259 @@
+from __future__ import annotations
+
+import ast
+import json
+import logging
+import os
+from decimal import Decimal, InvalidOperation
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from data_cham_anh_export import _monthly_master_path
+from main import load_reports
+from monthly_master import master_filename
+from promotion_bonus import _frame, write_workbook
+from run_all_reports import incremental_target_dates
+from run_data_cham_anh import month_anchors
+from sharepoint_semantic import SemanticSharePointClient
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = ROOT / "config/promotion_detail.json"
+COLUMNS = ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Route",
+           "Tên Nhân viên", "Mã NV", "Mã CTKM", "Mã Khách hàng", "Tên Khách hàng",
+           "Địa chỉ", "Số ĐT", "Loại KH", "Ngày Đơn hàng", "Mã Đơn hàng", "Brand",
+           "Package", "Mã sản phẩm", "Tên Sản phẩm", "Số lượng SELL-OUT", "THÀNH TIỀN",
+           "Sản phẩm Tặng", "Tên Sản phẩm Tặng", "Số lượng Khuyến mãi"]
+LOG = logging.getLogger("promotion_detail")
+
+
+def load_config() -> dict[str, Any]:
+    path = Path(os.environ.get("PROMOTION_DETAIL_CONFIG", str(CONFIG)))
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
+        raise ValueError("publish_enabled must be an explicit boolean")
+    for key in ("employees", "customers", "products", "unit_conversions", "program_codes"):
+        mapping = cfg.get(key, {})
+        if not isinstance(mapping, dict):
+            raise ValueError(f"{key} must be an object")
+        for value in mapping.values():
+            if key == "program_codes":
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError("Program code mappings must be nonempty strings")
+            elif not isinstance(value, dict):
+                raise ValueError(f"{key} mapping entries must be objects")
+    return cfg
+
+
+def text(value: Any) -> str:
+    if value is None or (not isinstance(value, (list, dict)) and pd.isna(value)):
+        return ""
+    return str(value).strip()
+
+
+def number(value: Any) -> Decimal:
+    try:
+        result = Decimal(text(value))
+    except InvalidOperation as exc:
+        raise ValueError("Missing or invalid numeric source value") from exc
+    if not result.is_finite():
+        raise ValueError("Non-finite numeric source value")
+    return result
+
+
+def promotion_list(value: Any) -> list[dict[str, Any]]:
+    if not text(value):
+        return []
+    if isinstance(value, list):
+        result = value
+    else:
+        try:
+            result = json.loads(str(value))
+        except ValueError:
+            result = ast.literal_eval(str(value))
+    if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+        raise ValueError("promotion must contain an array of objects")
+    return result
+
+
+def is_gift(row: dict[str, Any]) -> bool:
+    flag = text(row.get("is_km")).casefold()
+    if flag not in {"", "true", "false", "1", "0"}:
+        raise ValueError("Unrecognized is_km source flag")
+    label = text(row.get("loai_hang")).casefold()
+    if flag in {"false", "0"} and label == "khuyến mãi":
+        raise ValueError("Conflicting gift source flags")
+    return flag in {"true", "1"} or label == "khuyến mãi"
+
+
+def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    rows = detail.to_dict("records")
+    programs: dict[str, set[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        order = text(row.get("ma_phieu"))
+        line = text(row.get("stt"))
+        if not order or not line:
+            raise ValueError("Bill detail requires ma_phieu and stt")
+        key = (order, line)
+        if key in seen:
+            raise ValueError("Duplicate bill line; refusing inflated totals")
+        seen.add(key)
+        codes = programs.setdefault(order, set())
+        for entry in promotion_list(row.get("promotion")):
+            name = text(entry.get("ten_khuyen_mai")) or text(entry.get("id"))
+            if name:
+                codes.add(cfg.get("program_codes", {}).get(name, name))
+        name = text(row.get("ctkm")) or text(row.get("ctkmFull_ten_khuyen_mai"))
+        if name:
+            codes.add(cfg.get("program_codes", {}).get(name, name))
+        elif text(row.get("ctkmFull_id")):
+            codes.add(text(row["ctkmFull_id"]))
+
+    output, issues = [], []
+    for row in rows:
+        order = text(row["ma_phieu"])
+        if not programs[order]:
+            continue
+        gift = is_gift(row)
+        if gift:
+            row = dict(row)
+            for field in ("ma_sp", "ten_sp", "so_luong", "ma_dvt", "ten_dvt"):
+                if not text(row.get(field)):
+                    row[field] = row.get(f"{field}_km")
+        sku = text(row.get("ma_sp"))
+        unit = text(row.get("ten_dvt")) or text(row.get("ma_dvt"))
+        item = dict.fromkeys(COLUMNS, None)
+        key = {"Mã Đơn hàng": order, "Dòng nguồn": text(row["stt"])}
+
+        def issue(field: str, reason: str, key=key, sku=sku, unit=unit, row=row) -> None:
+            issues.append({**key, "Trường": field, "Lý do": reason,
+                           "Mã SP nguồn": sku, "ĐVT nguồn": unit,
+                           "Số lượng nguồn": row.get("so_luong")})
+
+        if not sku:
+            issue("Mã sản phẩm", "Thiếu mã sản phẩm nguồn")
+        aliases = {"Route": "tuyen_code", "Tên Nhân viên": "ten_nguoi_dat",
+                   "Mã NV": "ma_nv_dat", "Mã Khách hàng": "ma_kh", "Tên Khách hàng": "ten_kh",
+                   "Địa chỉ": "dia_chi", "Số ĐT": "sdt", "Loại KH": "loai_kh"}
+        for label, source in aliases.items():
+            item[label] = text(row.get(source)) or None
+        item["Mã Đơn hàng"] = order
+        item["Ngày Đơn hàng"] = row.get("ngay_dat") if text(row.get("ngay_dat")) else row.get("ngay_ban_hang")
+        if not text(item["Ngày Đơn hàng"]):
+            issue("Ngày Đơn hàng", "Thiếu ngày đơn hàng nghiệp vụ")
+            item["Ngày Đơn hàng"] = None
+        else:
+            try:
+                item["Ngày Đơn hàng"] = pd.Timestamp(item["Ngày Đơn hàng"]).to_pydatetime()
+                if item["Ngày Đơn hàng"].tzinfo is not None:
+                    raise ValueError("Ngày bán hàng có timezone chưa quy đổi")
+            except (ValueError, TypeError):
+                issue("Ngày Đơn hàng", "Ngày nghiệp vụ không hợp lệ")
+                item["Ngày Đơn hàng"] = None
+        item["Mã CTKM"] = "; ".join(sorted(programs[order]))
+        if gift:
+            direct = text(row.get("ctkm")) or text(row.get("ctkmFull_ten_khuyen_mai"))
+            direct = cfg.get("program_codes", {}).get(direct, direct) if direct else text(row.get("ctkmFull_id"))
+            item["Mã CTKM"] = direct or item["Mã CTKM"]
+            if not direct:
+                issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
+        employee = cfg.get("employees", {}).get(text(row.get("ma_nv_dat")), {})
+        customer = cfg.get("customers", {}).get(text(row.get("ID_khachhang")), {})
+        product = cfg.get("products", {}).get(sku, {})
+        for mapping in (employee, customer, product):
+            for label, value in mapping.items():
+                if label in {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"}:
+                    item[label] = value
+        for label in ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"]:
+            if not text(item[label]):
+                issue(label, "Thiếu mapping danh mục")
+        quantity_field = "Số lượng Khuyến mãi" if gift else "Số lượng SELL-OUT"
+        try:
+            quantity = number(row.get("so_luong"))
+            if unit.casefold() in {"thùng", "két", "bình"}:
+                converted = quantity
+            else:
+                conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}")
+                if not isinstance(conversion, dict) or conversion.get("target_unit", "").casefold() not in {"thùng", "két", "bình"}:
+                    raise ValueError("Thiếu quy đổi sang KÉT/THÙNG/BÌNH")
+                factor = number(conversion.get("factor"))
+                if factor <= 0:
+                    raise ValueError("Hệ số quy đổi phải dương")
+                converted = quantity * factor
+            item[quantity_field] = float(converted)
+        except ValueError as exc:
+            issue(quantity_field, str(exc))
+        if gift:
+            item["Sản phẩm Tặng"] = sku
+            item["Tên Sản phẩm Tặng"] = text(row.get("ten_sp"))
+        else:
+            item["Mã sản phẩm"] = sku
+            item["Tên Sản phẩm"] = text(row.get("ten_sp"))
+            try:
+                item["THÀNH TIỀN"] = float(number(row.get("so_luong")) * number(row.get("gia_truoc_vat")))
+            except ValueError as exc:
+                issue("THÀNH TIỀN", str(exc))
+        output.append(item)
+    report = _frame(output, "BaoCao").reindex(columns=COLUMNS)
+    return report, _frame(issues, "CanBoSung")
+
+
+def run() -> dict[str, Any]:
+    dry = os.environ.get("DRY_RUN", "false").casefold() == "true"
+    manifest: dict[str, Any] = {"dataset": "promotion_detail", "dry_run": dry,
+                               "status": "running", "results": []}
+    manifest_path = Path("output/promotion_detail_manifest.json")
+    try:
+        cfg = load_config()
+        reports = load_reports(ROOT / "config/reports.json")
+        bill = next(r for r in reports if r.key == "bill" and r.enabled)
+        anchors = month_anchors(incremental_target_dates(os.environ.get("SYNC_SCOPE", "today"),
+                                                       int(os.environ.get("LOOKBACK_DAYS", "1"))))
+        sharepoint, drive = None, ""
+        if not dry:
+            sharepoint = SemanticSharePointClient.from_env()
+            drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
+            if not drive:
+                drive = sharepoint.get_drive_id(sharepoint.get_site_id())
+        prepared = []
+        for anchor in anchors:
+            if dry:
+                source = Path("output") / master_filename(bill.name, anchor)
+                content = source.read_bytes()
+            else:
+                content = sharepoint.download_file_bytes(drive, _monthly_master_path(bill, anchor))
+                if not content:
+                    raise ValueError("Required bill monthly master missing")
+            # dtype=object preserves identifiers and source cell values.
+            detail = pd.read_excel(BytesIO(content), sheet_name="ChiTietSP", dtype=object)
+            report, issues = build_report(detail, cfg)
+            path = write_workbook({"BaoCao": report, "CanBoSung": issues},
+                                  f"BaoCaoChiTietCTKM_{anchor:%Y-%m}.xlsx")
+            result = {"month": f"{anchor:%Y-%m}", "rows": len(report), "issues": len(issues),
+                      "filename": path.name, "source_scope": "requested_dates" if dry else "monthly_master"}
+            manifest["results"].append(result)
+            prepared.append((anchor, path, result))
+        incomplete = any(result["issues"] for _, _, result in prepared)
+        if incomplete and not dry and cfg.get("publish_enabled", False):
+            raise ValueError("CTKM report needs mappings; see CanBoSung sheet. Nothing published.")
+        if not dry and cfg.get("publish_enabled", False):
+            for anchor, path, result in prepared:
+                uploaded = sharepoint.upload_file(drive, path, f"07_BaoCaoChiTietCTKM/{anchor:%Y}/{anchor:%m}")
+                result["upload_skipped"] = bool(uploaded.get("upload_skipped"))
+        manifest["publish_enabled"] = bool(cfg.get("publish_enabled", False))
+        manifest["status"] = "needs_mapping" if incomplete else "success"
+        return manifest
+    except Exception as exc:
+        manifest.update(status="failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    finally:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    run()

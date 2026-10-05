@@ -312,3 +312,51 @@ A state JSON upload failure also fails the local manifest/workflow; the already
 verified workbook can have been published, and the next run retries state upload.
 Retain PR #91 as Draft until the authenticated dry-run has passed. SharePoint/OIDC
 permissions and live semantic no-op still require a non-dry-run production check.
+
+## Báo cáo chi tiết CTKM theo khách hàng
+
+`src/promotion_detail.py` chạy sau Promotion Bonus trong `MobiWork DMS Sync`.
+Nguồn là `ChiTietSP` của monthly master Bill, không phải kết quả trả thưởng lũy kế.
+Production đọc master từ SharePoint; dry-run đọc workbook local do report sync
+vừa build (chỉ các ngày được yêu cầu, không tuyên bố đủ cả tháng).
+
+Output local/artifact: `BaoCaoChiTietCTKM_YYYY-MM.xlsx`:
+- `BaoCao`: 26 cột theo mẫu khách hàng cung cấp;
+- `CanBoSung`: các trường/mapping còn thiếu, khóa đơn/dòng và ĐVT/sản lượng nguồn.
+
+Quy tắc đã xác nhận:
+- Mỗi dòng bán xuất một lần; cột J liệt kê các CTKM xuất hiện trên đơn, không
+  khẳng định từng SKU được hưởng mọi CTKM đó.
+- Dòng hàng tặng xuất riêng, cột X/Y/Z là sản phẩm/số lượng tặng thực tế. Không
+  phân bổ tổng thưởng từ PromotionBonusReport vào đơn. Dòng tặng không lặp lại
+  SELL-OUT và thành tiền của dòng bán; báo cáo không thực hiện Cartesian join.
+- W là số lượng nguồn × `gia_truoc_vat` (trước VAT, chưa trừ chiết khấu). Không lấy
+  giá sau VAT hoặc tự phân bổ chiết khấu cấp đơn. Thiếu đơn giá trước VAT là thiếu
+  dữ liệu, không phải tiền hàng bằng 0.
+- Ngày đơn dùng `ngay_dat` (fallback `ngay_ban_hang` nếu thiếu); nhân viên dùng người đặt (`ma_nv_dat`). Giữ nguyên
+  trạng thái đơn của nguồn, chưa tự suy đoán mã trạng thái hủy/trả hàng.
+- ĐVT Thùng/Két/Bình giữ nguyên. Chai hoặc ĐVT khác cần mapping SKU + ĐVT nguồn;
+  chưa có hệ số thì để trống số lượng chuẩn và ghi issue, không ngầm dùng 24 chai.
+- Giữ tên CTKM đầy đủ khi chưa có mapping mã. Không cắt tên ở dấu `_`, vì hậu tố
+  như `_Q3` có ý nghĩa. Có thể ánh xạ tên/ID sang mã bằng `program_codes`.
+
+Mapping ở `config/promotion_detail.json`: `employees` keyed by `ma_nv_dat`,
+`customers` keyed by `ID_khachhang`, `products` keyed by `ma_sp`; giá trị là object
+với tên cột đầu ra (Vùng/Tỉnh/SS Code/SS Name/DB Code/Tên NPP/Brand/Package/Loại KH).
+`unit_conversions` keyed by `SKU|ĐVT nguồn`, value:
+`{"target_unit": "Thùng", "factor": "0.04166666666666666666666666667"}`.
+Ví dụ hệ số chỉ minh họa 1/24; phải thay bằng quy cách chính thức cho đúng SKU.
+Không đưa credential hoặc dữ liệu khách hàng đầy đủ vào Git; chỉ dùng mapping
+nghiệp vụ đã được phép lưu trữ trong config, hoặc cấu hình runtime riêng.
+
+`publish_enabled=false` hiện tại: workflow tự tạo báo cáo và danh sách còn thiếu,
+nhưng chưa ghi báo cáo này lên SharePoint. Sau khi mapping/định nghĩa dữ liệu được
+xác nhận và dry-run không còn issue, đặt `publish_enabled=true`. Production sẽ
+kiểm toàn bộ tháng chuẩn bị trước khi upload, từ chối publish nếu có issue. Folder:
+`07_BaoCaoChiTietCTKM/YYYY/MM/`. Các upload dùng semantic no-op/staged verification
+hiện có. Lỗi không rollback 4 report hay Promotion Bonus đã publish trước đó.
+Audit: `output/promotion_detail_manifest.json`; Summary hiển thị `needs_mapping`
+thay vì báo dữ liệu đã chuẩn khi thiếu thông tin. Đây là báo cáo phát sinh từ đơn,
+không thay thế hoặc thêm history cho Promotion Bonus.
+
+Có thể chọn config runtime riêng bằng `PROMOTION_DETAIL_CONFIG` để không đưa mapping khách hàng vào Git.
