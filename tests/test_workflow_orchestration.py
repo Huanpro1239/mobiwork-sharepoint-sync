@@ -223,8 +223,13 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
     def test_bonus_failure_and_dry_run_artifacts(self):
         text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
         bonus = text.split('      - name: Sync Promotion Bonus current snapshot')[1].split('      - name: Publish run summary')[0]
-        self.assertNotIn('continue-on-error', bonus)
-        self.assertNotIn('if:', bonus)
+        # Promotion steps are isolated from the 4-report sync and skip intraday refreshes.
+        self.assertIn('continue-on-error: true', bonus)
+        self.assertIn("if: ${{ github.event_name != 'schedule' || env.SYNC_SCOPE != 'today' }}", bonus)
+        detail = text.split('      - name: Build promotion detail report')[1].split('      - name: Publish run summary')[0]
+        self.assertIn('continue-on-error: true', detail)
+        self.assertIn("env.SYNC_SCOPE != 'today'", detail)
+        self.assertIn('PROMOTION_DETAIL_OUTCOME', text)
         shared = text.split('\nenv:\n')[1].split('\njobs:')[0]
         self.assertIn('DRY_RUN:', shared)
         self.assertIn('MOBIWORK_TOKEN:', shared)

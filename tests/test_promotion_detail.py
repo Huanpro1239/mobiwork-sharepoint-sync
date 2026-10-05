@@ -246,3 +246,12 @@ class PromotionGiftUnitTests(unittest.TestCase):
         trace = module.unit_trace(detail, report, config())
         self.assertEqual(trace.iloc[0]['ĐVT báo cáo'], 'Cái')
         self.assertEqual(trace.iloc[0]['Hệ số'], 1)
+
+
+class UnicodeUnitTests(unittest.TestCase):
+    def test_decomposed_pack_unit_is_not_reported_as_missing_conversion(self):
+        import unicodedata
+        report, issues = module.build_report(
+            pd.DataFrame([source(ten_dvt=unicodedata.normalize("NFD", "Thùng"), so_luong=3)]), config())
+        self.assertEqual(report.iloc[0]["Số lượng SELL-OUT"], 3.0)
+        self.assertNotIn("Số lượng SELL-OUT", issues.get("Trường", pd.Series(dtype=object)).tolist())

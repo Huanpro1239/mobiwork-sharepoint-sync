@@ -174,7 +174,7 @@ Sheet `Data_anh` có một dòng cho mỗi link ảnh viếng thăm (link gốc 
 
 ## Báo cáo trả thưởng
 
-Trong mỗi lần `MobiWork DMS Sync`, sau khi luồng report chính và Data chấm ảnh hoàn tất, `src/promotion_bonus.py` refresh snapshot:
+Trong lần `MobiWork DMS Sync` lúc 09:00 và các lần chạy tay/nightly (không chạy ở các lần refresh `today` trong ngày), sau khi luồng report chính và Data chấm ảnh hoàn tất, `src/promotion_bonus.py` refresh snapshot:
 
 ```text
 06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
@@ -307,7 +307,7 @@ values. Strings beginning with `=` remain literal source data.
 
 Local workbook replacement happens only after a complete staged build. SharePoint
 uses the existing semantic comparison and verified staged replacement/rollback.
-Promotion Bonus failure fails the workflow without undoing earlier report writes.
+Promotion Bonus/CTKM failure does not fail the workflow (`continue-on-error`): the 4 report sync stays green for operations-health, and the run shows a `::warning` plus a ⚠️ line in the Job Summary. Earlier report writes are never undone.
 A state JSON upload failure also fails the local manifest/workflow; the already
 verified workbook can have been published, and the next run retries state upload.
 Retain PR #91 as Draft until the authenticated dry-run has passed. SharePoint/OIDC
@@ -315,7 +315,7 @@ permissions and live semantic no-op still require a non-dry-run production check
 
 ## Báo cáo chi tiết CTKM theo khách hàng
 
-`src/promotion_detail.py` chạy sau Promotion Bonus trong `MobiWork DMS Sync`.
+`src/promotion_detail.py` chạy sau Promotion Bonus trong `MobiWork DMS Sync` (cùng điều kiện: 09:00, chạy tay, nightly; lỗi không làm đỏ sync). Mất khoảng 6 phút do tải toàn bộ danh mục Customer/Product, nên không chạy ở các lần refresh trong ngày.
 Nguồn là `ChiTietSP` của monthly master Bill, không phải kết quả trả thưởng lũy kế.
 Production đọc master từ SharePoint; dry-run đọc workbook local do report sync
 vừa build (chỉ các ngày được yêu cầu, không tuyên bố đủ cả tháng).
@@ -443,3 +443,5 @@ Nhánh thử nghiệm vẫn cần OIDC subject được Entra tin cậy; dùng c
 không làm token của nhánh thử nghiệm thành token nhánh production. Chưa merge
 PR thì lịch main chưa có các bước mới. Không đổi subject GitHub hay chạy mã nhánh
 thử nghiệm dưới token main để bỏ qua kiểm tra tin cậy.
+
+Danh mục Customer phân trang theo ngày tạo nên trang có thể chồng nhau khi khách mới được tạo trong lúc tải: dòng trùng `ID` giống hệt được bỏ qua (đếm ở `exact_duplicate_rows`), trùng `ID` khác nội dung vẫn fail. Mọi chuỗi nguồn được chuẩn hóa Unicode NFC trước khi so sánh ĐVT/mã, để "Thùng" dạng tổ hợp (NFD) không bị báo thiếu quy đổi.

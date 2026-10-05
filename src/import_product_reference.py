@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -47,7 +48,7 @@ def read_reference(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
                 if sku in products and products[sku] != metadata:
                     raise ValueError(f"Conflicting reference metadata for SKU={sku}")
                 products[sku] = metadata
-            unit = str(values["ĐVT"] or "").strip()
+            unit = unicodedata.normalize("NFC", str(values["ĐVT"] or "")).strip()
             if not unit and values["Quy cách"] is None:
                 # Semi-finished products can have brand metadata without a pack definition.
                 continue

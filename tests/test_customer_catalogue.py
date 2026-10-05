@@ -24,6 +24,23 @@ class CustomerCatalogueTests(unittest.TestCase):
         client.get_json.side_effect = payloads
         return client
 
+    def test_identical_overlap_row_collapses_but_conflict_fails(self):
+        second = customer(ID="customer-2", makh="KH02")
+        # Page 2 overlaps page 1 by one identical row (new customer inserted mid-fetch).
+        client = self.client([{"data": [customer()]}, {"data": [customer(), second]}, {"data": []}])
+        result = enrich_customer_config(client, config())
+        self.assertEqual(result["customer_catalogue_audit"]["count"], 2)
+        self.assertEqual(result["customer_catalogue_audit"]["exact_duplicate_rows"], 1)
+        conflicting = self.client([{"data": [customer()]}, {"data": [customer(tenkh="Other"), second]}])
+        with self.assertRaisesRegex(ValueError, "Duplicate Customer catalogue ID"):
+            enrich_customer_config(conflicting, config())
+
+    def test_decomposed_unicode_is_normalized(self):
+        import unicodedata
+        client = self.client([{"total": 1, "data": [customer(tinh_thanh_moi=unicodedata.normalize("NFD", "Khánh Hòa"))]}])
+        result = enrich_customer_config(client, config())
+        self.assertEqual(result["customer_catalogue"]["customer-id"]["Tỉnh"], "Khánh Hòa")
+
     def test_complete_catalogue_joins_by_id_and_keeps_transaction_values(self):
         client = self.client([{"total": 1, "data": [customer()]}])
         cfg = config()

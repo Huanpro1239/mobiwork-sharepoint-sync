@@ -191,6 +191,11 @@ jobs:
 
       - name: Sync Promotion Bonus current snapshot
         id: promotion_bonus
+        # Daily 09:00 finalization and manual/nightly runs only; intraday refreshes skip
+        # these ~10-minute catalogue fetches. Failures are isolated from the report sync
+        # (and from operations-health freshness) and surfaced in the run summary.
+        if: ${{ github.event_name != 'schedule' || env.SYNC_SCOPE != 'today' }}
+        continue-on-error: true
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -199,6 +204,11 @@ jobs:
 
       - name: Build promotion detail report
         id: promotion_detail
+        # Daily 09:00 finalization and manual/nightly runs only; intraday refreshes skip
+        # these ~10-minute catalogue fetches. Failures are isolated from the report sync
+        # (and from operations-health freshness) and surfaced in the run summary.
+        if: ${{ github.event_name != 'schedule' || env.SYNC_SCOPE != 'today' }}
+        continue-on-error: true
         env:
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
@@ -210,6 +220,7 @@ jobs:
         shell: bash
         env:
           PROMOTION_BONUS_OUTCOME: ${{ steps.promotion_bonus.outcome }}
+          PROMOTION_DETAIL_OUTCOME: ${{ steps.promotion_detail.outcome }}
         run: |
           python - <<'PY'
           import json
@@ -296,6 +307,13 @@ jobs:
                   lines.append(f"- {result['month']}: {result['rows']} rows; {result['issues']} missing mappings/values; source={result['source_scope']}")
               if detail.get("error"):
                   lines.append(f"- Error: `{detail['error']}`")
+
+          for label, key in (("Promotion Bonus", "PROMOTION_BONUS_OUTCOME"),
+                             ("Promotion detail", "PROMOTION_DETAIL_OUTCOME")):
+              if os.environ.get(key) == "failure":
+                  # continue-on-error keeps the report sync green; make the failure visible.
+                  print(f"::warning title={label} failed::{label} step failed; 4 report sync unaffected. See run summary.")
+                  lines.append(f"- ⚠️ {label} step failed (isolated from report sync)")
 
           if lines:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
