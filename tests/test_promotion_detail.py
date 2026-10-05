@@ -219,3 +219,14 @@ class PromotionBusinessCodeTests(unittest.TestCase):
         self.assertEqual(module.program_code('003/TB/GT/01/2026_Q3_CHUONG_TRINH', {}), '003/TB/GT/01/2026_Q3')
         self.assertEqual(module.program_code('576/TB/GT/10/2026_CHUONG_TRINH', {}), '576/TB/GT/10/2026')
         self.assertEqual(module.program_code('custom_name', {}), 'custom_name')
+
+class PromotionGiftUnitTests(unittest.TestCase):
+    def test_actual_gift_glasses_remain_pieces(self):
+        gift = source(is_km=True, loai_hang='Khuyến mãi', so_luong=9, ten_dvt='Cái', ctkm='CT')
+        detail = pd.DataFrame([gift])
+        report, issues = module.build_report(detail, config())
+        self.assertTrue(issues.empty)
+        self.assertEqual(report.iloc[0]['Số lượng Khuyến mãi'], 9)
+        trace = module.unit_trace(detail, report, config())
+        self.assertEqual(trace.iloc[0]['ĐVT báo cáo'], 'Cái')
+        self.assertEqual(trace.iloc[0]['Hệ số'], 1)

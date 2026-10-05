@@ -382,3 +382,9 @@ không gọi API thật. `fetch_product_catalogue=true` dùng secrets MobiWork h
 Nhận diện mã nghiệp vụ theo quy ước trong mẫu: `số/TB/GT/tháng/năm`, giữ hậu tố
 `_Q1.._Q4` nếu có. Chỉ tách phần tên dài khi khớp quy ước này; tên/mã khác giữ
 nguyên hoặc dùng `program_codes`, không cắt mọi chuỗi tại dấu `_`.
+
+Vật phẩm tặng thực tế như SKU 530200025 (ly) có ĐVT `Cái`: giữ số lượng Cái,
+không quy đổi ly sang Thùng/Két và không coi là lỗi thiếu quy đổi. Sheet `DonViTinh`
+ghi khóa đơn/dòng, SKU, ĐVT nguồn/đích, hệ số và dấu hiệu hàng tặng để kiểm tra.
+Không cộng hàng tặng khác đơn vị vào một tổng số lượng chung. Gate metadata vẫn
+áp dụng cho các trường mẫu còn thiếu.

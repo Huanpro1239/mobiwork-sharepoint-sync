@@ -247,7 +247,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         quantity_field = "Số lượng Khuyến mãi" if gift else "Số lượng SELL-OUT"
         try:
             quantity = number(row.get("so_luong"))
-            if unit.casefold() in {"thùng", "két", "bình"}:
+            if unit.casefold() in {"thùng", "két", "bình"} or (gift and unit.casefold() == "cái"):
                 converted = quantity
             else:
                 conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}")
@@ -273,6 +273,25 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         output.append(item)
     report = _frame(output, "BaoCao").reindex(columns=COLUMNS)
     return report, _frame(issues, "CanBoSung")
+
+
+def unit_trace(detail: pd.DataFrame, report: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
+    orders = set(report["Mã Đơn hàng"])
+    result = []
+    for row in detail.to_dict("records"):
+        if text(row.get("ma_phieu")) not in orders:
+            continue
+        gift = is_gift(row)
+        sku = text(row.get("ma_sp")) or (text(row.get("ma_sp_km")) if gift else "")
+        unit = text(row.get("ten_dvt")) or text(row.get("ma_dvt"))
+        if not unit and gift:
+            unit = text(row.get("ten_dvt_km")) or text(row.get("ma_dvt_km"))
+        conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}", {})
+        target = unit if unit.casefold() in {"thùng", "két", "bình"} or (gift and unit.casefold() == "cái") else conversion.get("target_unit")
+        result.append({"Mã Đơn hàng": text(row.get("ma_phieu")), "Dòng nguồn": text(row.get("stt")),
+                       "Mã sản phẩm": sku, "Hàng tặng": gift, "ĐVT nguồn": unit,
+                       "ĐVT báo cáo": target, "Hệ số": conversion.get("factor", 1 if target == unit else None)})
+    return _frame(result, "DonViTinh")
 
 
 def run() -> dict[str, Any]:
@@ -307,7 +326,8 @@ def run() -> dict[str, Any]:
             # dtype=object preserves identifiers and source cell values.
             detail = pd.read_excel(BytesIO(content), sheet_name="ChiTietSP", dtype=object)
             report, issues = build_report(detail, cfg)
-            path = write_workbook({"BaoCao": report, "CanBoSung": issues},
+            path = write_workbook({"BaoCao": report, "CanBoSung": issues,
+                                   "DonViTinh": unit_trace(detail, report, cfg)},
                                   f"BaoCaoChiTietCTKM_{anchor:%Y-%m}.xlsx")
             result = {"month": f"{anchor:%Y-%m}", "rows": len(report), "issues": len(issues),
                       "filename": path.name, "source_scope": "requested_dates" if dry else "monthly_master"}
