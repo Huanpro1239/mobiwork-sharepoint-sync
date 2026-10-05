@@ -39,28 +39,6 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: TEMP extract PromotionBonusReport schema
-        shell: bash
-        run: |
-          python - <<'PY'
-          import urllib.request
-
-          url = "https://dms.mobiwork.vn/openapi/openapi.json?v=1.13"
-          req = urllib.request.Request(
-              url,
-              headers={"User-Agent": "Mozilla/5.0 GitHubActions schema probe"},
-          )
-          with urllib.request.urlopen(req, timeout=30) as resp:
-              body = resp.read().decode("utf-8", "replace")
-
-          for needle in ["findPromotionBonusReport", '"PromotionBonusReport"']:
-              idx = body.find(needle)
-              print(f"NEEDLE={needle} INDEX={idx}")
-              if idx >= 0:
-                  print(body[max(0, idx - 12000): idx + 22000])
-                  print("END_PROMOTION_BONUS_SNIPPET")
-          PY
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
