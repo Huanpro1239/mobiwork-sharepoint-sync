@@ -224,7 +224,7 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
         text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
         bonus = text.split('      - name: Sync Promotion Bonus current snapshot')[1].split('      - name: Publish run summary')[0]
         self.assertNotIn('continue-on-error', bonus)
-        self.assertIn("inputs.report_scope != 'promotion_history'", bonus)
+        self.assertIn("inputs.report_scope == 'all_reports'", bonus)
         shared = text.split('\nenv:\n')[1].split('\njobs:')[0]
         self.assertIn('DRY_RUN:', shared)
         self.assertIn('MOBIWORK_TOKEN:', shared)
