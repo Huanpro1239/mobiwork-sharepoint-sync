@@ -173,3 +173,42 @@ class PromotionDetailLegacyTests(unittest.TestCase):
         self.assertEqual(report.iloc[0]['Sản phẩm Tặng'], 'SKU1')
         self.assertEqual(report.iloc[0]['Số lượng Khuyến mãi'], 3)
         self.assertEqual(report.iloc[0]['Ngày Đơn hàng'].date().isoformat(), '2026-07-09')
+
+class PromotionDetailReferenceTests(unittest.TestCase):
+    def test_reference_customer_mapping_requires_employee_and_unique_identity(self):
+        cfg = config()
+        cfg['customers'] = {}
+        cfg['customer_codes'] = {'KH01': {'employee_code': 'NV01', 'Tỉnh': 'Province',
+                                         'DB Code': 'NPP1', 'Tên NPP': 'NPP', 'Loại KH': '1b'}}
+        report, _ = module.build_report(pd.DataFrame([source()]), cfg)
+        self.assertEqual(report.iloc[0]['DB Code'], 'NPP1')
+        report, issues = module.build_report(pd.DataFrame([source(), source(stt=2, ID_khachhang='another-id')]), cfg)
+        self.assertTrue(report['DB Code'].isna().all())
+        self.assertIn('Mã Khách hàng', issues['Trường'].tolist())
+        report, issues = module.build_report(pd.DataFrame([source(ma_nv_dat='other')]), cfg)
+        self.assertTrue(pd.isna(report.iloc[0]['DB Code']))
+        self.assertIn('DB Code', issues['Trường'].tolist())
+
+class ProductCatalogueTests(unittest.TestCase):
+    def test_catalogue_enriches_units_without_overwriting_reference(self):
+        from test_promotion_bonus import FakeMobiWork
+        client = FakeMobiWork([{'total': 2, 'data': [
+            {'ma_sp': 'SKU1', 'nhan_hieu': 'Official', 'dvt_chan': 'Thùng', 'dvt_le': 'Chai', 'hsqd': 24},
+            {'ma_sp': 'SKU2', 'nhan_hieu': 'Brand2', 'dvt_chan': 'Két', 'dvt_le': 'Chai', 'hsqd': 20}]}])
+        cfg = module.enrich_product_config(client, config())
+        self.assertEqual(cfg['products']['SKU1']['Brand'], 'Brand')
+        self.assertEqual(cfg['products']['SKU2']['Brand'], 'Brand2')
+        self.assertAlmostEqual(float(cfg['unit_conversions']['SKU1|Chai']['factor']), 1/24)
+        self.assertNotIn('SKU1|Chai', config()['unit_conversions'])
+
+    def test_catalogue_integrity_guards(self):
+        from test_promotion_bonus import FakeMobiWork
+        cases = [
+            [{'total': 2, 'data': [{'ma_sp': 'a'}]}, {'total': 2, 'data': []}],
+            [{'data': [{'ma_sp': 'a'}]}, {'data': [{'ma_sp': 'a'}]}],
+            [{'total': 2, 'data': [{'ma_sp': 'a'}, {'ma_sp': 'a', 'nhan_hieu': 'other'}]}],
+            [{'total': 2, 'data': [{'ma_sp': 'a'}]}, {'total': 3, 'data': [{'ma_sp': 'b'}]}],
+        ]
+        for payloads in cases:
+            with self.subTest(payloads=payloads), self.assertRaises(ValueError):
+                module.enrich_product_config(FakeMobiWork(payloads), config())

@@ -1,8 +1,61 @@
 {
   "publish_enabled": false,
+  "fetch_product_catalogue": true,
   "program_codes": {},
-  "employees": {},
+  "employees": {
+    "KHHO0303": {
+      "Vùng": "Miền Trung 1B",
+      "SS Code": "KHA04",
+      "SS Name": "Huỳnh Thanh Cường"
+    },
+    "KHHO0304": {
+      "Vùng": "Miền Trung 1B",
+      "SS Code": "KHA04",
+      "SS Name": "Huỳnh Thanh Cường"
+    }
+  },
   "customers": {},
-  "products": {},
-  "unit_conversions": {}
+  "products": {
+    "230100110": {
+      "Brand": "2. VIKODA",
+      "Package": "1 way"
+    },
+    "230100011": {
+      "Brand": "1. ĐẢNH THẠNH",
+      "Package": "1 way"
+    },
+    "230100017": {
+      "Brand": "1. ĐẢNH THẠNH",
+      "Package": "1 way"
+    },
+    "230100116": {
+      "Brand": "2. VIKODA",
+      "Package": "1 way"
+    }
+  },
+  "unit_conversions": {},
+  "customer_codes": {
+    "KHHO030340": {
+      "Tỉnh": "KHÁNH HÒA",
+      "Loại KH": "1b",
+      "employee_code": "KHHO0303",
+      "DB Code": "B-KHHO-0288",
+      "Tên NPP": "TU TAI"
+    },
+    "KHHO031452": {
+      "Tỉnh": "KHÁNH HÒA",
+      "Loại KH": "1c",
+      "employee_code": "KHHO0304",
+      "DB Code": "B-KHHO-0288",
+      "Tên NPP": "TU TAI"
+    },
+    "KHHO031562": {
+      "Tỉnh": "KHÁNH HÒA",
+      "Loại KH": "1b",
+      "employee_code": "KHHO0304",
+      "DB Code": "B-KHHO-0288",
+      "Tên NPP": "TU TAI"
+    }
+  },
+  "reference_source": "Báo cáo chi tiết CTKM theo KH mẫu (1).xlsx; Sheet!A5:Z13"
 }

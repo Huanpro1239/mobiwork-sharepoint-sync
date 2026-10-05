@@ -14,7 +14,8 @@ import pandas as pd
 from data_cham_anh_export import _monthly_master_path
 from main import load_reports
 from monthly_master import master_filename
-from promotion_bonus import _frame, write_workbook
+from promotion_bonus import _api_total, _expect_object_list, _frame, write_workbook
+from mobiwork import MobiWorkClient
 from run_all_reports import incremental_target_dates
 from run_data_cham_anh import month_anchors
 from sharepoint_semantic import SemanticSharePointClient
@@ -34,7 +35,7 @@ def load_config() -> dict[str, Any]:
     cfg = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
         raise ValueError("publish_enabled must be an explicit boolean")
-    for key in ("employees", "customers", "products", "unit_conversions", "program_codes"):
+    for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
         mapping = cfg.get(key, {})
         if not isinstance(mapping, dict):
             raise ValueError(f"{key} must be an object")
@@ -88,6 +89,58 @@ def is_gift(row: dict[str, Any]) -> bool:
     return flag in {"true", "1"} or label == "khuyến mãi"
 
 
+def enrich_product_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Read the documented Product catalogue for brand and packaging-unit conversion."""
+    cfg = json.loads(json.dumps(cfg))
+    seen_pages, products = set(), {}
+    expected, count = None, 0
+    for page in range(1, 10_001):
+        payload = client.get_json("https://openapi.mobiwork.vn/OpenAPI/V1/Product",
+                                  {"page_size": 200, "page_number": page},
+                                  operation_key="promotion_detail_products", request_number=page)
+        total = _api_total(payload, "Product catalogue")
+        if expected is None:
+            expected = total
+        elif total is not None and total != expected:
+            raise ValueError("Product catalogue total changed")
+        rows = _expect_object_list(payload, "data", "Product catalogue")
+        signature = json.dumps(rows, sort_keys=True, ensure_ascii=False)
+        if rows and signature in seen_pages:
+            raise ValueError("Product catalogue repeated page")
+        seen_pages.add(signature)
+        count += len(rows)
+        for row in rows:
+            sku = text(row.get("ma_sp"))
+            if not sku:
+                # Some documented catalogue entries have null codes; they cannot map a Bill SKU.
+                continue
+            if sku in products and products[sku] != row:
+                raise ValueError("Conflicting Product catalogue SKU")
+            products[sku] = row
+        if not rows or (expected is not None and count >= expected):
+            break
+    else:
+        raise ValueError("Product catalogue pagination safety limit")
+    if expected is not None and count != expected:
+        raise ValueError("Product catalogue total mismatch")
+    for sku, row in products.items():
+        brand = text(row.get("nhan_hieu"))
+        if brand:
+            cfg.setdefault("products", {}).setdefault(sku, {}).setdefault("Brand", brand)
+        large, small = text(row.get("dvt_chan")), text(row.get("dvt_le"))
+        if large.casefold() in {"thùng", "két", "bình"} and small and small != large:
+            try:
+                factor = number(row.get("hsqd"))
+            except ValueError:
+                continue
+            if factor > 0:
+                cfg.setdefault("unit_conversions", {}).setdefault(f"{sku}|{small}",
+                    {"target_unit": large, "factor": str(Decimal(1) / factor),
+                     "source": "Product.dvt_chan/dvt_le/hsqd"})
+    cfg["product_catalogue_count"] = len(products)
+    return cfg
+
+
 def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows = detail.to_dict("records")
     programs: dict[str, set[str]] = {}
@@ -112,6 +165,9 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         elif text(row.get("ctkmFull_id")):
             codes.add(text(row["ctkmFull_id"]))
 
+    identities: dict[str, set[str]] = {}
+    for row in rows:
+        identities.setdefault(text(row.get("ma_kh")), set()).add(text(row.get("ID_khachhang")))
     output, issues = [], []
     for row in rows:
         order = text(row["ma_phieu"])
@@ -162,8 +218,16 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
                 issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
         employee = cfg.get("employees", {}).get(text(row.get("ma_nv_dat")), {})
         customer = cfg.get("customers", {}).get(text(row.get("ID_khachhang")), {})
+        code_mapping = cfg.get("customer_codes", {}).get(text(row.get("ma_kh")), {})
+        if code_mapping:
+            if len(identities[text(row.get("ma_kh"))]) != 1 or "" in identities[text(row.get("ma_kh"))]:
+                issue("Mã Khách hàng", "Mã KH tham chiếu thiếu ID hoặc dùng bởi nhiều ID")
+                code_mapping = {}
+            elif code_mapping.get("employee_code") != text(row.get("ma_nv_dat")):
+                issue("DB Code", "NVBH không khớp mapping tham chiếu; chưa xác định NPP")
+                code_mapping = {}
         product = cfg.get("products", {}).get(sku, {})
-        for mapping in (employee, customer, product):
+        for mapping in (employee, code_mapping, customer, product):
             for label, value in mapping.items():
                 if label in {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"}:
                     item[label] = value
@@ -208,6 +272,9 @@ def run() -> dict[str, Any]:
     manifest_path = Path("output/promotion_detail_manifest.json")
     try:
         cfg = load_config()
+        if cfg.get("fetch_product_catalogue", False):
+            cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
+            manifest["product_catalogue_count"] = cfg["product_catalogue_count"]
         reports = load_reports(ROOT / "config/reports.json")
         bill = next(r for r in reports if r.key == "bill" and r.enabled)
         anchors = month_anchors(incremental_target_dates(os.environ.get("SYNC_SCOPE", "today"),

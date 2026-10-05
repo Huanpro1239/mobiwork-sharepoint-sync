@@ -217,6 +217,11 @@ jobs:
       - name: Build promotion detail report
         id: promotion_detail
         env:
+          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+          MOBIWORK_MAX_RETRIES: "8"
+          MOBIWORK_TIMEOUT_SECONDS: "120"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}

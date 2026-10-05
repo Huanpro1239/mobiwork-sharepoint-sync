@@ -360,3 +360,21 @@ thay vì báo dữ liệu đã chuẩn khi thiếu thông tin. Đây là báo c�
 không thay thế hoặc thêm history cho Promotion Bonus.
 
 Có thể chọn config runtime riêng bằng `PROMOTION_DETAIL_CONFIG` để không đưa mapping khách hàng vào Git.
+
+Mapping tham chiếu ban đầu đã trích từ file mẫu khách hàng gửi: 2 mã NVBH (Vùng/SS),
+3 mã KH (Tỉnh/Loại KH/NPP, chỉ áp dụng khi NVBH cũng khớp), 4 SKU (Brand/Package).
+`customer_codes` không coi mã KH là unique vô điều kiện: chỉ áp dụng khi source
+có đúng một ID khách hàng cho mã đó và employee_code khớp. Không dùng NPP của một
+khách hàng mẫu làm NPP mặc định cho toàn bộ nhân viên. Mapping này chỉ bao phủ các
+mã trong mẫu, không tự mở rộng sang khách hàng/sản phẩm khác. Hai file không chứa
+hệ số quy đổi Chai → Thùng/Két; `Package=1 way` không phải quy cách đóng gói.
+
+Danh mục Product được lấy tự động qua
+[findProduct](https://dms.mobiwork.vn/openapi/#/Product/findProduct) với phân trang,
+kiểm total/repeated page/conflicting SKU; không đặt bộ lọc active hoặc ngày.
+`nhan_hieu` bổ sung Brand khi config chưa có; `dvt_chan`, `dvt_le`, `hsqd` bổ sung
+hệ số 1/hsqd từ ĐVT lẻ sang ĐVT chẵn khi ĐVT chẵn là Thùng/Két/Bình. Không thay
+mapping đã xác nhận trong config. Không suy ra Package từ ngành hàng hoặc tên SKU.
+Catalogue hiện tại không chứng minh quy cách lịch sử nếu một SKU đã đổi đóng gói;
+đối với kỳ cũ cần xác nhận quy cách hoặc override phù hợp trong config. Unit test
+không gọi API thật. `fetch_product_catalogue=true` dùng secrets MobiWork hiện có.
