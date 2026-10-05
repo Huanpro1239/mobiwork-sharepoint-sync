@@ -1,6 +1,6 @@
 # MobiWork DMS → SharePoint
 
-Production data pipeline bằng Python để nạp 4 báo cáo từ MobiWork DMS Open API (viếng thăm, mở mới khách hàng, đơn đặt hàng, đơn bán hàng) vào thư viện SharePoint `MobiWorkDMS`, kèm workbook **Data chấm ảnh** hằng tháng.
+Production data pipeline bằng Python để nạp 4 báo cáo lịch sử từ MobiWork DMS Open API (viếng thăm, mở mới khách hàng, đơn đặt hàng, đơn bán hàng) vào thư viện SharePoint `MobiWorkDMS`, kèm workbook **Data chấm ảnh** hằng tháng và snapshot **Báo cáo trả thưởng** hiện hành.
 
 ```text
 MobiWork Open API
@@ -78,6 +78,18 @@ Các report được khai báo tại `config/reports.json`:
 | `new_customer` | `MoMoiKhachHang_YYYY-MM.xlsx` | flat | `ID` của record MobiWork |
 | `order` | `DonDatHang_YYYY-MM.xlsx` | header + detail | `ma_phieu` |
 | `bill` | `DonBanHang_YYYY-MM.xlsx` | header + detail | `ma_phieu` |
+
+Báo cáo trả thưởng là dataset snapshot riêng, cấu hình tại `config/promotion_bonus.json`, vì endpoint `PromotionBonusReport` bắt buộc `id_ct` và không hỗ trợ truy vấn trạng thái lịch sử theo ngày:
+
+```text
+06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
+├─ ChuongTrinh
+├─ Data
+├─ ChiTieu
+└─ TraThuong
+```
+
+Pipeline tự phân trang `/OpenAPI/V1/PromotionBonus` để lấy toàn bộ chương trình, sau đó gọi `/OpenAPI/V1/PromotionBonusReport` từng chương trình để giữ provenance chính xác. Snapshot được refresh trong workflow `MobiWork DMS Sync`; bootstrap/full-month rebuild 4 report lịch sử không giả lập backfill cho dataset này.
 
 `makh` của `new_customer` là mã nghiệp vụ và **không được giả định unique**: dữ liệu lịch sử đã có các record khác `ID` nhưng dùng lại cùng `makh`. Pipeline giữ đủ các record đó và dùng `ID` làm identity/upsert key. `order` và `bill` kiểm uniqueness header theo `ma_phieu`; detail kiểm theo `ma_phieu + stt`. `bill` còn đối chiếu `API total == fetched rows` trước khi chấp nhận dữ liệu.
 
