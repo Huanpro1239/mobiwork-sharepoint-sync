@@ -187,3 +187,12 @@ Khi thêm/sửa report:
 4. chạy compile + Ruff + unit tests + coverage;
 5. chỉ merge khi CI xanh;
 6. nếu thay đổi schema workbook/mapping có thể ảnh hưởng lịch sử, bootstrap hoặc rebuild toàn bộ phạm vi tháng liên quan trước khi consumer refresh dashboard.
+
+Catalogue `total`, when supplied, must match raw and unique program counts and
+remain stable across pages. Without `total`, only an empty page confirms EOF.
+Exact duplicate IDs are collapsed only when no supplied total claims distinct
+programs; conflicting duplicates fail. All catalogue programs are included,
+including archived/inactive entries. Missing/null `arrChiTieu` and `arrTraThuong`
+are empty; `data` is required. Source fields cannot override request provenance.
+Excel strings are literal data; overlong cells, excessive columns and flattened
+column collisions are rejected before publish.

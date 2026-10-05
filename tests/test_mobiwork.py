@@ -358,3 +358,33 @@ class PaginationIntegrityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PromotionBonusHttpTests(unittest.TestCase):
+    def test_json_retry_throttle_and_status_false(self):
+        from unittest.mock import Mock, patch
+        for error in (429, 503, requests.Timeout('timeout')):
+            with self.subTest(error=error):
+                session = Mock()
+                session.headers = {}
+                success = requests.Response()
+                success.status_code = 200
+                success._content = b'{"status": true, "data": []}'
+                if isinstance(error, int):
+                    first = requests.Response()
+                    first.status_code = error
+                    first.headers['Retry-After'] = '2'
+                else:
+                    first = error
+                session.get.side_effect = [first, success]
+                client = MobiWorkClient('user', 'token', session=session, max_retries=1,
+                                        min_interval_seconds=1.5)
+                with patch('src.mobiwork.time.sleep') as sleep:
+                    self.assertEqual(client.get_json('https://example.test')['data'], [])
+                    self.assertEqual(session.get.call_count, 2)
+                    self.assertGreaterEqual(sleep.call_count, 1)
+
+    def test_json_non_object_rejected(self):
+        client = MobiWorkClient('user', 'token', min_interval_seconds=0,
+                                session=FakeSession([[]]))
+        with self.assertRaises(TypeError):
+            client.get_json('https://example.test')

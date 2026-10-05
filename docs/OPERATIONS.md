@@ -280,3 +280,35 @@ Repository variables tùy chọn (mặc định là production hiện tại): `S
 Python lấy Graph token bằng GitHub OIDC assertion mới mỗi lần xin token (cần `permissions: id-token: write` và `AZURE_CLIENT_ID`/`AZURE_TENANT_ID` trong env), nên job dài không bị `AADSTS700024` khi assertion của `azure/login` hết hạn sau ~5 phút.
 
 Data contract chi tiết: `docs/DATA_CONTRACT.md`.
+
+### Promotion Bonus production dry-run gate (PR #91)
+
+Before merging, open **Actions → MobiWork DMS Sync → Run workflow** and select
+`feature/promotion-bonus-report`, `sync_scope=today`, `lookback_days=1`, and
+`dry_run=true`. This uses real MobiWork secrets, fetches the complete catalogue and
+one report per program, and builds the current workbook without creating a
+SharePoint client or uploading a workbook/state JSON. Data chấm ảnh is skipped in
+this dry-run as before.
+
+Verify the **Promotion Bonus Snapshot** Job Summary: status, programs, data/target/
+reward rows, workbook bytes, and dry-run flag. Download
+`mobiwork-dry-run-output-<run_id>` for `BaoCaoTraThuong_Current.xlsx` (four sheets)
+and `mobiwork-sync-manifests-<run_id>-<attempt>` for
+`promotion_bonus_manifest.json`. An absent manifest is shown using the step
+outcome, including skipped when an earlier stage fails.
+
+Catalogue totals must remain stable and match both raw and unique program counts;
+conflicting duplicates and invalid IDs fail before export. Archived/inactive
+programs returned by the catalogue are included; no undocumented status filter is
+applied. Missing/null optional target and reward arrays produce empty sheets.
+Report provenance always comes from the requested catalogue program. Nested column
+collisions and Excel cell/column limits fail rather than silently losing source
+values. Strings beginning with `=` remain literal source data.
+
+Local workbook replacement happens only after a complete staged build. SharePoint
+uses the existing semantic comparison and verified staged replacement/rollback.
+Promotion Bonus failure fails the workflow without undoing earlier report writes.
+A state JSON upload failure also fails the local manifest/workflow; the already
+verified workbook can have been published, and the next run retries state upload.
+Retain PR #91 as Draft until the authenticated dry-run has passed. SharePoint/OIDC
+permissions and live semantic no-op still require a non-dry-run production check.

@@ -218,3 +218,50 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PromotionBonusWorkflowTests(unittest.TestCase):
+    def test_bonus_failure_and_dry_run_artifacts(self):
+        text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
+        bonus = text.split('      - name: Sync Promotion Bonus current snapshot')[1].split('      - name: Publish run summary')[0]
+        self.assertNotIn('continue-on-error', bonus)
+        self.assertNotIn('if:', bonus)
+        self.assertIn('DRY_RUN:', bonus)
+        self.assertLess(text.index('run: python src/run_all_reports.py'), text.index('run: python src/promotion_bonus.py'))
+        self.assertLess(text.index('run: python src/run_data_cham_anh.py'), text.index('run: python src/promotion_bonus.py'))
+        self.assertIn('path: output/*.xlsx', text)
+        self.assertIn('output/promotion_bonus_manifest.json', text)
+
+    def test_summary_executes_for_success_failure_and_skipped(self):
+        import json
+        import os
+        import tempfile
+        import textwrap
+        from unittest.mock import patch
+        text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
+        code = textwrap.dedent(text.split("          python - <<'PY'\n          import json\n          import os\n")[1].split('          PY')[0])
+        code = 'import json\nimport os\n' + code
+        # Redirect only manifest reads; execute the exact embedded summary script.
+        original_path = Path
+        for status in ('success', 'failed', None):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / 'output').mkdir()
+                if status:
+                    (root / 'output/promotion_bonus_manifest.json').write_text(
+                        json.dumps(dict(status=status, program_count=3, data_row_count=7,
+                                        dry_run=True, error='report incomplete' if status == 'failed' else '')),
+                        encoding='utf-8')
+                summary = root / 'summary.md'
+                # Replace the pathlib import with the temporary filesystem mapping.
+                script = code.replace('from pathlib import Path', '')
+                with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary),
+                                             'PROMOTION_BONUS_OUTCOME': 'skipped'}):
+                    exec(compile(script, '<workflow summary>', 'exec'),
+                         {'Path': lambda value, root=root: original_path(root / value)})
+                content = summary.read_text(encoding='utf-8')
+                self.assertIn('Promotion Bonus Snapshot', content)
+                self.assertIn(status or 'skipped', content)
+                for label in ('Programs', 'Data rows', 'Target rows', 'Reward rows', 'Workbook bytes', 'Dry run'):
+                    self.assertIn(label, content)
+                if status == 'failed':
+                    self.assertIn('report incomplete', content)

@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +34,17 @@ class PromotionBonusConfig:
     catalog_page_size: int = 200
 
     def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise TypeError("enabled must be a boolean")
+        if type(self.catalog_page_size) is not int:
+            raise TypeError("catalog_page_size must be an integer")
+        for field in ("name", "folder", "filename", "catalog_url", "report_url"):
+            if not isinstance(getattr(self, field), str) or not getattr(self, field).strip():
+                raise ValueError(f"{field} must be a non-empty string")
+        if any(part in {".", ".."} for part in self.folder.replace("\\", "/").split("/")):
+            raise ValueError("folder must not contain traversal segments")
+        if "/" in self.filename or "\\" in self.filename:
+            raise ValueError("filename must be a basename")
         if self.catalog_page_size < 1 or self.catalog_page_size > 200:
             raise ValueError("catalog_page_size must be between 1 and 200")
         if not self.folder.strip():
@@ -77,6 +89,8 @@ def _api_total(payload: dict[str, Any], operation: str) -> int | None:
     value = payload.get("total")
     if value in (None, ""):
         return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise TypeError(f"{operation}: total must be an integer")
     try:
         total = int(value)
     except (TypeError, ValueError) as exc:
@@ -84,6 +98,13 @@ def _api_total(payload: dict[str, Any], operation: str) -> int | None:
     if total < 0:
         raise ValueError(f"{operation}: total must not be negative")
     return total
+
+
+def _program_id(program: dict[str, Any]) -> str:
+    value = program.get("_id")
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return ""
+    return str(value).strip()
 
 
 def fetch_programs(
@@ -106,8 +127,11 @@ def fetch_programs(
             operation_key="promotion_bonus_catalog",
             request_number=page,
         )
+        page_total = _api_total(payload, "PromotionBonus catalogue")
         if expected_total is None:
-            expected_total = _api_total(payload, "PromotionBonus catalogue")
+            expected_total = page_total
+        elif page_total is not None and page_total != expected_total:
+            raise RuntimeError("PromotionBonus catalogue total changed during pagination")
 
         page_rows = _expect_object_list(payload, "data", "PromotionBonus catalogue")
         if page_rows:
@@ -141,7 +165,7 @@ def fetch_programs(
 
     unique: dict[str, dict[str, Any]] = {}
     for row_number, program in enumerate(records, start=1):
-        program_id = str(program.get("_id", "")).strip()
+        program_id = _program_id(program)
         if not program_id:
             raise ValueError(
                 f"PromotionBonus catalogue row {row_number} is missing required _id"
@@ -152,6 +176,10 @@ def fetch_programs(
                 f"PromotionBonus catalogue has conflicting duplicate _id={program_id}"
             )
         unique[program_id] = program
+    if expected_total is not None and len(unique) != expected_total:
+        raise RuntimeError(
+            f"PromotionBonus catalogue API total={expected_total}, unique programs={len(unique)}"
+        )
     return list(unique.values())
 
 
@@ -159,13 +187,13 @@ def _with_program_provenance(
     rows: list[dict[str, Any]],
     program: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    program_id = str(program.get("_id", "")).strip()
+    program_id = _program_id(program)
     program_name = str(program.get("name", "")).strip()
     return [
         {
+            **row,
             "promotion_program_id": program_id,
             "promotion_program_name": program_name,
-            **row,
         }
         for row in rows
     ]
@@ -187,7 +215,7 @@ def fetch_snapshot(
     reward_rows: list[dict[str, Any]] = []
 
     for request_number, program in enumerate(programs, start=1):
-        program_id = str(program.get("_id", "")).strip()
+        program_id = _program_id(program)
         if not program_id:
             raise ValueError("PromotionBonus report cannot run without a program _id")
 
@@ -239,11 +267,29 @@ def _excel_safe(value: Any) -> Any:
 
 
 def _frame(records: list[dict[str, Any]], label: str) -> pd.DataFrame:
-    frame = pd.json_normalize(records, sep="_") if records else pd.DataFrame()
+    def flatten(record: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in record.items():
+            column = f"{prefix}_{key}" if prefix else str(key)
+            cells = flatten(value, column) if isinstance(value, dict) and value else {column: value}
+            if result.keys() & cells.keys():
+                raise ValueError(f"{label}: nested column collision")
+            result.update(cells)
+        return result
+
+    frame = pd.DataFrame([flatten(row) for row in records], dtype=object)
     if not frame.empty:
         for column in frame.columns:
             if frame[column].map(lambda value: isinstance(value, (dict, list, tuple, set))).any():
                 frame[column] = frame[column].map(_excel_safe)
+    if len(frame.columns) > 16_384:
+        raise ValueError(f"{label}: exceeds Excel column limit")
+    for column in frame.columns:
+        if len(str(column)) > 32_767:
+            raise ValueError(f"{label}: column name exceeds Excel cell limit")
+        for value in frame[column]:
+            if isinstance(value, str) and len(value) > 32_767:
+                raise ValueError(f"{label}: value exceeds Excel cell limit")
     _validate_excel_size(frame, label)
     return frame
 
@@ -264,10 +310,21 @@ def write_workbook(
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / filename
-    with pd.ExcelWriter(path, engine="openpyxl") as writer:
-        for sheet_name, frame in frames.items():
-            frame.to_excel(writer, sheet_name=sheet_name, index=False)
-            _format_sheet(writer, sheet_name)
+    with tempfile.NamedTemporaryFile(dir=output_dir, suffix=".xlsx", delete=False) as handle:
+        staged = Path(handle.name)
+    try:
+        with pd.ExcelWriter(staged, engine="openpyxl") as writer:
+            for sheet_name, frame in frames.items():
+                frame.to_excel(writer, sheet_name=sheet_name, index=False)
+                # Source strings are data, including values beginning with '='.
+                for row in writer.sheets[sheet_name].iter_rows():
+                    for cell in row:
+                        if cell.data_type == "f":
+                            cell.data_type = "s"
+                _format_sheet(writer, sheet_name)
+        staged.replace(path)
+    finally:
+        staged.unlink(missing_ok=True)
     return path
 
 
@@ -287,7 +344,6 @@ def _write_manifest(payload: dict[str, Any]) -> None:
 
 
 def run() -> dict[str, Any]:
-    cfg = load_config()
     dry_run = _env_bool("DRY_RUN", False)
     started_at = datetime.now(timezone.utc)
     manifest: dict[str, Any] = {
@@ -296,26 +352,28 @@ def run() -> dict[str, Any]:
         "storage_mode": "current_snapshot",
         "historical_backfill_supported": False,
         "dry_run": dry_run,
+        "phase": "config",
+        "workbook_published": False,
         "started_at": started_at.isoformat(),
-        "folder": cfg.folder,
-        "filename": cfg.filename,
     }
 
-    if not cfg.enabled:
-        manifest.update(
-            {
+    try:
+        cfg = load_config()
+        manifest.update({"folder": cfg.folder, "filename": cfg.filename})
+        if not cfg.enabled:
+            manifest.update({
                 "status": "skipped",
                 "finished_at": datetime.now(timezone.utc).isoformat(),
                 "reason": "config disabled",
-            }
-        )
-        _write_manifest(manifest)
-        return manifest
+            })
+            _write_manifest(manifest)
+            return manifest
 
-    try:
+        manifest["phase"] = "source_fetch"
         client = MobiWorkClient.from_env()
         programs = fetch_programs(client, cfg)
         snapshot = fetch_snapshot(client, cfg, programs)
+        manifest["phase"] = "workbook_build"
         frames = build_frames(snapshot)
         path = write_workbook(frames, cfg.filename)
         content = path.read_bytes()
@@ -333,6 +391,7 @@ def run() -> dict[str, Any]:
         )
 
         if not dry_run:
+            manifest["phase"] = "workbook_publish"
             sharepoint = SemanticSharePointClient.from_env()
             drive_id = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
             if not drive_id:
@@ -340,6 +399,7 @@ def run() -> dict[str, Any]:
                 drive_id = sharepoint.get_drive_id(site_id)
 
             uploaded = sharepoint.upload_file(drive_id, path, cfg.folder)
+            manifest["workbook_published"] = True
             manifest.update(
                 {
                     "sharepoint_write_avoided": bool(uploaded.get("upload_skipped")),
@@ -355,14 +415,15 @@ def run() -> dict[str, Any]:
                 "finished_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        _write_manifest(manifest)
-
         if not dry_run:
+            manifest["phase"] = "state_publish"
             sharepoint.upload_json(
                 drive_id,
                 f"{cfg.folder}/_sync_state/promotion_bonus.json",
                 manifest,
             )
+        manifest["phase"] = "complete"
+        _write_manifest(manifest)
         LOG.info(
             "Promotion Bonus snapshot complete programs=%s data=%s targets=%s rewards=%s",
             len(programs),

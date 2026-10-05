@@ -199,6 +199,7 @@ jobs:
         run: python src/run_data_cham_anh.py
 
       - name: Sync Promotion Bonus current snapshot
+        id: promotion_bonus
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
@@ -216,6 +217,8 @@ jobs:
       - name: Publish run summary
         if: ${{ always() }}
         shell: bash
+        env:
+          PROMOTION_BONUS_OUTCOME: ${{ steps.promotion_bonus.outcome }}
         run: |
           python - <<'PY'
           import json
@@ -273,6 +276,20 @@ jobs:
                       )
                       if item.get("error"):
                           lines.append(f"|  | ↳ error |  |  |  |  |  | `{item['error']}` |")
+
+          bonus_path = Path("output/promotion_bonus_manifest.json")
+          bonus = json.loads(bonus_path.read_text(encoding="utf-8")) if bonus_path.exists() else {}
+          lines.extend(["", "## Promotion Bonus Snapshot", "", "| Metric | Value |", "|---|---|"])
+          for label, key in [
+              ("Status", "status"), ("Programs", "program_count"),
+              ("Data rows", "data_row_count"), ("Target rows", "target_row_count"),
+              ("Reward rows", "reward_row_count"), ("Workbook bytes", "workbook_bytes"),
+              ("Dry run", "dry_run"),
+          ]:
+              fallback = os.environ.get("PROMOTION_BONUS_OUTCOME", "not run") if key == "status" else "—"
+              lines.append(f"| {label} | {bonus.get(key, fallback)} |")
+          if bonus.get("error"):
+              lines.append(f"- Promotion Bonus error: `{bonus['error']}`")
 
           if lines:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
