@@ -5,6 +5,9 @@ import json
 import logging
 import os
 import re
+import hashlib
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
@@ -16,7 +19,9 @@ from data_cham_anh_export import _monthly_master_path
 from customer_catalogue import enrich_customer_config
 from main import load_reports
 from monthly_master import master_filename
-from promotion_bonus import _api_total, _expect_object_list, _frame, write_workbook
+from promotion_bonus import _api_total, _expect_object_list, _frame
+from promotion_months import discover_bill_months, select_order_month
+from promotion_workbook import write_detail_workbook
 from mobiwork import MobiWorkClient
 from run_all_reports import incremental_target_dates
 from run_data_cham_anh import month_anchors
@@ -196,6 +201,8 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         sku = text(row.get("ma_sp"))
         unit = text(row.get("ten_dvt")) or text(row.get("ma_dvt"))
         item = dict.fromkeys(COLUMNS, None)
+        if not gift:
+            item["Số lượng Khuyến mãi"] = 0
         key = {"Mã Đơn hàng": order, "Dòng nguồn": text(row["stt"])}
 
         def issue(field: str, reason: str, key=key, sku=sku, unit=unit, row=row) -> None:
@@ -317,25 +324,33 @@ def run() -> dict[str, Any]:
         allow_incomplete = (cfg.get("allow_incomplete_publish", False)
                             or os.environ.get("ALLOW_INCOMPLETE_DETAIL", "false").casefold() == "true")
         manifest["allow_incomplete_publish"] = allow_incomplete
+        reports = load_reports(ROOT / "config/reports.json")
+        bill = next(r for r in reports if r.key == "bill" and r.enabled)
+        anchors = month_anchors(incremental_target_dates(os.environ.get("SYNC_SCOPE", "today"),
+                                                       int(os.environ.get("LOOKBACK_DAYS", "1"))))
+        scope = os.environ.get("PROMOTION_DETAIL_SCOPE", "touched")
+        if scope not in {"touched", "all_existing"}:
+            raise ValueError("PROMOTION_DETAIL_SCOPE must be touched or all_existing")
+        manifest["scope"] = scope
+        sharepoint, drive = None, ""
+        if not dry or scope == "all_existing":
+            sharepoint = SemanticSharePointClient.from_env()
+            drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
+            if not drive:
+                drive = sharepoint.get_drive_id(sharepoint.get_site_id())
+        if scope == "all_existing":
+            anchors = discover_bill_months(sharepoint, drive, bill,
+                                          datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date())
+        manifest["source_months"] = [anchor.strftime("%Y-%m") for anchor in anchors]
         if cfg.get("fetch_product_catalogue", False):
             cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
             manifest["product_catalogue_count"] = cfg["product_catalogue_count"]
         if cfg.get("fetch_customer_catalogue", False):
             cfg = enrich_customer_config(MobiWorkClient.from_env(), cfg)
             manifest["customer_catalogue"] = cfg["customer_catalogue_audit"]
-        reports = load_reports(ROOT / "config/reports.json")
-        bill = next(r for r in reports if r.key == "bill" and r.enabled)
-        anchors = month_anchors(incremental_target_dates(os.environ.get("SYNC_SCOPE", "today"),
-                                                       int(os.environ.get("LOOKBACK_DAYS", "1"))))
-        sharepoint, drive = None, ""
-        if not dry:
-            sharepoint = SemanticSharePointClient.from_env()
-            drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
-            if not drive:
-                drive = sharepoint.get_drive_id(sharepoint.get_site_id())
         prepared = []
         for anchor in anchors:
-            if dry:
+            if dry and scope == "touched":
                 source = Path("output") / master_filename(bill.name, anchor)
                 content = source.read_bytes()
             else:
@@ -344,12 +359,16 @@ def run() -> dict[str, Any]:
                     raise ValueError("Required bill monthly master missing")
             # dtype=object preserves identifiers and source cell values.
             detail = pd.read_excel(BytesIO(content), sheet_name="ChiTietSP", dtype=object)
+            source_rows = len(detail)
+            detail, outside_month = select_order_month(detail, anchor)
             report, issues = build_report(detail, cfg)
-            path = write_workbook({"BaoCao": report, "CanBoSung": issues,
+            path = write_detail_workbook({"BaoCao": report, "CanBoSung": issues,
                                    "DonViTinh": unit_trace(detail, report, cfg)},
-                                  f"BaoCaoChiTietCTKM_{anchor:%Y-%m}.xlsx")
+                                  f"BaoCaoChiTietCTKM_{anchor:%Y-%m}.xlsx", anchor)
             result = {"month": f"{anchor:%Y-%m}", "rows": len(report), "issues": len(issues),
-                      "filename": path.name, "source_scope": "requested_dates" if dry else "monthly_master"}
+                      "filename": path.name, "source_scope": "requested_dates" if dry and scope == "touched" else "monthly_master",
+                      "source_rows": source_rows, "outside_order_month_rows": outside_month,
+                      "source_sha256": hashlib.sha256(content).hexdigest()}
             allowed_fields = {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
                               "Brand", "Package", "Loại KH"}
             result["blocking_issues"] = int((~issues["Trường"].isin(allowed_fields)).sum()) if not issues.empty else 0

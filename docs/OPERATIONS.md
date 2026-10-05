@@ -443,3 +443,25 @@ Nhánh thử nghiệm vẫn cần OIDC subject được Entra tin cậy; dùng c
 không làm token của nhánh thử nghiệm thành token nhánh production. Chưa merge
 PR thì lịch main chưa có các bước mới. Không đổi subject GitHub hay chạy mã nhánh
 thử nghiệm dưới token main để bỏ qua kiểm tra tin cậy.
+
+Xuất lịch sử CTKM theo mẫu: chạy cùng workflow `MobiWork DMS Sync`, chọn
+`report_scope=promotion_history`. Chế độ này đọc các folder năm/tháng có sẵn
+trong `04_DonBanHang`, kiểm tra workbook master chuẩn, rồi tạo mỗi tháng một
+file. Không refetch hoặc ghi đè các report đơn hàng/ảnh, không gán snapshot
+PromotionBonus hiện tại thành lịch sử. Dry-run lịch sử chỉ đọc SharePoint và
+tạo file local; không upload. Tháng tương lai bị loại; folder tháng thiếu master
+là lỗi, không tự tạo báo cáo rỗng. Giới hạn 120 tháng.
+
+Ngày `ngay_dat` (fallback `ngay_ban_hang`) xác định tháng báo cáo. Dòng thuộc
+tháng khác được đếm trong `outside_order_month_rows`; ngày lỗi vẫn giữ để gate
+chặn xuất. Manifest ghi source month, số dòng nguồn và SHA-256 workbook nguồn.
+Sheet BaoCao dùng header tại dòng 4, 26 cột, tiêu đề, màu header và độ rộng cột
+trích từ file mẫu, kèm tháng báo cáo. Không lưu dữ liệu mẫu khách hàng vào Git.
+
+Đối chiếu Paybonus chưa được khẳng định: API hiện trả Data rỗng; danh mục có
+cả chương trình đã khóa nhưng chưa tìm thấy mã Q3 cụ thể trong mẫu. Các dòng
+hiện tại dựa trên liên kết promotion/CTKM trên Bill; đơn tích lũy không có liên
+kết đó chưa được tự suy là thuộc chương trình. Cần đối chiếu phiên Paybonus web
+đã đăng nhập trước khi xác nhận độ phủ của chương trình trả thưởng và các đơn
+tích lũy. Không phân bổ tổng thưởng khách hàng vào từng đơn hoặc gọi thưởng đạt
+được là hàng tặng thực tế.

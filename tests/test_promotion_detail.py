@@ -134,7 +134,7 @@ class PromotionDetailTests(unittest.TestCase):
                      patch.object(module, 'Path', side_effect=lambda value, actual_path=actual_path, tmp=tmp: actual_path(tmp) / value), \
                      patch.object(module, 'load_reports', return_value=[bill]), \
                      patch.object(module, 'incremental_target_dates', return_value=[date(2026, 10, 5)]), \
-                     patch.object(module, 'write_workbook', return_value=actual_path('report.xlsx')), \
+                     patch.object(module, 'write_detail_workbook', return_value=actual_path('report.xlsx')), \
                      patch.object(module.SemanticSharePointClient, 'from_env', return_value=sp) as factory, \
                      patch.dict(os.environ, {'DRY_RUN': 'true' if dry else 'false', 'SHAREPOINT_DRIVE_ID': 'drive',
                                              'ALLOW_INCOMPLETE_DETAIL': 'false',
