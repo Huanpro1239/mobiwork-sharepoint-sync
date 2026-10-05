@@ -119,6 +119,41 @@ class FakeSession:
         return response
 
 
+class JsonRequestTests(unittest.TestCase):
+    def test_get_json_uses_shared_get_and_returns_object(self):
+        session = FakeSession([{"status": True, "data": [{"id": 1}]}])
+        client = MobiWorkClient(
+            "user",
+            "token",
+            min_interval_seconds=0,
+            max_retries=0,
+            session=session,
+        )
+
+        payload = client.get_json(
+            "https://example.test/report",
+            {"id_ct": "p1"},
+            operation_key="promotion_bonus_report",
+            request_number=7,
+        )
+
+        self.assertEqual(payload["data"], [{"id": 1}])
+        self.assertEqual(session.calls[0][1], {"id_ct": "p1"})
+
+    def test_get_json_rejects_status_false(self):
+        session = FakeSession([{"status": False, "message": "bad request"}])
+        client = MobiWorkClient(
+            "user",
+            "token",
+            min_interval_seconds=0,
+            max_retries=0,
+            session=session,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "bad request"):
+            client.get_json("https://example.test/report")
+
+
 class PaginationIntegrityTests(unittest.TestCase):
     def test_total_count_controls_pagination_and_is_verified(self):
         session = FakeSession(
