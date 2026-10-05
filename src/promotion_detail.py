@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
@@ -56,7 +57,8 @@ def load_config() -> dict[str, Any]:
 def text(value: Any) -> str:
     if value is None or (not isinstance(value, (list, dict)) and pd.isna(value)):
         return ""
-    return str(value).strip()
+    # NFC so Vietnamese units/codes compare equal whatever the source encoding.
+    return unicodedata.normalize("NFC", str(value)).strip()
 
 
 def number(value: Any) -> Decimal:

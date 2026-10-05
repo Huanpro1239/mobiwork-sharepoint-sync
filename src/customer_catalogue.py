@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import unicodedata
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -19,7 +20,7 @@ def value(row: dict[str, Any], field: str) -> str:
         return ""
     if isinstance(raw, (dict, list, bool)):
         raise ValueError(f"Customer catalogue {field} must be scalar text")
-    return str(raw).strip()
+    return unicodedata.normalize("NFC", str(raw)).strip()
 
 
 def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -32,7 +33,7 @@ def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[
     seen_pages: set[str] = set()
     fields: set[str] = set()
     structured_fields: dict[str, int] = {}
-    expected, count, unkeyed = None, 0, 0
+    expected, count, unkeyed, duplicates = None, 0, 0, 0
     for page in range(1, 10_001):
         payload = client.get_json("https://openapi.mobiwork.vn/OpenAPI/V1/Customer",
                                   {**params, "page_number": page},
@@ -65,7 +66,12 @@ def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[
                     metadata[label] = value(row, source)
             metadata["customer_code"] = value(row, "makh")
             if identity in customers:
-                raise ValueError("Duplicate Customer catalogue ID; refusing ambiguous mapping")
+                # Pages ordered by creation date can overlap while customers are being
+                # created; an identical repeat is safe to collapse, a conflict is not.
+                if customers[identity] != metadata:
+                    raise ValueError("Duplicate Customer catalogue ID; refusing ambiguous mapping")
+                duplicates += 1
+                continue
             customers[identity] = metadata
         if not rows or (expected is not None and count >= expected):
             break
@@ -76,7 +82,7 @@ def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[
     result = copy.deepcopy(cfg)
     result["customer_catalogue"] = customers
     result["customer_catalogue_audit"] = {"count": len(customers), "unkeyed_rows": unkeyed,
-                                          "source_rows": count, "fields": sorted(fields),
+                                          "source_rows": count, "exact_duplicate_rows": duplicates, "fields": sorted(fields),
                                           "structured_fields_not_mapped": structured_fields,
                                           "from_date": start, "to_date": end,
                                           "date_type": "cdate", "join_key": "ID=ID_khachhang"}
