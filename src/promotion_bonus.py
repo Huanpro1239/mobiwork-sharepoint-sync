@@ -63,6 +63,16 @@ def _expect_object_list(payload: dict[str, Any], key: str, operation: str) -> li
     return value
 
 
+def _optional_object_list(
+    payload: dict[str, Any],
+    key: str,
+    operation: str,
+) -> list[dict[str, Any]]:
+    if payload.get(key) is None:
+        return []
+    return _expect_object_list(payload, key, operation)
+
+
 def _api_total(payload: dict[str, Any], operation: str) -> int | None:
     value = payload.get("total")
     if value in (None, ""):
@@ -199,12 +209,12 @@ def fetch_snapshot(
                 f"API total={expected_total}, fetched={len(current_data)}"
             )
 
-        current_targets = _expect_object_list(
+        current_targets = _optional_object_list(
             payload,
             "arrChiTieu",
             f"PromotionBonusReport id_ct={program_id}",
         )
-        current_rewards = _expect_object_list(
+        current_rewards = _optional_object_list(
             payload,
             "arrTraThuong",
             f"PromotionBonusReport id_ct={program_id}",
