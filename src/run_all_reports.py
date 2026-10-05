@@ -38,11 +38,13 @@ def incremental_target_dates(sync_scope: str, lookback_days: int) -> list[date]:
 
     if scope == "today":
         return [today_vn]
+    if scope == "month_to_date":
+        return [today_vn.replace(day=day) for day in range(1, today_vn.day + 1)]
     if scope == "yesterday":
         return [today_vn - timedelta(days=1)]
     if scope == "lookback":
         return core.target_dates(lookback_days)
-    raise ValueError("SYNC_SCOPE must be today, yesterday, or lookback")
+    raise ValueError("SYNC_SCOPE must be today, yesterday, lookback, or month_to_date")
 
 
 def group_target_dates_by_month(target_dates: list[date]) -> list[list[date]]:
