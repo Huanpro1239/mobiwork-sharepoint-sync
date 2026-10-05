@@ -37,7 +37,7 @@ def load_config() -> dict[str, Any]:
     cfg = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
         raise ValueError("publish_enabled must be an explicit boolean")
-    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue"):
+    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "allow_incomplete_publish"):
         if type(cfg.get(flag, False)) is not bool:
             raise ValueError(f"{flag} must be an explicit boolean")
     for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
@@ -314,7 +314,8 @@ def run() -> dict[str, Any]:
         cfg = load_config()
         if os.environ.get("PUBLISH_PROMOTION_DETAIL", "false").casefold() == "true":
             cfg["publish_enabled"] = True
-        allow_incomplete = os.environ.get("ALLOW_INCOMPLETE_DETAIL", "false").casefold() == "true"
+        allow_incomplete = (cfg.get("allow_incomplete_publish", False)
+                            or os.environ.get("ALLOW_INCOMPLETE_DETAIL", "false").casefold() == "true")
         manifest["allow_incomplete_publish"] = allow_incomplete
         if cfg.get("fetch_product_catalogue", False):
             cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
@@ -349,9 +350,14 @@ def run() -> dict[str, Any]:
                                   f"BaoCaoChiTietCTKM_{anchor:%Y-%m}.xlsx")
             result = {"month": f"{anchor:%Y-%m}", "rows": len(report), "issues": len(issues),
                       "filename": path.name, "source_scope": "requested_dates" if dry else "monthly_master"}
+            allowed_fields = {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
+                              "Brand", "Package", "Loại KH"}
+            result["blocking_issues"] = int((~issues["Trường"].isin(allowed_fields)).sum()) if not issues.empty else 0
             manifest["results"].append(result)
             prepared.append((anchor, path, result))
         incomplete = any(result["issues"] for _, _, result in prepared)
+        if not dry and cfg.get("publish_enabled", False) and any(result["blocking_issues"] for _, _, result in prepared):
+            raise ValueError("CTKM report has invalid source values or identity links. Nothing published.")
         if incomplete and not dry and cfg.get("publish_enabled", False) and not allow_incomplete:
             raise ValueError("CTKM report needs mappings; see CanBoSung sheet. Nothing published.")
         if not dry and cfg.get("publish_enabled", False):

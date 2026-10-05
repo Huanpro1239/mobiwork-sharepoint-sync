@@ -21,16 +21,6 @@ on:
         required: true
         type: boolean
         default: false
-      publish_promotion_detail:
-        description: "Publish customer promotion detail for this manual run"
-        required: true
-        type: boolean
-        default: false
-      allow_incomplete_detail:
-        description: "Publish detail with known missing mappings retained in CanBoSung"
-        required: true
-        type: boolean
-        default: false
   schedule:
     # Intraday refresh every 3 hours during business hours, Monday-Saturday.
     # Completed days are finalized at 09:00 and reconciled nightly (D-1..D-3).
@@ -61,6 +51,14 @@ env:
   # (see src/sharepoint.py) so long runs never outlive the azure/login assertion.
   AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
+  MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
+  MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
+  MOBIWORK_MAX_RETRIES: "8"
+  MOBIWORK_TIMEOUT_SECONDS: "120"
+  SHAREPOINT_MAX_RETRIES: "6"
+  SHAREPOINT_TIMEOUT_SECONDS: "120"
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
 
 jobs:
   sync:
@@ -120,9 +118,6 @@ jobs:
           echo "Resolved sync scope: $scope"
 
       - name: Validate MobiWork secrets
-        env:
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
-          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -142,9 +137,6 @@ jobs:
 
       - name: Validate Microsoft OIDC configuration
         if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -178,17 +170,9 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
-          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
-          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
-          MOBIWORK_MAX_RETRIES: "8"
-          MOBIWORK_TIMEOUT_SECONDS: "120"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-          SHAREPOINT_MAX_RETRIES: "6"
-          SHAREPOINT_TIMEOUT_SECONDS: "120"
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/run_all_reports.py
 
       - name: Build Data cham anh workbook
@@ -197,11 +181,8 @@ jobs:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-          SHAREPOINT_MAX_RETRIES: "6"
-          SHAREPOINT_TIMEOUT_SECONDS: "120"
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
           # Intraday refreshes skip the full-month rebuild when no monthly master
           # changed. The 09:00 finalization and manual runs always rebuild.
@@ -213,31 +194,15 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
-          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
-          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
-          MOBIWORK_MAX_RETRIES: "8"
-          MOBIWORK_TIMEOUT_SECONDS: "120"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-          SHAREPOINT_MAX_RETRIES: "6"
-          SHAREPOINT_TIMEOUT_SECONDS: "120"
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: python src/promotion_bonus.py
 
       - name: Build promotion detail report
         id: promotion_detail
         env:
-          MOBIWORK_USER: ${{ secrets.MOBIWORK_USER || secrets.MOBIWORK_USER_ID }}
-          MOBIWORK_TOKEN: ${{ secrets.MOBIWORK_TOKEN }}
-          MOBIWORK_MIN_INTERVAL_SECONDS: "1.5"
-          MOBIWORK_MAX_RETRIES: "8"
-          MOBIWORK_TIMEOUT_SECONDS: "120"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-          PUBLISH_PROMOTION_DETAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_promotion_detail || false }}
-          ALLOW_INCOMPLETE_DETAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_incomplete_detail || false }}
         run: python src/promotion_detail.py
 
       - name: Publish run summary

@@ -349,10 +349,10 @@ Ví dụ hệ số chỉ minh họa 1/24; phải thay bằng quy cách chính th
 Không đưa credential hoặc dữ liệu khách hàng đầy đủ vào Git; chỉ dùng mapping
 nghiệp vụ đã được phép lưu trữ trong config, hoặc cấu hình runtime riêng.
 
-`publish_enabled=false` hiện tại: workflow tự tạo báo cáo và danh sách còn thiếu,
-nhưng chưa ghi báo cáo này lên SharePoint. Sau khi mapping/định nghĩa dữ liệu được
-xác nhận và dry-run không còn issue, đặt `publish_enabled=true`. Production sẽ
-kiểm toàn bộ tháng chuẩn bị trước khi upload, từ chối publish nếu có issue. Folder:
+`publish_enabled=true` hiện tại theo yêu cầu người dùng: báo cáo chạy và xuất
+cùng luồng đơn hàng/chấm ảnh. `allow_incomplete_publish=true` cho phép giữ cảnh
+báo thiếu metadata trong `CanBoSung`; lỗi số lượng, giá, ngày và khóa khách hàng
+vẫn chặn xuất. Production kiểm toàn bộ tháng chuẩn bị trước khi upload. Folder:
 `07_BaoCaoChiTietCTKM/YYYY/MM/`. Các upload dùng semantic no-op/staged verification
 hiện có. Lỗi không rollback 4 report hay Promotion Bonus đã publish trước đó.
 Audit: `output/promotion_detail_manifest.json`; Summary hiển thị `needs_mapping`
@@ -431,9 +431,15 @@ lưu số lượng, tên trường, phạm vi ngày và khóa nối, không lưu
 Các giá trị này vẫn có trong workbook báo cáo theo mẫu. Thiếu ID hoặc không khớp
 được khách hàng vẫn ghi nhận các trường còn thiếu, không bịa giá trị thay thế.
 
-Manual workflow có `publish_promotion_detail=true` để bật xuất riêng lần chạy,
-không sửa mặc định của config. Khi người dùng yêu cầu xuất bản với các mapping
-đã biết là còn thiếu, dùng thêm `allow_incomplete_detail=true` và `dry_run=false`.
-Workbook giữ sheet `CanBoSung`; manifest ghi `published_with_issues`, số issue,
-đường dẫn remote và `workbook_published`. Hai cờ mặc định false; schedule không
-tự bỏ qua gate thiếu mapping. Các lỗi dữ liệu/khóa/phân trang vẫn dừng như trước.
+CTKM dùng cùng workflow, lịch chạy, MobiWork secrets, Azure app, SharePoint drive
+và cấu hình retry với đơn hàng/chấm ảnh; không cần app hoặc secret riêng. Đã bỏ
+hai input xuất CTKM riêng. `dry_run=false` xuất tất cả báo cáo bật trong config;
+`dry_run=true` không ghi SharePoint. Workbook giữ `CanBoSung`; manifest ghi
+`published_with_issues`, số issue, đường dẫn remote và `workbook_published` khi
+xuất bản với metadata thiếu theo yêu cầu đã xác nhận. Đặt
+`allow_incomplete_publish=false` để khôi phục gate mọi metadata phải đầy đủ.
+
+Nhánh thử nghiệm vẫn cần OIDC subject được Entra tin cậy; dùng chung Azure app
+không làm token của nhánh thử nghiệm thành token nhánh production. Chưa merge
+PR thì lịch main chưa có các bước mới. Không đổi subject GitHub hay chạy mã nhánh
+thử nghiệm dưới token main để bỏ qua kiểm tra tin cậy.

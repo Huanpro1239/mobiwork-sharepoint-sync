@@ -225,7 +225,11 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
         bonus = text.split('      - name: Sync Promotion Bonus current snapshot')[1].split('      - name: Publish run summary')[0]
         self.assertNotIn('continue-on-error', bonus)
         self.assertNotIn('if:', bonus)
-        self.assertIn('DRY_RUN:', bonus)
+        shared = text.split('\nenv:\n')[1].split('\njobs:')[0]
+        self.assertIn('DRY_RUN:', shared)
+        self.assertIn('MOBIWORK_TOKEN:', shared)
+        self.assertNotIn('MOBIWORK_TOKEN:', bonus)
+        self.assertEqual(text.count('uses: azure/login@'), 1)
         self.assertLess(text.index('run: python src/run_all_reports.py'), text.index('run: python src/promotion_bonus.py'))
         self.assertLess(text.index('run: python src/run_data_cham_anh.py'), text.index('run: python src/promotion_bonus.py'))
         self.assertIn('path: output/*.xlsx', text)
@@ -276,4 +280,7 @@ class PromotionDetailWorkflowTests(unittest.TestCase):
         self.assertIn('path: output/*.xlsx', text)
         import json
         cfg = json.loads((ROOT / 'config/promotion_detail.json').read_text(encoding='utf-8'))
-        self.assertIs(cfg['publish_enabled'], False)
+        self.assertIs(cfg['publish_enabled'], True)
+        self.assertIs(cfg['allow_incomplete_publish'], True)
+        self.assertNotIn('publish_promotion_detail:', text)
+        self.assertNotIn('allow_incomplete_detail:', text)

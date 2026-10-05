@@ -109,17 +109,18 @@ class PromotionDetailTests(unittest.TestCase):
         for dry, missing, enabled, allow in [(True, False, False, False), (True, True, True, False),
                                              (False, False, True, False), (False, True, True, False),
                                              (False, True, False, False), (False, True, True, True),
-                                             (True, True, True, True)]:
+                                             (True, True, True, True), (False, 'price', True, True)]:
             with self.subTest(dry=dry, missing=missing, enabled=enabled), tempfile.TemporaryDirectory() as tmp:
                 cfg = config()
-                cfg['publish_enabled'] = enabled and not allow
+                cfg['publish_enabled'] = enabled
+                cfg['allow_incomplete_publish'] = allow
                 if missing:
                     cfg['products'] = {}
                 config_path = Path(tmp) / 'config.json'
                 config_path.write_text(json.dumps(cfg), encoding='utf-8')
                 buffer = BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    pd.DataFrame([source()]).to_excel(writer, sheet_name='ChiTietSP', index=False)
+                    pd.DataFrame([source(gia_truoc_vat=None) if missing == 'price' else source()]).to_excel(writer, sheet_name='ChiTietSP', index=False)
                 sp = Mock()
                 sp.download_file_bytes.return_value = buffer.getvalue()
                 sp.upload_file.return_value = {'upload_skipped': True}
@@ -136,9 +137,9 @@ class PromotionDetailTests(unittest.TestCase):
                      patch.object(module, 'write_workbook', return_value=actual_path('report.xlsx')), \
                      patch.object(module.SemanticSharePointClient, 'from_env', return_value=sp) as factory, \
                      patch.dict(os.environ, {'DRY_RUN': 'true' if dry else 'false', 'SHAREPOINT_DRIVE_ID': 'drive',
-                                             'ALLOW_INCOMPLETE_DETAIL': 'true' if allow else 'false',
-                                             'PUBLISH_PROMOTION_DETAIL': 'true' if allow and enabled else 'false'}):
-                    blocked = not dry and missing and enabled and not allow
+                                             'ALLOW_INCOMPLETE_DETAIL': 'false',
+                                             'PUBLISH_PROMOTION_DETAIL': 'false'}):
+                    blocked = not dry and missing and enabled and (not allow or missing == 'price')
                     expected_status = ('published_with_issues' if missing and enabled and allow and not dry
                                        else 'needs_mapping' if missing else 'success')
                     if blocked:
@@ -162,6 +163,7 @@ class PromotionDetailTests(unittest.TestCase):
 class PromotionDetailConfigTests(unittest.TestCase):
     def test_invalid_config_cannot_enable_publish(self):
         for cfg in ([], {'publish_enabled': 'false'},
+                    {'publish_enabled': True, 'allow_incomplete_publish': 'true'},
                     {'publish_enabled': True, 'employees': []},
                     {'publish_enabled': False, 'products': {'sku': 'bad'}},
                     {'publish_enabled': False, 'program_codes': {'name': ''}}):

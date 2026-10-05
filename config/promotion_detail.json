@@ -1,5 +1,6 @@
 {
-  "publish_enabled": false,
+  "publish_enabled": true,
+  "allow_incomplete_publish": true,
   "fetch_product_catalogue": true,
   "fetch_customer_catalogue": true,
   "customer_catalogue_start_date": "01/01/1900",
