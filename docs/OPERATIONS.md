@@ -64,7 +64,7 @@ thủ công                     -> historical reconcile, full-month rebuild, boo
 
 GitHub chỉ giữ một run đang chờ trong concurrency group `mobiwork-sharepoint-production`; run đang chờ cũ hơn sẽ bị hủy khi có run mới xếp hàng. Watchdog cảnh báo nếu full-month rebuild gần nhất không thành công, nên một lần rebuild khóa sổ bị hủy sẽ không bị bỏ sót.
 
-Pipeline production kết thúc ở monthly master của 4 báo cáo và workbook Data chấm ảnh trên SharePoint. Không tải/copy file ảnh, không chấm điểm ảnh và không tạo KPI nghiệp vụ.
+Pipeline production kết thúc ở monthly master của 4 báo cáo lịch sử, workbook Data chấm ảnh và snapshot Báo cáo trả thưởng trên SharePoint. Không tải/copy file ảnh, không chấm điểm ảnh và không tạo KPI nghiệp vụ.
 
 ## Monthly master
 
@@ -172,6 +172,27 @@ dry_run     = false
 
 Sheet `Data_anh` có một dòng cho mỗi link ảnh viếng thăm (link gốc `hinh_anh` của MobiWork, không copy ảnh). Sheet `Data_don_hang` là chi tiết đơn bán hàng. Workbook không đổi nội dung thì không ghi lại.
 
+## Báo cáo trả thưởng
+
+Trong mỗi lần `MobiWork DMS Sync`, sau khi luồng report chính và Data chấm ảnh hoàn tất, `src/promotion_bonus.py` refresh snapshot:
+
+```text
+06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
+```
+
+Luồng thực hiện:
+
+1. phân trang `/OpenAPI/V1/PromotionBonus` với `page_size <= 200`;
+2. yêu cầu mỗi chương trình có `_id`;
+3. gọi `/OpenAPI/V1/PromotionBonusReport?id_ct=<id>` riêng cho từng chương trình;
+4. kiểm `total == len(data)` khi API trả `total`;
+5. build 4 sheet `ChuongTrinh`, `Data`, `ChiTieu`, `TraThuong`;
+6. staged semantic upload vào SharePoint; workbook không đổi thì tránh ghi lại;
+7. ghi audit `output/promotion_bonus_manifest.json` và state tại `06_BaoCaoTraThuong/_sync_state/promotion_bonus.json`.
+
+Không chạy Promotion Bonus trong bootstrap/full-month rebuild/historical reconcile. Endpoint report không có ngày/as-of nên rebuild dữ liệu cũ sẽ tạo lịch sử giả. File `Current` luôn là snapshot mới nhất tại thời điểm sync.
+
+
 ## Concurrency và an toàn
 
 Report sync, Data chấm ảnh, full-month rebuild, historical reconciliation và bootstrap dùng chung concurrency group `mobiwork-sharepoint-production` để tránh hai writer sửa SharePoint đồng thời.
@@ -190,7 +211,7 @@ Với mismatch có thể sửa, nó chạy một lần reconciliation có giới
 
 ## Audit và giám sát
 
-Report/rebuild/bootstrap/historical reconciliation ghi `output/sync_manifest.json`; Data chấm ảnh backfill ghi `output/data_cham_anh_backfill_manifest.json`.
+Report/rebuild/bootstrap/historical reconciliation ghi `output/sync_manifest.json`; Data chấm ảnh backfill ghi `output/data_cham_anh_backfill_manifest.json`; Promotion Bonus snapshot ghi `output/promotion_bonus_manifest.json`.
 
 Bootstrap còn ghi readiness state tại:
 
