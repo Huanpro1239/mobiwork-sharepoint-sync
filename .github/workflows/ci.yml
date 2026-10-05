@@ -39,6 +39,51 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      - name: TEMP probe MobiWork Swagger
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re
+          import urllib.parse
+          import urllib.request
+
+          base = "https://dms.mobiwork.vn"
+          ui = base + "/openapi/"
+
+          def fetch(url):
+              print(f"--- FETCH {url}")
+              req = urllib.request.Request(
+                  url,
+                  headers={"User-Agent": "Mozilla/5.0 GitHubActions schema probe"},
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      body = resp.read().decode("utf-8", "replace")
+                      print("STATUS", resp.status, "FINAL", resp.geturl(), "LEN", len(body))
+                      print(body[:12000])
+                      return body
+              except Exception as exc:
+                  print("ERROR", type(exc).__name__, exc)
+                  return ""
+
+          html = fetch(ui)
+          for src in re.findall(r'<script[^>]+src=["\']([^"\']+)', html, flags=re.I):
+              fetch(urllib.parse.urljoin(ui, src))
+
+          for path in [
+              "/openapi/v3/api-docs",
+              "/openapi/v2/api-docs",
+              "/openapi/api-docs",
+              "/openapi/swagger.json",
+              "/openapi/openapi.json",
+              "/v3/api-docs",
+              "/v2/api-docs",
+          ]:
+              body = fetch(base + path)
+              if "PromotionBonusReport" in body or "findPromotionBonusReport" in body:
+                  print("FOUND_PROMOTION_BONUS_SCHEMA_AT", base + path)
+          PY
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
