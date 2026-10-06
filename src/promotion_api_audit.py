@@ -134,10 +134,15 @@ def main(argv=None):
     parser.add_argument("--sttt", default=os.getenv("PROMOTION_BONUS_STTT", ""),
                         help="Explicit raw probe value; no calculation meaning is inferred")
     parser.add_argument("--golden", type=Path, help="Local DMS workbook; never upload it")
+    parser.add_argument("--ui-response", type=Path, help="Inspect a local Chrome JSON response without API credentials")
     args = parser.parse_args(argv)
     try:
-        audit = run_audit(MobiWorkClient.from_env(), load_config(), args.from_date,
-                          args.to_date, args.program, args.sttt, args.calculation_mode)
+        if args.ui_response:
+            payload = json.loads(args.ui_response.read_text(encoding="utf-8-sig"))
+            audit = ui_response_summary(payload)
+        else:
+            audit = run_audit(MobiWorkClient.from_env(), load_config(), args.from_date,
+                              args.to_date, args.program, args.sttt, args.calculation_mode)
         if args.golden:
             audit["golden_reference"] = golden_summary(args.golden)
             audit["row_count_matches_golden"] = audit["customer_rows"] == audit["golden_reference"]["customer_rows"]
@@ -146,13 +151,42 @@ def main(argv=None):
         _save(audit)
         raise SystemExit("API diagnostic failed; see sanitized error_type") from None
     _save(audit)
-    print(f"API diagnostic: {audit['program_count']} programs, {audit['customer_rows']} customer rows; evidence incomplete")
+    print(f"Diagnostic status: {audit['status']}; see sanitized metadata in output/promotion_api_audit.json")
 
 
 def _save(audit):
     path = Path("output/promotion_api_audit.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(audit, indent=2), encoding="utf-8")
+
+
+def ui_response_summary(payload):
+    """Preserve envelope multiplicity; raw order results are not customer rewards."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("result"), list):
+        raise ValueError("UI response requires a result array")
+    envelopes = payload["result"]
+    if any(not isinstance(e, dict) or not isinstance(e.get("result"), list) for e in envelopes):
+        raise ValueError("Only observed nested-envelope schema is supported")
+    rows = [r for envelope in envelopes for r in envelope["result"]]
+    if any(not isinstance(r, dict) for r in rows):
+        raise ValueError("Nested records must be objects")
+    dates = []
+    for envelope in envelopes:
+        query = envelope.get("options", {}).get("$query", {})
+        span = query.get("data.ngay_giao_hang.viewData", {})
+        if type(span.get("$gte")) is int and type(span.get("$lte")) is int:
+            dates.append({"from_epoch_ms": span["$gte"], "to_epoch_ms": span["$lte"]})
+    return {"status": "evidence_incomplete", "schema": "nested_record_envelopes",
+            "envelope_count": len(envelopes),
+            "nonempty_envelopes": sum(bool(e["result"]) for e in envelopes),
+            "nested_record_count": len(rows), "customer_rows": None,
+            "all_envelopes_are_orders": bool(envelopes) and all(e.get("RecordType") == "_Orders" for e in envelopes),
+            "record_field_paths": sorted(field_paths(rows)),
+            "delivery_date_filters": dates,
+            "target_count": len(payload.get("arrChiTieu") or []),
+            "reward_count": len(payload.get("arrTraThuong") or []),
+            "missing_evidence": ["final customer/program/level report rows", "target and reward definitions",
+                                 "authenticated UI-service access"]}
 
 
 def golden_summary(path):

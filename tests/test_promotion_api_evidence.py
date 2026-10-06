@@ -15,6 +15,23 @@ import promotion_bonus as bonus
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_nested_order_envelopes_are_not_counted_as_customer_reward_rows(self):
+        row = {'_id': 'private-id', 'data': {'sdt': {'viewData': 'SECRET'}}}
+        envelope = {'RecordType': '_Orders', 'result': [row], 'options': {'$query': {
+            'settings.makh': {'$in': ['PRIVATE']},
+            'data.ngay_giao_hang.viewData': {'$gte': 1790787600000, '$lte': 1793465999999}}}}
+        result = audit.ui_response_summary({'result': [envelope, envelope],
+                                           'arrChiTieu': [], 'arrTraThuong': []})
+        self.assertEqual(result['nested_record_count'], 2)
+        self.assertIsNone(result['customer_rows'])
+        self.assertTrue(result['all_envelopes_are_orders'])
+        self.assertEqual(result['delivery_date_filters'][0]['to_epoch_ms'], 1793465999999)
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        self.assertNotIn('SECRET', json.dumps(result))
+        for payload in ({}, {'result': [{'ma': 'customer'}]}, {'result': [{'result': [1]}]}):
+            with self.assertRaises(ValueError):
+                audit.ui_response_summary(payload)
+
     def test_ui_contract_matches_captured_post_dates_and_array_without_guessed_calculation(self):
         ids = [f'{i:024x}' for i in range(1, 58)]
         request = audit.ui_report_request('a' * 24, ids, '2026-10-01', '2026-10-31')
