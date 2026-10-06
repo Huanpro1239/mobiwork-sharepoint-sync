@@ -51,3 +51,7 @@ Only Promotion Bonus and existing SharePoint auth/library resolution are eligibl
 ## What is needed to finish
 
 An authenticated Paybonus page (the accessible browser currently redirects to sign-in), or a sanitized request captured for the October 1–31 / all / total price×quantity / no department/employee case. Needed: endpoint and method, parameter names and formats, selected calculation value, program selection representation, and a sanitized customer response schema. Do not provide cookies, Authorization headers, tokens, phone numbers or addresses. Once available, implement the request and region sheets, compare all 250 golden rows at customer+program+level grain, and test target/actual/remaining/rate values. Counts >0 are insufficient acceptance.
+
+## Authenticated October diagnostic result
+
+Run 37410012675 completed successfully with catalogue dates 01/10/2026–31/10/2026. It returned 57 catalogue programs and zero report customer rows; the report requests still contained only id_ct because date/calculation bindings are unknown. Golden reference is 250 rows, so the count comparison fails (0 != 250). Diagnostic success is not business verification success. No workbook/customer values were uploaded as artifacts. CI 37410154959 passed on 5e61fd9. The user will provide sanitized request parameters from their signed-in Chrome session; Chrome is not exposed to the connected computer-use tools.
