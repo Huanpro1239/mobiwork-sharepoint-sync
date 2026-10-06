@@ -222,6 +222,18 @@ def main(argv=None):
             hits = audit["programs_with_rows_by_variant"][variant]
             print(f"  date_variant={variant}: customer_rows={rows}, programs_with_rows={hits}")
         print(f"  best_variant={audit['best_variant']}")
+        _github_notice(audit)
+
+
+def _github_notice(audit):
+    """Expose sanitized per-variant counts as run annotations (no customer values)."""
+    if os.getenv("GITHUB_ACTIONS") != "true":
+        return
+    counts = ", ".join(
+        f"{v}={n} rows/{audit['programs_with_rows_by_variant'][v]} programs"
+        for v, n in audit["customer_rows_by_variant"].items())
+    print(f"::notice title=PromotionBonusReport date probe::{counts}; "
+          f"best_variant={audit['best_variant']}; programs={audit['program_count']}")
 
 
 def _save(audit):
