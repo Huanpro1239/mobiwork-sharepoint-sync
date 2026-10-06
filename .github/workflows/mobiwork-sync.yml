@@ -29,6 +29,10 @@ on:
         description: "Optional explicit documented sttt probe value; meaning unverified"
         type: string
         default: ""
+      bonus_date_variants:
+        description: "Audit only: report date probes (id_only,epoch_ui,epoch_full_day,ddmmyyyy)"
+        type: string
+        default: "id_only,epoch_ui,epoch_full_day,ddmmyyyy"
       sync_scope:
         description: "Target: today, yesterday, or previous N days"
         required: true
@@ -237,6 +241,7 @@ jobs:
           PROMOTION_BONUS_TO_DATE: ${{ inputs.bonus_to_date }}
           PROMOTION_BONUS_PROGRAM: ${{ inputs.bonus_program }}
           PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
+          PROMOTION_BONUS_DATE_VARIANTS: ${{ inputs.bonus_date_variants }}
         run: python src/promotion_api_audit.py
 
       - name: Build promotion detail report

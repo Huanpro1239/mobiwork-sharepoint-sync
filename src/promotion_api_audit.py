@@ -56,6 +56,45 @@ def date_range(start: str = "", end: str = "", today: date | None = None):
     return first, last
 
 
+DATE_VARIANTS = ("id_only", "epoch_ui", "epoch_full_day", "ddmmyyyy")
+
+
+def _local_epoch_ms(d: date, end_of_day: bool = False) -> int:
+    zone = ZoneInfo("Asia/Ho_Chi_Minh")
+    moment = datetime(d.year, d.month, d.day, tzinfo=zone)
+    millis = int(moment.timestamp() * 1000)
+    return millis + 86_399_999 if end_of_day else millis
+
+
+def report_date_params(variant: str, first: date, last: date) -> dict:
+    """Candidate report date bindings. Each is a probe, never assumed correct.
+
+    epoch_ui       -> exactly what the Paybonus page sends (local midnight epoch ms).
+    epoch_full_day -> endDate at 23:59:59.999, as the captured backend query expands it.
+    ddmmyyyy       -> fromdate/todate as documented for the PromotionBonus catalogue.
+    """
+    if variant == "id_only":
+        return {}
+    if variant == "epoch_ui":
+        return {"startDate": _local_epoch_ms(first), "endDate": _local_epoch_ms(last)}
+    if variant == "epoch_full_day":
+        return {"startDate": _local_epoch_ms(first), "endDate": _local_epoch_ms(last, True)}
+    if variant == "ddmmyyyy":
+        return {"fromdate": first.strftime("%d/%m/%Y"), "todate": last.strftime("%d/%m/%Y")}
+    raise ValueError(f"Unknown report date variant: {variant!r}")
+
+
+def parse_variants(raw) -> tuple[str, ...]:
+    items = raw.split(",") if isinstance(raw, str) else list(raw)
+    variants = tuple(dict.fromkeys(v.strip() for v in items if v and v.strip()))
+    if not variants:
+        raise ValueError("At least one report date variant is required")
+    unknown = [v for v in variants if v not in DATE_VARIANTS]
+    if unknown:
+        raise ValueError(f"Unknown report date variant(s): {', '.join(unknown)}")
+    return variants
+
+
 def request_parameters(program_id: str, sttt: str = ""):
     if not program_id or "," in program_id or any(c.isspace() for c in program_id):
         raise ValueError("Use exactly one catalogue program ID")
@@ -86,7 +125,8 @@ def field_paths(value, prefix="", depth=0):
 
 
 def run_audit(client, cfg, start="", end="", program="all", sttt="",
-              calculation_mode=TOTAL_PRICE_QUANTITY):
+              calculation_mode=TOTAL_PRICE_QUANTITY, date_variants=("id_only",)):
+    variants = parse_variants(date_variants)
     if calculation_mode != TOTAL_PRICE_QUANTITY:
         raise ValueError("Unsupported semantic calculation mode; no API enum verified")
     first, last = date_range(start, end)
@@ -107,21 +147,38 @@ def run_audit(client, cfg, start="", end="", program="all", sttt="",
                                   "sttt value for total price multiplied by quantity",
                                   "customer/region/target/reward response schema",
                                   "dated catalogue selection equivalence to DMS all"]}
-    for number, item in enumerate(programs, 1):
-        params = request_parameters(str(item["_id"]), sttt)
-        payload = client.get_json(cfg.report_url, params,
-                                  operation_key="promotion_api_audit", request_number=number)
-        entry = {"request_parameter_names": sorted(params),
-                 "sttt_source": "explicit_caller_probe" if sttt else "omitted",
-                 "response_fields": sorted(field_paths(payload)),
-                 "status": payload.get("status") is True,
-                 "total": payload.get("total") if type(payload.get("total")) is int else None}
-        for key in ("data", "arrChiTieu", "arrTraThuong"):
-            rows = payload.get(key)
-            entry[key] = {"count": len(rows) if isinstance(rows, list) else None,
-                          "fields": sorted(field_paths(rows))}
-        audit["reports"].append(entry)
-    audit["customer_rows"] = sum(r["data"]["count"] or 0 for r in audit["reports"])
+    audit["date_variants"] = list(variants)
+    number = 0
+    for item in programs:
+        base = request_parameters(str(item["_id"]), sttt)
+        for variant in variants:
+            number += 1
+            params = {**base, **report_date_params(variant, first, last)}
+            payload = client.get_json(cfg.report_url, params,
+                                      operation_key="promotion_api_audit", request_number=number)
+            entry = {"date_variant": variant,
+                     "request_parameter_names": sorted(params),
+                     "sttt_source": "explicit_caller_probe" if sttt else "omitted",
+                     "response_fields": sorted(field_paths(payload)),
+                     "status": payload.get("status") is True,
+                     "total": payload.get("total") if type(payload.get("total")) is int else None}
+            for key in ("data", "arrChiTieu", "arrTraThuong"):
+                rows = payload.get(key)
+                entry[key] = {"count": len(rows) if isinstance(rows, list) else None,
+                              "fields": sorted(field_paths(rows))}
+            audit["reports"].append(entry)
+    by_variant = {v: 0 for v in variants}
+    programs_with_rows = {v: 0 for v in variants}
+    for report in audit["reports"]:
+        rows = report["data"]["count"] or 0
+        by_variant[report["date_variant"]] += rows
+        programs_with_rows[report["date_variant"]] += 1 if rows else 0
+    audit["customer_rows_by_variant"] = by_variant
+    audit["programs_with_rows_by_variant"] = programs_with_rows
+    audit["variants_with_rows"] = [v for v in variants if by_variant[v] > 0]
+    best = max(variants, key=lambda v: by_variant[v])
+    audit["best_variant"] = best if by_variant[best] > 0 else None
+    audit["customer_rows"] = by_variant[best]
     return audit
 
 
@@ -133,6 +190,9 @@ def main(argv=None):
     parser.add_argument("--calculation-mode", default=TOTAL_PRICE_QUANTITY)
     parser.add_argument("--sttt", default=os.getenv("PROMOTION_BONUS_STTT", ""),
                         help="Explicit raw probe value; no calculation meaning is inferred")
+    parser.add_argument("--date-variants",
+                        default=os.getenv("PROMOTION_BONUS_DATE_VARIANTS") or ",".join(DATE_VARIANTS),
+                        help="Comma list of report date probes: " + ", ".join(DATE_VARIANTS))
     parser.add_argument("--golden", type=Path, help="Local DMS workbook; never upload it")
     parser.add_argument("--ui-response", type=Path, help="Inspect a local Chrome JSON response without API credentials")
     args = parser.parse_args(argv)
@@ -142,16 +202,26 @@ def main(argv=None):
             audit = ui_response_summary(payload)
         else:
             audit = run_audit(MobiWorkClient.from_env(), load_config(), args.from_date,
-                              args.to_date, args.program, args.sttt, args.calculation_mode)
+                              args.to_date, args.program, args.sttt, args.calculation_mode,
+                              args.date_variants)
         if args.golden:
             audit["golden_reference"] = golden_summary(args.golden)
-            audit["row_count_matches_golden"] = audit["customer_rows"] == audit["golden_reference"]["customer_rows"]
+            golden_rows = audit["golden_reference"]["customer_rows"]
+            audit["row_count_matches_golden"] = audit["customer_rows"] == golden_rows
+            if "customer_rows_by_variant" in audit:
+                audit["golden_match_by_variant"] = {
+                    v: n == golden_rows for v, n in audit["customer_rows_by_variant"].items()}
     except Exception as exc:
         audit = {"status": "failed", "error_type": type(exc).__name__}
         _save(audit)
         raise SystemExit("API diagnostic failed; see sanitized error_type") from None
     _save(audit)
     print(f"Diagnostic status: {audit['status']}; see sanitized metadata in output/promotion_api_audit.json")
+    if "customer_rows_by_variant" in audit:
+        for variant, rows in audit["customer_rows_by_variant"].items():
+            hits = audit["programs_with_rows_by_variant"][variant]
+            print(f"  date_variant={variant}: customer_rows={rows}, programs_with_rows={hits}")
+        print(f"  best_variant={audit['best_variant']}")
 
 
 def _save(audit):

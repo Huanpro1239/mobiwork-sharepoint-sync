@@ -109,6 +109,50 @@ class EvidenceTests(unittest.TestCase):
         with patch.object(audit, 'fetch_programs', return_value=[{'_id': 'a'}]):
             self.assertEqual(audit.run_audit(client, self.cfg)['customer_rows'], 0)
 
+    def test_report_date_variants_match_ui_epoch_and_catalogue_format(self):
+        first, last = date(2026, 10, 1), date(2026, 10, 31)
+        self.assertEqual(audit.report_date_params('id_only', first, last), {})
+        self.assertEqual(audit.report_date_params('epoch_ui', first, last),
+                         {'startDate': 1790787600000, 'endDate': 1793379600000})
+        self.assertEqual(audit.report_date_params('epoch_full_day', first, last),
+                         {'startDate': 1790787600000, 'endDate': 1793465999999})
+        self.assertEqual(audit.report_date_params('ddmmyyyy', first, last),
+                         {'fromdate': '01/10/2026', 'todate': '31/10/2026'})
+        with self.assertRaises(ValueError):
+            audit.report_date_params('guess', first, last)
+        self.assertEqual(audit.parse_variants('epoch_ui, id_only,epoch_ui'), ('epoch_ui', 'id_only'))
+        for raw in ('', 'epoch_ui,unknown'):
+            with self.assertRaises(ValueError):
+                audit.parse_variants(raw)
+
+    def test_each_program_is_probed_per_variant_and_best_variant_reported(self):
+        def fake(url, params, **_):
+            rows = [{'ma': 'SECRET'}] * 3 if 'startDate' in params else []
+            return {'status': True, 'total': len(rows), 'data': rows}
+        client = Mock()
+        client.get_json.side_effect = fake
+        with patch.object(audit, 'fetch_programs', return_value=[{'_id': 'a'}, {'_id': 'b'}]):
+            result = audit.run_audit(client, self.cfg, '2026-10-01', '2026-10-31',
+                                     date_variants='id_only,epoch_ui,ddmmyyyy')
+        self.assertEqual(client.get_json.call_count, 6)
+        self.assertEqual(client.get_json.call_args_list[1].args[1],
+                         {'id_ct': 'a', 'startDate': 1790787600000, 'endDate': 1793379600000})
+        self.assertEqual(result['customer_rows_by_variant'],
+                         {'id_only': 0, 'epoch_ui': 6, 'ddmmyyyy': 0})
+        self.assertEqual(result['programs_with_rows_by_variant']['epoch_ui'], 2)
+        self.assertEqual(result['best_variant'], 'epoch_ui')
+        self.assertEqual(result['customer_rows'], 6)
+        self.assertFalse(result['report_date_binding_verified'])
+        self.assertNotIn('SECRET', json.dumps(result))
+
+    def test_no_variant_with_rows_has_no_best_variant(self):
+        client = Mock()
+        client.get_json.return_value = {'status': True, 'total': 0, 'data': []}
+        with patch.object(audit, 'fetch_programs', return_value=[{'_id': 'a'}]):
+            result = audit.run_audit(client, self.cfg, date_variants=audit.DATE_VARIANTS)
+        self.assertIsNone(result['best_variant'])
+        self.assertEqual(result['variants_with_rows'], [])
+
     def test_schema_does_not_expose_dynamic_contact_or_id_keys(self):
         result = audit.field_paths({'abc@example.com': 1, '6abcad9735cf20e848ef7842': {},
                                     'data': [{'customer_name': 'SECRET'}]})
