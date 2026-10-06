@@ -124,3 +124,16 @@ Re-requesting a program that had just returned 210 final rows returned a single 
 
 ### Remaining decision before implementation
 The working contract needs web-session credentials (email, tokenkey, alias) or a service-account login flow; OpenAPI token compatibility is unproven. Production export stays gated until the credential approach is chosen and a run matches the golden workbook at customer+program+level grain.
+
+## Implementation: DMS web source (src/promotion_bonus_ui.py)
+
+`promotion_bonus.py` now resolves `PROMOTION_BONUS_SOURCE` (default `auto`): with `MOBIWORK_WEB_EMAIL`, `MOBIWORK_WEB_TOKENKEY` and `MOBIWORK_WEB_ALIAS` present it uses the web source; otherwise the legacy OpenAPI path (and its `PROMOTION_BONUS_REQUIRE_DMS_MATCH` gate) is unchanged.
+
+Web source behaviour:
+- Programmes come from the dated OpenAPI catalogue (`fromdate`/`todate` = report month); optional `PROMOTION_BONUS_PROGRAM` comma list.
+- One POST per programme, `arrCT=[id]`, sequential with a pause; envelope responses are retried with linear backoff (`PROMOTION_BONUS_UI_ATTEMPTS`=4, `..._BACKOFF_SECONDS`=20, `..._PAUSE_SECONDS`=3, `..._TIMEOUT_SECONDS`=180).
+- Any programme still returning envelopes fails the run before publishing (override only with `PROMOTION_BONUS_ALLOW_PARTIAL=true`). HTTP 401/403 raises a token-renewal error.
+- Workbook `BaoCaoTraThuong_Current.xlsx`: `Tong_hop` (one row per customer × rendered target cell), `Ket_qua` (reward products), `Kiem_tra` (period, sttt, per-programme status/attempts), plus one sheet per Khu vực (subdivisions preserved, blank → "Chưa xác định").
+- Kế hoạch/Thực hiện/Còn lại/Tỷ lệ follow `renderData` for so_tien, MUTI_SP_SL_*, GR_* and default target types.
+
+Setup: add the three web secrets (optionally `MOBIWORK_ORG_ID`) in GitHub → Settings → Secrets and variables → Actions, then run `MobiWork DMS Sync` with `report_scope=promotion_bonus_only`, `dry_run=true` first. The session token expires with the DMS web session (cookie lifetime 30 days); a 401/403 means it must be refreshed.

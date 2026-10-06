@@ -26,7 +26,7 @@ on:
         type: string
         default: "all"
       bonus_sttt_probe:
-        description: "Optional explicit documented sttt probe value; meaning unverified"
+        description: "Cách tính sttt: blank=mặc định, 0=Đơn giá*SL, 1=-CK SP, -1=-CK SP-CK đơn, 2=có VAT"
         type: string
         default: ""
       bonus_date_variants:
@@ -229,6 +229,12 @@ jobs:
           PROMOTION_BONUS_FROM_DATE: ${{ inputs.bonus_from_date }}
           PROMOTION_BONUS_TO_DATE: ${{ inputs.bonus_to_date }}
           PROMOTION_BONUS_PROGRAM: ${{ inputs.bonus_program }}
+          PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
+          PROMOTION_BONUS_SOURCE: "auto"
+          MOBIWORK_WEB_EMAIL: ${{ secrets.MOBIWORK_WEB_EMAIL }}
+          MOBIWORK_WEB_TOKENKEY: ${{ secrets.MOBIWORK_WEB_TOKENKEY }}
+          MOBIWORK_WEB_ALIAS: ${{ secrets.MOBIWORK_WEB_ALIAS }}
+          MOBIWORK_ORG_ID: ${{ secrets.MOBIWORK_ORG_ID }}
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}

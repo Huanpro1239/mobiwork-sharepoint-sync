@@ -14,6 +14,7 @@ import pandas as pd
 
 from excel_export import _format_sheet, _validate_excel_size
 from mobiwork import MobiWorkClient
+import promotion_bonus_ui as ui
 from sharepoint_semantic import SemanticSharePointClient
 
 
@@ -346,6 +347,60 @@ def _write_manifest(payload: dict[str, Any]) -> None:
     )
 
 
+SOURCES = {"auto", "ui", "openapi"}
+
+
+def resolve_source() -> str:
+    """auto -> DMS web source when its session secrets exist, else legacy OpenAPI."""
+    requested = os.environ.get("PROMOTION_BONUS_SOURCE", "auto").strip().casefold() or "auto"
+    if requested not in SOURCES:
+        raise ValueError(f"PROMOTION_BONUS_SOURCE must be one of {sorted(SOURCES)}")
+    if requested == "auto":
+        return "ui" if ui.WebSession.configured() else "openapi"
+    return requested
+
+
+def _select_programs(programs: list[dict[str, Any]], selected: str) -> list[dict[str, Any]]:
+    selected = (selected or "all").strip()
+    if selected == "all":
+        return programs
+    wanted = {part.strip() for part in selected.split(",") if part.strip()}
+    chosen = [p for p in programs if _program_id(p) in wanted]
+    missing = wanted - {_program_id(p) for p in chosen}
+    if missing:
+        raise ValueError(f"Selected Promotion Bonus program(s) not in catalogue: {sorted(missing)}")
+    return chosen
+
+
+def _build_ui_workbook(
+    client: MobiWorkClient,
+    cfg: PromotionBonusConfig,
+    manifest: dict[str, Any],
+) -> Path:
+    first, last = ui.report_period(
+        os.environ.get("PROMOTION_BONUS_FROM_DATE", "").strip(),
+        os.environ.get("PROMOTION_BONUS_TO_DATE", "").strip(),
+    )
+    sttt = os.environ.get("PROMOTION_BONUS_STTT", "").strip()
+    filters = {"fromdate": first.strftime("%d/%m/%Y"), "todate": last.strftime("%d/%m/%Y")}
+    programs = _select_programs(
+        fetch_programs(client, cfg, filters=filters),
+        os.environ.get("PROMOTION_BONUS_PROGRAM", "all"),
+    )
+    manifest.update({"from_date": first.isoformat(), "to_date": last.isoformat(),
+                     "sttt": sttt, "program_count": len(programs)})
+    results = ui.fetch_ui_snapshot(programs, first, last, sttt=sttt)
+    counts = ui.snapshot_counts(results)
+    manifest.update(counts)
+    if counts["unresolved_programs"] and not _env_bool("PROMOTION_BONUS_ALLOW_PARTIAL", False):
+        raise RuntimeError(
+            f"{len(counts['unresolved_programs'])} program(s) still returned order envelopes "
+            "after retries; refusing to publish an incomplete report"
+        )
+    manifest["phase"] = "workbook_build"
+    return write_workbook(ui.build_ui_frames(results, first, last, sttt), cfg.filename)
+
+
 def run() -> dict[str, Any]:
     dry_run = _env_bool("DRY_RUN", False)
     started_at = datetime.now(timezone.utc)
@@ -361,11 +416,13 @@ def run() -> dict[str, Any]:
     }
 
     try:
-        if _env_bool("PROMOTION_BONUS_REQUIRE_DMS_MATCH", False):
+        source = resolve_source()
+        manifest["source"] = source
+        if source == "openapi" and _env_bool("PROMOTION_BONUS_REQUIRE_DMS_MATCH", False):
             raise RuntimeError(
                 "DMS-equivalent export blocked: report date parameters, calculation enum "
                 "and region/customer schema have not been verified. "
-                "Run report_scope=promotion_api_audit to collect safe evidence."
+                "Configure MOBIWORK_WEB_EMAIL/TOKENKEY/ALIAS to use the DMS web source."
             )
         cfg = load_config()
         manifest.update({"folder": cfg.folder, "filename": cfg.filename})
@@ -380,20 +437,26 @@ def run() -> dict[str, Any]:
 
         manifest["phase"] = "source_fetch"
         client = MobiWorkClient.from_env()
-        programs = fetch_programs(client, cfg)
-        snapshot = fetch_snapshot(client, cfg, programs)
-        manifest["phase"] = "workbook_build"
-        frames = build_frames(snapshot)
-        path = write_workbook(frames, cfg.filename)
+        if source == "ui":
+            path = _build_ui_workbook(client, cfg, manifest)
+        else:
+            programs = fetch_programs(client, cfg)
+            snapshot = fetch_snapshot(client, cfg, programs)
+            manifest["phase"] = "workbook_build"
+            frames = build_frames(snapshot)
+            path = write_workbook(frames, cfg.filename)
+            manifest.update(
+                {
+                    "program_count": len(programs),
+                    "report_request_count": len(programs),
+                    "data_row_count": len(snapshot["data"]),
+                    "target_row_count": len(snapshot["targets"]),
+                    "reward_row_count": len(snapshot["rewards"]),
+                }
+            )
         content = path.read_bytes()
-
         manifest.update(
             {
-                "program_count": len(programs),
-                "report_request_count": len(programs),
-                "data_row_count": len(snapshot["data"]),
-                "target_row_count": len(snapshot["targets"]),
-                "reward_row_count": len(snapshot["rewards"]),
                 "workbook_sha256": hashlib.sha256(content).hexdigest(),
                 "workbook_bytes": len(content),
             }
@@ -434,11 +497,10 @@ def run() -> dict[str, Any]:
         manifest["phase"] = "complete"
         _write_manifest(manifest)
         LOG.info(
-            "Promotion Bonus snapshot complete programs=%s data=%s targets=%s rewards=%s",
-            len(programs),
-            len(snapshot["data"]),
-            len(snapshot["targets"]),
-            len(snapshot["rewards"]),
+            "Promotion Bonus snapshot complete source=%s programs=%s rows=%s",
+            source,
+            manifest.get("program_count"),
+            manifest.get("customer_row_count", manifest.get("data_row_count")),
         )
         return manifest
     except Exception as exc:
