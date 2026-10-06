@@ -14,6 +14,32 @@ from mobiwork import MobiWorkClient
 from promotion_bonus import fetch_programs, load_config
 
 TOTAL_PRICE_QUANTITY = "total_price_quantity"
+UI_REPORT_URL = "https://dms.mobiwork.vn:3020/PromotionBonusReport"
+
+
+def ui_report_request(orgid: str, programs: list[str], start: str, end: str):
+    """Build the captured Chrome contract; no inferred auth or calculation enum.
+
+    End date is the observed local midnight, not a guessed inclusive end-of-day.
+    This builder does not enable production export or execute a network request.
+    """
+    first, last = date_range(start, end)
+    if not re.fullmatch(r"[a-fA-F0-9]{24}", orgid or ""):
+        raise ValueError("UI request requires an organization ID")
+    if not isinstance(programs, list) or not programs:
+        raise ValueError("UI request requires explicit selected programs")
+    if any(not isinstance(p, str) or not re.fullmatch(r"[a-fA-F0-9]{24}", p) for p in programs):
+        raise ValueError("Invalid UI program ID")
+    if len(set(programs)) != len(programs):
+        raise ValueError("Duplicate selected program IDs")
+    zone = ZoneInfo("Asia/Ho_Chi_Minh")
+    def epoch(d):
+        return int(datetime(d.year, d.month, d.day, tzinfo=zone).timestamp() * 1000)
+    return {"method": "POST", "url": UI_REPORT_URL,
+            "params": {"orgid": orgid, "projectID": "", "projectName": "",
+                       "assignTo": "", "eeName": "", "idcustomer": "",
+                       "startDate": epoch(first), "endDate": epoch(last)},
+            "json": {"arrCT": list(programs)}}
 
 
 def date_range(start: str = "", end: str = "", today: date | None = None):

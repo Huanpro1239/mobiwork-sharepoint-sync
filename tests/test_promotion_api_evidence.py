@@ -15,6 +15,20 @@ import promotion_bonus as bonus
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_ui_contract_matches_captured_post_dates_and_array_without_guessed_calculation(self):
+        ids = [f'{i:024x}' for i in range(1, 58)]
+        request = audit.ui_report_request('a' * 24, ids, '2026-10-01', '2026-10-31')
+        self.assertEqual(request['method'], 'POST')
+        self.assertEqual(request['params']['startDate'], 1790787600000)
+        self.assertEqual(request['params']['endDate'], 1793379600000)
+        self.assertEqual(request['json'], {'arrCT': ids})
+        self.assertEqual(len(request['json']['arrCT']), 57)
+        self.assertNotIn('sttt', request['params'])
+        self.assertNotIn('Authorization', request)
+        for programs in ([], ['invalid'], ['b' * 24, 'b' * 24]):
+            with self.assertRaises(ValueError):
+                audit.ui_report_request('a' * 24, programs, '2026-10-01', '2026-10-31')
+
     def setUp(self):
         self.cfg = bonus.load_config()
 
