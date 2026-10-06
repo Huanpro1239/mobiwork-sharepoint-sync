@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pandas as pd
-import yaml
+import re
 
 import promotion_api_audit as audit
 import promotion_bonus as bonus
@@ -104,8 +104,13 @@ class EvidenceTests(unittest.TestCase):
 
     def test_workflow_only_mode_isolated_and_workbooks_never_artifacts(self):
         path = Path(__file__).resolve().parents[1] / '.github/workflows/mobiwork-sync.yml'
-        workflow = yaml.safe_load(path.read_text(encoding='utf-8'))
-        steps = workflow['jobs']['sync']['steps']
+        text = path.read_text(encoding='utf-8')
+        steps = []
+        for section in text.split('      - name: ')[1:]:
+            name = section.splitlines()[0]
+            condition = re.search(r'^        if: (.+)$', section, re.MULTILINE)
+            steps.append({'name': name, 'if': condition.group(1) if condition else '',
+                          'section': section})
         expected = {'Sync Promotion Bonus current snapshot', 'Validate Microsoft OIDC configuration',
                     'Azure login with GitHub OIDC', 'Resolve SharePoint document library'}
         excluded = {'Sync all MobiWork reports', 'Build Data cham anh workbook',
@@ -122,8 +127,9 @@ class EvidenceTests(unittest.TestCase):
                            {'event': 'workflow_dispatch', 'scope': 'promotion_bonus_only', 'dry': False})
             self.assertEqual(bool(enabled), step['name'] in expected, step['name'])
         for step in steps:
-            if 'upload-artifact' in step.get('uses', ''):
-                self.assertNotIn('xlsx', step['with']['path'])
+            if 'uses: actions/upload-artifact' in step['section']:
+                artifact_path = step['section'].split('          path:')[1].split('          if-no-files-found:')[0]
+                self.assertNotIn('xlsx', artifact_path)
 
 
 if __name__ == '__main__':
