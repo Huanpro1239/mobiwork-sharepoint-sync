@@ -55,3 +55,9 @@ An authenticated Paybonus page (the accessible browser currently redirects to si
 ## Authenticated October diagnostic result
 
 Run 37410012675 completed successfully with catalogue dates 01/10/2026–31/10/2026. It returned 57 catalogue programs and zero report customer rows; the report requests still contained only id_ct because date/calculation bindings are unknown. Golden reference is 250 rows, so the count comparison fails (0 != 250). Diagnostic success is not business verification success. No workbook/customer values were uploaded as artifacts. CI 37410154959 passed on 5e61fd9. The user will provide sanitized request parameters from their signed-in Chrome session; Chrome is not exposed to the connected computer-use tools.
+
+## Direct API check using user-provided credentials
+
+On 2026-10-06, direct BasicAuth calls to the documented OpenAPI host succeeded: dated October catalogue returned HTTP 200/status=true and 57 programs. All 57 id_ct-only report calls also returned HTTP 200/status=true, total=0/data=[]. No credentials or raw customer data were written into repository files or artifacts. Authentication acceptance does not establish report-level data permissions or exact cause of empty results.
+
+Live nested catalogue fields include ctype.label/value (target-region criteria), gtype.label/value (customer-type criteria), ktype.label/value (channel criteria), ptype.label/value (promotion mechanic), settings.BoiSo/promotionType and products. These are program eligibility/configuration, not an observed customer-report region schema or a verified sttt enum. No fallback assigning customer regions from these fields is enabled. Diagnostic now captures sanitized nested catalogue field paths to support further investigation.
