@@ -110,6 +110,8 @@ def _program_id(program: dict[str, Any]) -> str:
 def fetch_programs(
     client: MobiWorkClient,
     cfg: PromotionBonusConfig,
+    *,
+    filters: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch the complete PromotionBonus catalogue before requesting report snapshots."""
     records: list[dict[str, Any]] = []
@@ -121,6 +123,7 @@ def fetch_programs(
         payload = client.get_json(
             cfg.catalog_url,
             {
+                **(filters or {}),
                 "page_size": cfg.catalog_page_size,
                 "page_number": page,
             },
@@ -358,6 +361,12 @@ def run() -> dict[str, Any]:
     }
 
     try:
+        if _env_bool("PROMOTION_BONUS_REQUIRE_DMS_MATCH", False):
+            raise RuntimeError(
+                "DMS-equivalent export blocked: report date parameters, calculation enum "
+                "and region/customer schema have not been verified. "
+                "Run report_scope=promotion_api_audit to collect safe evidence."
+            )
         cfg = load_config()
         manifest.update({"folder": cfg.folder, "filename": cfg.filename})
         if not cfg.enabled:

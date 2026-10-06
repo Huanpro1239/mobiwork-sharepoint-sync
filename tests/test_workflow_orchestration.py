@@ -232,7 +232,7 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
         self.assertEqual(text.count('uses: azure/login@'), 1)
         self.assertLess(text.index('run: python src/run_all_reports.py'), text.index('run: python src/promotion_bonus.py'))
         self.assertLess(text.index('run: python src/run_data_cham_anh.py'), text.index('run: python src/promotion_bonus.py'))
-        self.assertIn('path: output/*.xlsx', text)
+        self.assertNotIn('path: output/*.xlsx', text)
         self.assertIn('output/promotion_bonus_manifest.json', text)
 
     def test_summary_executes_for_success_failure_and_skipped(self):
@@ -277,7 +277,7 @@ class PromotionDetailWorkflowTests(unittest.TestCase):
         self.assertLess(text.index('run: python src/promotion_bonus.py'), text.index('run: python src/promotion_detail.py'))
         self.assertIn('output/promotion_detail_manifest.json', text)
         self.assertIn('## Promotion detail report', text)
-        self.assertIn('path: output/*.xlsx', text)
+        self.assertNotIn('path: output/*.xlsx', text)
         import json
         cfg = json.loads((ROOT / 'config/promotion_detail.json').read_text(encoding='utf-8'))
         self.assertIs(cfg['publish_enabled'], True)
