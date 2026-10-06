@@ -69,3 +69,9 @@ User screenshots establish a different UI contract: POST https://dms.mobiwork.vn
 The UI request is demonstrably POST+arrCT+result, whereas the current OpenAPI request is GET+id_ct+data. This explains why the old implementation is not a replay of the UI contract, but does not establish the OpenAPI backend's exact reason for zero rows. These are separate hosts/endpoints; OpenAPI BasicAuth compatibility with the UI service is not proven. An anonymous, read-only POST probe of the observed request (one captured program, captured NaN retained only for diagnostic reproduction) returned HTTP 403 with code/message and no result. No OpenAPI credential/cookie was sent to this unverified UI-auth endpoint. Production exporter remains blocked.
 
 Next evidence required: full Request payload from View source, a valid endDate request after calendar re-selection, and expanded result[0] schema with customer/contact values hidden. No region fallback, NaN date, guessed calculation value or guessed UI authentication is enabled.
+
+## Corrected Chrome date query
+
+A subsequent screenshot replaces endDate=NaN with 1793379600000. Observed startDate=1790787600000 and endDate=1793379600000 decode to 2026-10-01 00:00:00+07:00 and 2026-10-31 00:00:00+07:00 respectively. Thus both captured UI date values are epoch milliseconds at Vietnam local midnight. This does not establish whether the backend includes the entire last day; do not add a day or change the timestamp without evidence.
+
+The new response preview shows result as an array of per-request/program envelopes containing result:[] and message:""; top-level arrChiTieu and arrTraThuong are empty and arrFormElement is present. No customer schema or 250-row match is established by this screenshot. Full POST body, selected calculation binding and the visible UI customer count for this exact corrected request remain needed. Do not treat the nested envelope array as customer rows or deduplicate program results.
