@@ -17,7 +17,7 @@ TOTAL_PRICE_QUANTITY = "total_price_quantity"
 UI_REPORT_URL = "https://dms.mobiwork.vn:3020/PromotionBonusReport"
 
 
-def ui_report_request(orgid: str, programs: list[str], start: str, end: str):
+def ui_report_request(orgid: str, programs: list[str], start: str, end: str, sttt: str = ""):
     """Build the captured Chrome contract; no inferred auth or calculation enum.
 
     End date is the observed local midnight, not a guessed inclusive end-of-day.
@@ -35,11 +35,16 @@ def ui_report_request(orgid: str, programs: list[str], start: str, end: str):
     zone = ZoneInfo("Asia/Ho_Chi_Minh")
     def epoch(d):
         return int(datetime(d.year, d.month, d.day, tzinfo=zone).timestamp() * 1000)
-    return {"method": "POST", "url": UI_REPORT_URL,
+    request = {"method": "POST", "url": UI_REPORT_URL,
             "params": {"orgid": orgid, "projectID": "", "projectName": "",
                        "assignTo": "", "eeName": "", "idcustomer": "",
                        "startDate": epoch(first), "endDate": epoch(last)},
             "json": {"arrCT": list(programs)}}
+    if not isinstance(sttt, str):
+        raise ValueError("Observed sttt must be a string; no calculation enum inferred")
+    if sttt:
+        request["params"]["sttt"] = sttt
+    return request
 
 
 def date_range(start: str = "", end: str = "", today: date | None = None):

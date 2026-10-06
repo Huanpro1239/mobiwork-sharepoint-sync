@@ -25,6 +25,10 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(len(request['json']['arrCT']), 57)
         self.assertNotIn('sttt', request['params'])
         self.assertNotIn('Authorization', request)
+        probe = audit.ui_report_request('a' * 24, ids, '2026-10-01', '2026-10-31', 'observed')
+        self.assertEqual(probe['params']['sttt'], 'observed')
+        with self.assertRaises(ValueError):
+            audit.ui_report_request('a' * 24, ids, '2026-10-01', '2026-10-31', 1)
         for programs in ([], ['invalid'], ['b' * 24, 'b' * 24]):
             with self.assertRaises(ValueError):
                 audit.ui_report_request('a' * 24, programs, '2026-10-01', '2026-10-31')
