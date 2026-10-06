@@ -93,3 +93,34 @@ Parsed locally without committing the response. It contains 56 nested envelopes;
 All query metadata inspected uses delivery date data.ngay_giao_hang.viewData from 1790787600000 through 1793465999999 inclusive (October 1 midnight to October 31 23:59:59.999 Vietnam). Thus this captured backend expands the end date to the full last day. Other observed predicates include order-type values 0/2, approved/sold/exported/delivered status labels, settings.toRejectCTTT != true, isDeleted=false, and per-envelope customer-ID membership. Customer IDs and raw order/contact values are not persisted in audit output. arrChiTieu=[] and arrTraThuong=[]; arrFormElement has 57 entries.
 
 The diagnostic now supports --ui-response <local JSON path>, requiring no API credentials. It reports sanitized schema/counts/date spans, leaves customer_rows=null for unverified nested records, and does not enable workbook publication. Tested duplicate-envelope preservation and absence of customer ID/phone values in metadata. The fresh final DMS customer report and target/reward definitions are still necessary for 250-row financial equivalence.
+
+## 2026-10-06 (afternoon): OpenAPI date probe and signed-in UI per-program run
+
+### OpenAPI date bindings rejected
+Run 37439905945 (audit, dry_run) probed all 57 dated-catalogue programs with four report date bindings: id_only, epoch_ui (startDate/endDate local-midnight epoch ms), epoch_full_day (endDate 23:59:59.999) and ddmmyyyy (fromdate/todate). Every variant returned 0 customer rows for 0 programs. Missing dates are therefore not the (sole) cause of empty OpenAPI results; the OpenAPI report remains unusable for this snapshot.
+
+### sttt enum observed in the signed-in page
+`.cal_sttt` is a hidden input set by `on_CaculateSTTT` (formReportCollectCommon.js) from `data-sttt` of the "Cách tính" menu:
+
+| sttt | UI label |
+|---|---|
+| 0 | Tổng tiền (Đơn giá * Số lượng) — highlighted by default |
+| 1 | Tổng tiền - chiết khấu SP |
+| -1 | Tổng tiền - chiết khấu SP - CK đơn hàng |
+| 2 | Tổng tiền có VAT (Đơn giá * Số lượng + VAT) |
+
+On page load the hidden input is empty, so the default request omits sttt even though option 0 is highlighted.
+
+### Per-program UI requests return final customer rows
+The page's own `gCollector_ajax` POST `/PromotionBonusReport` (service host `serivceBussiness` = https://api.mobiwork.vn:3019, web Basic email:tokenkey + x-alias; session cookie lifetime `sessionOut`=30) was called with `arrCT` containing exactly ONE program and the page's October 1–31 filter. Body keys: only `arrCT`.
+
+Results over the 57 programs in one pass: 9 programs returned final rows, 245 rows total; 27 returned nested `_Orders` envelopes; 21 returned empty arrays; 0 errors. Final row keys: `_idCT, soSuatCT, name, type, _id, ten, ma, sdt, dc, kv, npp, timepass, loai, nhom, objChiTieu, objTraThuong, objThucHien, arrDH, ckdh, ngay_dat_cuoi, ds_cuoi, time_soSuat, formElement, data_web`. `kv` is the customer region (Miền Trung 1B 229, blank 10, Miền Trung 1A 5, Miền Trung 2 1). Types seen: "" (203) and MUTI_SP_SL_SP (42). arrChiTieu keys: `_id, _idCT, ten, kh, min, max`. Golden workbook (captured earlier) has 250 rows; 245 at a later time is consistent but not yet a row-level match.
+
+### Envelope responses are non-deterministic
+Re-requesting a program that had just returned 210 final rows returned a single `_Orders` envelope with arrChiTieu=[]. Envelope responses must therefore be treated as an incomplete/transient server state and retried, never as "no customers". The 57-ID request observed earlier is the same envelope mode and must not be used.
+
+### Operational caution
+`gCollector_ajax` performs synchronous XHR; repeated runs froze the browser tab and DMS slowed noticeably. An automated client must call one program at a time, sequentially, with timeouts, bounded retries for envelopes and a pause between calls.
+
+### Remaining decision before implementation
+The working contract needs web-session credentials (email, tokenkey, alias) or a service-account login flow; OpenAPI token compatibility is unproven. Production export stays gated until the credential approach is chosen and a run matches the golden workbook at customer+program+level grain.
