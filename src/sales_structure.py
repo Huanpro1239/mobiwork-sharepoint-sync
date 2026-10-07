@@ -155,6 +155,13 @@ def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) 
         if is_supervisor(sale):
             for unit in units(sale):
                 supervisors[unit].append(sale)
+    province_supervisors: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for unit_code, people in supervisors.items():
+        if NPP_UNIT.match(unit_code):
+            for person in people:
+                bucket = province_supervisors[unit_code.split("-")[1]]
+                if person not in bucket:
+                    bucket.append(person)
     out: dict[str, dict[str, str]] = {}
     for sale in sales:
         code = str(sale.get("ma") or "").strip()
@@ -173,6 +180,13 @@ def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) 
                 item["SS Code"] = "; ".join(str(s.get("ma") or "").strip() for s in found)
                 item["SS Name"] = "; ".join(" ".join(str(s.get("ten") or "").split()) for s in found)
                 break
+        if "SS Code" not in item and NPP_UNIT.match(unit["ma_nhom"]):
+            # Unit without its own supervisor: use the province's supervisor only when the
+            # province (B-<PROV>-NNNN) has exactly one; several -> leave blank for review.
+            only = province_supervisors.get(unit["ma_nhom"].split("-")[1], [])
+            if len(only) == 1 and str(only[0].get("ma") or "").strip() != code:
+                item["SS Code"] = str(only[0].get("ma") or "").strip()
+                item["SS Name"] = " ".join(str(only[0].get("ten") or "").split())
         for node in chain[1:] or chain:
             label = region_label(node["ma_nhom"])
             if label:

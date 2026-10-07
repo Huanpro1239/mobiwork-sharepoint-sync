@@ -75,5 +75,19 @@ class SalesStructureTests(unittest.TestCase):
         self.assertEqual(mapping["GS"]["DB Code"], "B-DANO-0012")
 
 
+    def test_province_supervisor_fallback_only_when_unique(self):
+        sales = [{"ma": "E1", "ma_don_vi": "B-THHO-0099"},
+                 {"ma": "THA01", "ten": "GS TH", "chuc_vu": "Giám sát kinh doanh", "ma_don_vi": "B-THHO-0012"},
+                 {"ma": "E2", "ma_don_vi": "B-KHHO-0999"},
+                 {"ma": "KHA01", "ten": "A", "chuc_vu": "Giám sát kinh doanh", "ma_don_vi": "B-KHHO-0001"},
+                 {"ma": "KHA02", "ten": "B", "chuc_vu": "Giám sát kinh doanh", "ma_don_vi": "B-KHHO-0002"}]
+        groups = [{"ma_nhom": u, "ten_nhom": u, "ma_nhom_cha": "MB"} for u in
+                  ("B-THHO-0099", "B-THHO-0012", "B-KHHO-0999", "B-KHHO-0001", "B-KHHO-0002")]
+        groups.append({"ma_nhom": "MB", "ten_nhom": "MB", "ma_nhom_cha": ""})
+        mapping = ss.employee_mapping(sales, groups)
+        self.assertEqual(mapping["E1"]["SS Code"], "THA01")
+        self.assertNotIn("SS Code", mapping["E2"])
+
+
 if __name__ == "__main__":
     unittest.main()
