@@ -253,7 +253,9 @@ jobs:
           PROMOTION_BONUS_PROGRAM: ${{ inputs.bonus_program }}
           PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
           PROMOTION_BONUS_DATE_VARIANTS: ${{ inputs.bonus_date_variants }}
-        run: python src/promotion_api_audit.py
+        run: |
+          python src/promotion_api_audit.py
+          python src/sales_structure.py || echo "::warning title=Sales structure::audit failed"
 
       - name: Build promotion detail report
         if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' || inputs.report_scope == 'promotion_history' }}
