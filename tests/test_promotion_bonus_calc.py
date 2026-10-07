@@ -48,8 +48,11 @@ def amount_program(minimum=7_000_000, maximum=10_600_000, customers=(C1,)):
 def bill(rows):
     base = {"ID_khachhang": C1, "ma_kh": "KHHO112323", "ma_sp": "230100110", "ten_dvt": "Chai",
             "ma_dvt": "Chai", "so_luong": 0, "thanh_tien": 0, "ngay_giao_hang": "2026-10-02T17:00:00.000Z",
-            "is_km": False}
-    return pd.DataFrame([{**base, **r} for r in rows], dtype=object)
+            "is_km": False, "loai_hang": "Bán hàng", "ma_phieu": "DH1", "ten_sp": "Vikoda 500ml",
+            "gia_truoc_vat": 4541.67, "ma_nv_dat": "KHHO0303", "ten_nguoi_dat": "NV A",
+            "ngay_dat": "2026-10-02 08:00:00", "ten_kh": "Quán A", "dia_chi": "Nha Trang", "sdt": "09",
+            "tuyen_code": "03"}
+    return pd.DataFrame([{**base, "stt": str(i), **r} for i, r in enumerate(rows, 1)], dtype=object)
 
 
 class RuleTests(unittest.TestCase):
@@ -264,6 +267,78 @@ class RunTests(unittest.TestCase):
                 patch.object(bonus.MobiWorkClient, "from_env", return_value=Mock()), \
                 self.assertRaises(ValueError):
             bonus.run()
+
+
+class TemplateTests(unittest.TestCase):
+    def test_bonus_codes_keep_levels(self):
+        self.assertEqual(calc.bonus_code("581/TB/GT/10/2026 _CHƯƠNG TRÌNH TRƯNG BÀY PET"), "581/TB/GT/10/2026")
+        self.assertEqual(calc.bonus_code("008/TB/GT/01/2026_Q4_CT TÍCH LŨY VIPSHOP THEO THÁNG - MỨC 2"),
+                         "008/TB/GT/01/2026_Q4 - Mức 2")
+        self.assertEqual(calc.bonus_code("575/TB/GT/10/2026_MỨC 1--CT TÍCH LŨY"), "575/TB/GT/10/2026 - Mức 1")
+        self.assertEqual(calc.bonus_code("Chương trình lạ"), "Chương trình lạ")
+
+    def test_detail_source_repeats_counted_lines_and_adds_reward_line(self):
+        detail = bill([{"so_luong": 40, "ten_dvt": "Thùng"}, {"so_luong": 80}, {"ma_sp": "999", "so_luong": 5}])
+        program = qty_program(cttb={"ten": "CTTB", "ket_qua": {"label": "Đạt"}})
+        results, _ = calc.compute([program], calc.sold_lines(detail, OCT1, OCT31), {})
+        sources = calc.detail_source(results, "10/2026")
+        self.assertEqual(len(sources), 1)
+        code, frame = sources[0]
+        self.assertEqual(code, "581/TB/GT/10/2026")
+        self.assertEqual(frame["ma_phieu"].tolist(), ["DH1", calc.GIFT_ORDER])  # only the bottle line counts
+        gift = frame.iloc[-1]
+        self.assertEqual((gift["ma_sp"], gift["so_luong"], gift["ten_dvt"], gift["is_km"]),
+                         ("230100110", 12, "Chai", True))
+        self.assertIn("cần kiểm tra trưng bày", gift["ten_sp"])
+
+    def test_template_report_uses_ctkm_layout_and_pack_units(self):
+        detail = bill([{"so_luong": 72, "thanh_tien": 326_000}])
+        results, _ = calc.compute([qty_program()], calc.sold_lines(detail, OCT1, OCT31), {})
+        with patch("promotion_detail.enrich_product_config", side_effect=RuntimeError("offline")):
+            bonus._DETAIL_CONFIG.clear()
+            report, issues = bonus._template_report(Mock(), {}, results, OCT1)
+        from promotion_detail import COLUMNS
+        self.assertEqual(list(report.columns), COLUMNS)
+        sale, gift = report.iloc[0], report.iloc[1]
+        self.assertEqual(sale["Mã CTKM"], "581/TB/GT/10/2026")
+        self.assertEqual(sale["Mã Khách hàng"], "KHHO112323")
+        self.assertAlmostEqual(sale["Số lượng SELL-OUT"], 3.0)  # 72 bottles = 3 cases of 24
+        self.assertEqual(gift["Mã Đơn hàng"], calc.GIFT_ORDER)
+        self.assertEqual(gift["Sản phẩm Tặng"], "230100110")
+        self.assertAlmostEqual(gift["Số lượng Khuyến mãi"], 0.5)  # 12 bottles = 0.5 case
+
+    def test_template_keeps_full_level_code(self):
+        program = qty_program()
+        program["name"] = "008/TB/GT/01/2026_Q4_CT TÍCH LŨY VIPSHOP THEO THÁNG - MỨC 2"
+        results, _ = calc.compute([program], calc.sold_lines(bill([{"so_luong": 80}]), OCT1, OCT31), {})
+        with patch("promotion_detail.enrich_product_config", side_effect=RuntimeError("offline")):
+            bonus._DETAIL_CONFIG.clear()
+            report, _ = bonus._template_report(Mock(), {}, results, OCT1)
+        self.assertEqual(set(report["Mã CTKM"]), {"008/TB/GT/01/2026_Q4 - Mức 2"})
+
+    def test_workbook_first_sheet_is_template(self):
+        import openpyxl
+        detail = bill([{"so_luong": 72}])
+        results, _ = calc.compute([qty_program()], calc.sold_lines(detail, OCT1, OCT31), {})
+        bonus._DETAIL_CONFIG.clear()
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("promotion_detail.enrich_product_config", side_effect=RuntimeError("offline")):
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                report, _ = bonus._template_report(Mock(), {}, results, OCT1)
+                path = bonus._write_bonus({"BaoCao": report, "Tong_hop": ui.build_ui_frames(results, OCT1, OCT31)["Tong_hop"]},
+                                          "x.xlsx", OCT1)
+                book = openpyxl.load_workbook(path)
+            finally:
+                os.chdir(cwd)
+        sheet = book.worksheets[0]
+        self.assertEqual(sheet.title, "BaoCao")
+        self.assertEqual(sheet["A3"].value, "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG - THÁNG 10/2026")
+        self.assertEqual(sheet["A4"].value, "Vùng")
+        self.assertEqual(sheet["J5"].value, "581/TB/GT/10/2026")
+        self.assertEqual(sheet.freeze_panes, "A5")
+        self.assertIn("Tong_hop", book.sheetnames)
 
 
 class HistoryTests(unittest.TestCase):

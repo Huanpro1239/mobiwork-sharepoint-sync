@@ -217,7 +217,7 @@ def sold_lines(detail: pd.DataFrame, first: date, last: date) -> list[dict[str, 
         if day is None or not first <= day <= last:
             continue
         unit = str(row.get("ten_dvt") or row.get("ma_dvt") or "").strip()
-        lines.append({"customer": str(row.get("ID_khachhang") or "").strip(),
+        lines.append({"raw": row, "customer": str(row.get("ID_khachhang") or "").strip(),
                       "code": str(row.get("ma_kh") or "").strip(),
                       "sku": str(row.get("ma_sp") or "").strip(), "unit": unit,
                       "quantity": float(row.get("so_luong") or 0),
@@ -318,9 +318,11 @@ def compute(
         rows = []
         for customer_id in sorted(rule.customers):
             actual = 0.0
+            counted = []
             for line in by_customer.get(customer_id, []):
                 if line["unit"] in rule.units.get(line["sku"], ()):
                     actual += line["amount"] if rule.kind == AMOUNT else line["quantity"]
+                    counted.append(line.get("raw"))
             meta = customers.get(customer_id, {})
             code = meta.get("customer_code") or code_of.get(customer_id, "")
             multiplier = reward_multiplier(actual, rule)
@@ -348,10 +350,60 @@ def compute(
                           "Kết quả trưng bày": display,
                           "Đủ điều kiện trả thưởng": eligible,
                           "Bội số": multiplier if rule.multiple else ""},
+                "_lines": [line for line in counted if line is not None],
+                "_rewards": [(sku, name, unit, qty * multiplier) for sku, name, unit, qty in rule.rewards]
+                if multiplier else [],
+                "_eligible": eligible,
             })
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
                                         [target], rewards))
     return results, issues
+
+
+def bonus_code(name: str) -> str:
+    """Business code as written in the DMS template, keeping the level (Mức n)."""
+    import re
+
+    match = re.match(r"^\s*(\d+/TB/GT/\d+/\d{4}(?:_Q[1-4])?)", name or "")
+    if not match:
+        return (name or "").strip()
+    level = re.search(r"M[ỨỨứU]C\s*(\d+)", name, flags=re.IGNORECASE)
+    return f"{match.group(1)} - Mức {level.group(1)}" if level else match.group(1)
+
+
+GIFT_ORDER = "TRẢ THƯỞNG"
+
+
+def detail_source(results: list[ui.ProgramResult], label: str) -> list[tuple[str, pd.DataFrame]]:
+    """Bill-shaped rows per programme for the DMS CTKM template.
+
+    Each counted sale line is repeated under its programme code; a reached customer
+    gets one synthetic gift line per reward product (order id ``TRẢ THƯỞNG``).
+    """
+    out = []
+    for result in results:
+        code = bonus_code(result.program_name)
+        rows: list[dict[str, Any]] = []
+        for row in result.rows:
+            lines = row.get("_lines") or []
+            for line in lines:
+                rows.append({**line, "ctkm": code, "promotion": None, "ctkmFull_id": None,
+                             "ctkmFull_ten_khuyen_mai": None, "is_km": False, "loai_hang": "Bán hàng"})
+            if not lines or not row.get("_rewards"):
+                continue
+            base = dict(lines[-1])
+            review = row.get("_eligible") == REVIEW_DISPLAY
+            for index, (sku, name, unit, qty) in enumerate(row["_rewards"], start=1):
+                rows.append({**base, "ma_phieu": GIFT_ORDER, "stt": f"{row['ma']}-{index}",
+                             "ctkm": code, "promotion": None, "ctkmFull_id": None,
+                             "ctkmFull_ten_khuyen_mai": None, "is_km": True, "loai_hang": "Khuyến mãi",
+                             "ma_sp": sku, "ten_sp": name + (" (cần kiểm tra trưng bày)" if review else ""),
+                             "so_luong": qty, "ten_dvt": unit, "ma_dvt": unit,
+                             "ma_sp_km": None, "ten_sp_km": None, "so_luong_km": None,
+                             "ma_dvt_km": None, "ten_dvt_km": None, "ngay_dat": base.get("ngay_dat")})
+        if rows:
+            out.append((code, pd.DataFrame(rows, dtype=object)))
+    return out
 
 
 def region_from_code(region_map: dict[str, dict[str, str]]) -> Any:

@@ -154,3 +154,7 @@ Output: `06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx` plus `06_BaoCaoTraThuo
 ## Past months (2026-10-07)
 
 `PROMOTION_BONUS_MONTHS` (workflow input `bonus_months`, or `report_scope=promotion_history` which uses `all_existing`) recomputes past months from each month's Bill monthly master and the programme catalogue filtered to that month. Each month is written only to `06_BaoCaoTraThuong/YYYY/MM/BaoCaoTraThuong_YYYY-MM.xlsx`; `BaoCaoTraThuong_Current.xlsx` is never overwritten by a backfill, and run state goes to `_sync_state/promotion_bonus_history.json`. A month whose inputs are missing is skipped and reported, not fatal. Caveat: OpenAPI exposes the programme's current registered-customer list, not its history, so customers removed from a programme after a month closed are not shown for that month.
+
+## Template layout (2026-10-07)
+
+Workbooks now open on sheet `BaoCao` in the user's "Báo cáo chi tiết CTKM theo KH" layout (config/promotion_detail_layout.json, title "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG - THÁNG MM/YYYY"). Rows are the Bill lines counted for each programme (Mã CTKM = programme code incl. level, e.g. `008/TB/GT/01/2026_Q4 - Mức 2`), rendered through promotion_detail.build_report so Vùng/Tỉnh/SS/NPP/Brand/Package and KÉT/THÙNG/BÌNH conversions match the CTKM report. A reached customer gets one `TRẢ THƯỞNG` line per reward product; rewards on display programmes without an Đạt grading are suffixed "(cần kiểm tra trưng bày)". Missing mappings go to `CanBoSung`. Tong_hop / Ket_qua / Kiem_tra remain after BaoCao.
