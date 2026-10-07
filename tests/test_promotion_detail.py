@@ -279,3 +279,18 @@ class PromotionGiftUnitTests(unittest.TestCase):
         trace = module.unit_trace(detail, report, config())
         self.assertEqual(trace.iloc[0]['ĐVT báo cáo'], 'Cái')
         self.assertEqual(trace.iloc[0]['Hệ số'], 1)
+
+
+class PromotionUnitGapTests(unittest.TestCase):
+    def test_sold_piece_items_stay_in_pieces(self):
+        report, issues = module.build_report(pd.DataFrame([source(ma_sp='530200025', ten_dvt='Cái', so_luong=3)]), config())
+        self.assertEqual(report.iloc[0]['Số lượng SELL-OUT'], 3.0)
+        self.assertNotIn('Số lượng SELL-OUT', issues['Trường'].tolist() if not issues.empty else [])
+
+    def test_missing_source_unit_is_reported_as_unit_gap(self):
+        report, issues = module.build_report(pd.DataFrame([source(ten_dvt='', ma_dvt='')]), config())
+        self.assertTrue(pd.isna(report.iloc[0]['Số lượng SELL-OUT']))
+        reasons = issues.loc[issues['Trường'] == 'Số lượng SELL-OUT', 'Lý do'].tolist()
+        self.assertEqual(len(reasons), 1)
+        self.assertTrue(reasons[0].startswith(module.UNIT_GAP))
+        self.assertIn('thiếu ĐVT', reasons[0])

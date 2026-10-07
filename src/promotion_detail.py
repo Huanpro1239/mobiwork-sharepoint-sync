@@ -37,6 +37,9 @@ COLUMNS = ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Rout
            "Package", "Mã sản phẩm", "Tên Sản phẩm", "Số lượng SELL-OUT", "THÀNH TIỀN",
            "Sản phẩm Tặng", "Tên Sản phẩm Tặng", "Số lượng Khuyến mãi"]
 LOG = logging.getLogger("promotion_detail")
+# A missing pack conversion leaves that line's quantity blank and is listed in CanBoSung,
+# but no longer blocks publishing the whole month (other source errors still do).
+UNIT_GAP = "Thiếu quy đổi sang KÉT/THÙNG/BÌNH"
 
 
 def load_config() -> dict[str, Any]:
@@ -286,12 +289,13 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         quantity_field = "Số lượng Khuyến mãi" if gift else "Số lượng SELL-OUT"
         try:
             quantity = number(row.get("so_luong"))
-            if unit.casefold() in {"thùng", "két", "bình"} or (gift and unit.casefold() == "cái"):
+            conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}")
+            if unit.casefold() in {"thùng", "két", "bình"} or (unit.casefold() == "cái" and not conversion):
+                # Items counted per piece (vật phẩm) stay in CÁI, as the template header states.
                 converted = quantity
             else:
-                conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}")
                 if not isinstance(conversion, dict) or conversion.get("target_unit", "").casefold() not in {"thùng", "két", "bình"}:
-                    raise ValueError("Thiếu quy đổi sang KÉT/THÙNG/BÌNH")
+                    raise ValueError(UNIT_GAP + (" (đơn hàng thiếu ĐVT)" if not unit else ""))
                 factor = number(conversion.get("factor"))
                 if factor <= 0:
                     raise ValueError("Hệ số quy đổi phải dương")
@@ -401,9 +405,11 @@ def run() -> dict[str, Any]:
                       "source_sha256": hashlib.sha256(content).hexdigest()}
             allowed_fields = {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
                               "Brand", "Package", "Loại KH"}
-            result["blocking_issues"] = int((~issues["Trường"].isin(allowed_fields)).sum()) if not issues.empty else 0
+            blocking = issues.iloc[0:0] if issues.empty else issues[
+                ~issues["Trường"].isin(allowed_fields) & ~issues["Lý do"].astype(str).str.startswith(UNIT_GAP)]
+            result["blocking_issues"] = int(len(blocking))
+            result["unit_gaps"] = 0 if issues.empty else int(issues["Lý do"].astype(str).str.startswith(UNIT_GAP).sum())
             if result["blocking_issues"]:
-                blocking = issues[~issues["Trường"].isin(allowed_fields)]
                 reasons = (blocking["Trường"].astype(str) + ": " + blocking["Lý do"].astype(str)).value_counts()
                 result["blocking_reasons"] = {k: int(v) for k, v in reasons.head(10).items()}
                 result["blocking_samples"] = [
