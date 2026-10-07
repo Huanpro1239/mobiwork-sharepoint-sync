@@ -238,7 +238,7 @@ class RunTests(unittest.TestCase):
                 patch("customer_catalogue.enrich_customer_config",
                       side_effect=ValueError("Customer catalogue total changed")) as cat:
             manifest = bonus.run()
-        self.assertEqual(cat.call_count, 3)
+        self.assertEqual(cat.call_count, 1)
         self.assertEqual(manifest["status"], "success")
         sheet = pd.read_excel("output/BaoCaoTraThuong_Current.xlsx", sheet_name="Tong_hop", dtype=object)
         self.assertIn("KHHO112323", sheet["Mã khách hàng"].tolist())

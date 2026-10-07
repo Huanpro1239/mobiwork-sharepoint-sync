@@ -23,7 +23,22 @@ def value(row: dict[str, Any], field: str) -> str:
     return str(raw).strip()
 
 
-def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
+RETRYABLE = ("Customer catalogue total changed", "Customer catalogue total mismatch",
+             "Customer catalogue repeated page")
+
+
+def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any], attempts: int = 3) -> dict[str, Any]:
+    """Fetch the live catalogue, retrying when customers are created while paging."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return _enrich_customer_config_once(client, cfg)
+        except ValueError as exc:
+            if attempt == attempts or not str(exc).startswith(RETRYABLE):
+                raise
+    raise AssertionError("unreachable")
+
+
+def _enrich_customer_config_once(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
     """Join current customer metadata by the observed API ID, never by name or code alone."""
     start = cfg.get("customer_catalogue_start_date", "01/01/1900")
     datetime.strptime(start, "%d/%m/%Y")

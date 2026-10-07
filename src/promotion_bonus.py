@@ -470,7 +470,7 @@ def _build_calc_workbook(
     manifest["sold_line_count"] = len(lines)
     customer_map: dict[str, Any] = {}
     customer_note = ""
-    for attempt in range(1, 4):
+    for attempt in range(1, 2):  # enrich_customer_config already retries live-change races
         try:
             catalogue = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900"})
             customer_map = catalogue["customer_catalogue"]
@@ -510,12 +510,12 @@ def _build_calc_workbook(
                    f"{first:%m/%Y}: programs={len(programs)} rows={counts['customer_row_count']} "
                    f"reached={manifest['reached_rows']} eligible={manifest['eligible_rows']} "
                    f"sold_lines={len(lines)} display={display_note}")
-    for item in diag:
-        if item["registered"]:
-            _github_notice("Promotion Bonus program",
-                           f"{item['name'][:60]} | reg={item['registered']} sales={item['with_sales']} "
-                           f"reached={item['reached']} display_ok={item['display_passed']} "
-                           f"eligible={item['eligible']}")
+    lines_out = [f"{item['name'][:28]}|r{item['registered']}|s{item['with_sales']}|"
+                 f"d{item['reached']}|tb{item['display_passed']}|e{item['eligible']}"
+                 for item in diag if item["registered"]]
+    for start in range(0, len(lines_out), 20):  # GitHub keeps only 10 notices per step
+        _github_notice(f"Promotion Bonus programs {start + 1}-{start + len(lines_out[start:start + 20])}",
+                       " ; ".join(lines_out[start:start + 20]))
     manifest["phase"] = "workbook_build"
     notes = [
         ("Quy tắc", "Khách đăng ký của chương trình; đơn bán (bỏ dòng khuyến mãi) có ngày giao trong kỳ; "

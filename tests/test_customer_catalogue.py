@@ -77,7 +77,13 @@ class CustomerCatalogueTests(unittest.TestCase):
         ]
         for payloads in cases:
             with self.subTest(payloads=payloads), self.assertRaises((ValueError, TypeError)):
-                enrich_customer_config(self.client(payloads), config())
+                enrich_customer_config(self.client(payloads), config(), attempts=1)
+
+    def test_live_total_change_is_retried_then_succeeds(self):
+        payloads = [{"total": 2, "data": [customer()]}, {"total": 3, "data": []},
+                    {"total": 1, "data": [customer()]}]
+        cfg = enrich_customer_config(self.client(payloads), config())
+        self.assertEqual(list(cfg["customer_catalogue"]), ["customer-id"])
 
     def test_missing_id_reported_without_code_fallback(self):
         cfg = enrich_customer_config(self.client([{"total": 1, "data": [customer(ID=None)]}]), config())
