@@ -53,7 +53,7 @@ class PromotionMonthTests(unittest.TestCase):
                         else:
                             with self.assertRaisesRegex(ValueError, "Nothing published"):
                                 module.run()
-                            manifest = json.loads(Path("output/promotion_detail_manifest.json").read_text())
+                            manifest = json.loads(Path("output/promotion_detail_manifest.json").read_text(encoding="utf-8"))
                             self.assertEqual(manifest["results"][1]["blocking_issues"], 1)
                         sp.upload_file.assert_not_called()
                         self.assertEqual(sp.download_file_bytes.call_count, 2)

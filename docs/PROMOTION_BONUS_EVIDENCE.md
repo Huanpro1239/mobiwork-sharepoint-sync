@@ -17,7 +17,9 @@ to Paybonus remain unverified.
   with customer-region metadata taking precedence. Keep programme eligibility region
   separately as `Vùng áp dụng CT`; missing or conflicting assignments stay unknown.
 - Share the existing CTKM blocking-issue classification. Diagnostic dry-runs retain
-  `CanBoSung`; invalid identity/quantity/amount/conversion prevents production publication.
+  `CanBoSung`; invalid identity/quantity/amount/conversion factor prevents production publication.
+  Preserve the CTKM policy introduced in #102: missing pack mappings leave converted
+  quantities blank, record `unit_gaps`, and do not block otherwise valid publication.
 - Load template catalogues once per run instead of process-global mutable caching.
   Remove employee-specific exploratory probes; keep schema/count diagnostics.
 - `quality_status` describes gaps independently of execution success;

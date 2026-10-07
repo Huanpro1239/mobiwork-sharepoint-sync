@@ -100,7 +100,8 @@ Workflow `MobiWork DMS Sync` cập nhật file Current và bản tháng
 tính các tháng đã có Bill monthly master, không ghi đè Current.
 Danh sách đăng ký và cây phòng ban là dữ liệu hiện tại, nên chưa cam kết tái tạo
 đầy đủ lịch sử hoặc khớp mọi dòng DMS. `CanBoSung` phân biệt thiếu thông tin mô tả
-với lỗi chặn xuất bản; lỗi nguồn, identity hoặc quy đổi không được đưa lên SharePoint.
+với lỗi chặn xuất bản; lỗi nguồn, identity hoặc hệ số không hợp lệ không được đưa lên SharePoint.
+Thiếu quy cách giữ số lượng quy đổi trống, ghi rõ `unit_gaps`, không tự chọn hệ số.
 Nguồn `ui` và `openapi` vẫn có thể chọn khi chạy CLI để đối chiếu; không phải nguồn mặc định.
 
 `makh` của `new_customer` là mã nghiệp vụ và **không được giả định unique**: dữ liệu lịch sử đã có các record khác `ID` nhưng dùng lại cùng `makh`. Pipeline giữ đủ các record đó và dùng `ID` làm identity/upsert key. `order` và `bill` kiểm uniqueness header theo `ma_phieu`; detail kiểm theo `ma_phieu + stt`. `bill` còn đối chiếu `API total == fetched rows` trước khi chấp nhận dữ liệu.

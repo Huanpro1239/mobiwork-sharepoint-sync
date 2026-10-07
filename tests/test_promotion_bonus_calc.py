@@ -309,7 +309,7 @@ class RunTests(unittest.TestCase):
                "PROMOTION_BONUS_TO_DATE": "2026-10-31"}
         with patch.dict(os.environ, env), \
                 patch.object(bonus, "fetch_programs", return_value=[qty_program()]), \
-                patch.object(bonus, "_bill_detail", return_value=bill([{"so_luong": 80}])):
+                patch.object(bonus, "_bill_detail", return_value=bill([{"so_luong": 80, "ngay_dat": "invalid"}])):
             audit = {}
             frames = bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True,
                                              {}, "test", audit, detail_config={})
@@ -325,6 +325,19 @@ class RunTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "only sttt=0"):
             bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True, {}, "", {})
         fetch.assert_not_called()
+
+    def test_missing_pack_mapping_keeps_quantity_blank_without_blocking_report(self):
+        with patch.dict(os.environ, {"PROMOTION_BONUS_STTT": "0"}), \
+                patch.object(bonus, "fetch_programs", return_value=[qty_program()]), \
+                patch.object(bonus, "_bill_detail", return_value=bill([{"so_luong": 80}])):
+            audit = {}
+            frames = bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, False,
+                                             {}, "test", audit, detail_config={})
+        self.assertEqual(audit["blocking_issues"], 0)
+        self.assertGreater(audit["unit_gaps"], 0)
+        self.assertTrue(frames["BaoCao"]["Số lượng SELL-OUT"].isna().all())
+        self.assertIn("Thiếu quy đổi đơn vị", set(frames["CanBoSung"]["Mức độ"]))
+        self.assertEqual(audit["quality_status"], "needs_review")
 
 
 class TemplateTests(unittest.TestCase):

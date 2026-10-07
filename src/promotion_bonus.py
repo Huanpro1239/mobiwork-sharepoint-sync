@@ -549,10 +549,13 @@ def _calc_month_frames(
     for name in ("Tong_hop", "Ket_qua", "Kiem_tra"):
         frames[name] = summary_frames[name]
     if not detail_issues.empty:
-        from promotion_detail import OPTIONAL_MAPPING_FIELDS
+        from promotion_detail import OPTIONAL_MAPPING_FIELDS, UNIT_GAP
 
         detail_issues = detail_issues.assign(**{"Mức độ": detail_issues["Trường"].map(
             lambda field: "Thiếu thông tin mô tả" if field in OPTIONAL_MAPPING_FIELDS else "Chặn xuất bản")})
+        unit_gaps = detail_issues["Lý do"].astype(str).str.startswith(UNIT_GAP)
+        detail_issues.loc[unit_gaps, "Mức độ"] = "Thiếu quy đổi đơn vị"
+        manifest["unit_gaps"] = int(unit_gaps.sum())
         frames["CanBoSung"] = detail_issues
     if issues:
         frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
