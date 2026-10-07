@@ -414,6 +414,9 @@ def run() -> dict[str, Any]:
         return manifest
     except Exception as exc:
         manifest.update(status="failed", error=f"{type(exc).__name__}: {exc}")
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            detail = " ".join(f"{type(exc).__name__}: {exc}".split())[:500]
+            print(f"::error title=Promotion detail failed::{detail}")
         raise
     finally:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
