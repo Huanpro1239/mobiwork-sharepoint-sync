@@ -402,6 +402,17 @@ def run() -> dict[str, Any]:
             allowed_fields = {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
                               "Brand", "Package", "Loại KH"}
             result["blocking_issues"] = int((~issues["Trường"].isin(allowed_fields)).sum()) if not issues.empty else 0
+            if result["blocking_issues"]:
+                blocking = issues[~issues["Trường"].isin(allowed_fields)]
+                reasons = (blocking["Trường"].astype(str) + ": " + blocking["Lý do"].astype(str)).value_counts()
+                result["blocking_reasons"] = {k: int(v) for k, v in reasons.head(10).items()}
+                result["blocking_samples"] = [
+                    {k: str(row.get(k, "")) for k in ("Trường", "Lý do", "Mã SP nguồn", "ĐVT nguồn")}
+                    for row in blocking.head(5).to_dict("records")]
+                if os.environ.get("GITHUB_ACTIONS") == "true":
+                    print(f"::warning title=CTKM blocking issues {anchor:%m/%Y}::"
+                          f"{json.dumps(result['blocking_reasons'], ensure_ascii=False)} "
+                          f"samples={json.dumps(result['blocking_samples'], ensure_ascii=False)}")
             manifest["results"].append(result)
             prepared.append((anchor, path, result))
         incomplete = any(result["issues"] for _, _, result in prepared)
