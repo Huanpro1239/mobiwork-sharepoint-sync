@@ -80,7 +80,12 @@ def main() -> None:
     result = summary(sales, groups, os.environ.get("SALES_STRUCTURE_SAMPLE", "KHHO0303"))
     print(f"::notice title=Sales structure::{json.dumps(result, ensure_ascii=False)[:3500]}")
     print(f"::notice title=Sales roles::{json.dumps(supervisor_probe(sales), ensure_ascii=False)[:3500]}")
-    print(f"::notice title=SS gaps::{json.dumps(ss_gap_probe(sales, groups), ensure_ascii=False)[:3500]}")
+    try:
+        gaps = ss_gap_probe(sales, groups)
+    except Exception as exc:  # diagnostic only
+        import traceback
+        gaps = {"error": f"{type(exc).__name__}: {exc}", "where": traceback.format_exc()[-600:]}
+    print(f"::notice title=SS gaps::{json.dumps(gaps, ensure_ascii=False)[:3500]}")
 
 
 def ss_gap_probe(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, Any]:
@@ -96,7 +101,7 @@ def ss_gap_probe(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> d
             sup_units[str(sale.get("ma") or "")] = unit
     gaps = collections.Counter()
     units = collections.defaultdict(set)
-    for code, item in mapping.items():
+    for item in mapping.values():
         if item.get("SS Code") or not item.get("DB Code"):
             continue
         prov = province(item["DB Code"])
