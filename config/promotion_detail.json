@@ -4,6 +4,7 @@
   "fetch_product_catalogue": true,
   "fetch_customer_catalogue": true,
   "fetch_sales_structure": true,
+  "bosung_mapping": true,
   "customer_catalogue_start_date": "01/01/1900",
   "program_codes": {},
   "employees": {},

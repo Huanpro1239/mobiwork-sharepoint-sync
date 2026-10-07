@@ -421,13 +421,18 @@ def detail_source(results: list[ui.ProgramResult], label: str) -> list[tuple[str
 
 def customer_sales_metadata(
     lines: list[dict[str, Any]], employees: dict[str, dict[str, str]],
+    cfg: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, str]], int]:
-    """Use unambiguous sales-employee assignments, never programme eligibility regions."""
+    """Use unambiguous sales assignments (order warehouse NPP, else employee), never
+    programme eligibility regions."""
     candidates: dict[str, dict[str, set[str]]] = collections.defaultdict(
         lambda: collections.defaultdict(set))
+    if cfg is not None:
+        from promotion_detail import resolve_sales
     for line in lines:
         raw = line.get("raw") or {}
-        employee = employees.get(ui.text(raw.get("ma_nv_dat")), {})
+        employee = (resolve_sales(raw, cfg) if cfg is not None
+                    else employees.get(ui.text(raw.get("ma_nv_dat")), {}))
         for field in ("Vùng", "Tên NPP"):
             value = ui.text(employee.get(field))
             if value:

@@ -235,6 +235,7 @@ jobs:
           PROMOTION_BONUS_PROGRAM: ${{ inputs.bonus_program }}
           PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
           PROMOTION_BONUS_SOURCE: "auto"
+          BOSUNG_MAPPING: "true"
           PROMOTION_BONUS_MONTHS: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || inputs.bonus_months }}
           MOBIWORK_WEB_EMAIL: ${{ secrets.MOBIWORK_WEB_EMAIL }}
           MOBIWORK_WEB_TOKENKEY: ${{ secrets.MOBIWORK_WEB_TOKENKEY }}

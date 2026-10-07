@@ -504,7 +504,8 @@ def _calc_month_frames(
         except Exception as exc:  # display data is informative; never block the report
             display_note = f"Không lấy được DisplayData ({type(exc).__name__})"
             manifest["display_error"] = f"{type(exc).__name__}: {exc}"
-    sales_metadata, conflicts = calc.customer_sales_metadata(lines, detail_config.get("employees", {}))
+    sales_metadata, conflicts = calc.customer_sales_metadata(lines, detail_config.get("employees", {}),
+                                                              detail_config)
     manifest["customer_assignment_conflicts"] = conflicts
     results, issues = calc.compute(programs, lines, customer_map, displays=displays,
                                   sales_metadata=sales_metadata)
@@ -557,6 +558,11 @@ def _calc_month_frames(
         detail_issues.loc[unit_gaps, "Mức độ"] = "Thiếu quy đổi đơn vị"
         manifest["unit_gaps"] = int(unit_gaps.sum())
         frames["CanBoSung"] = detail_issues
+    if _bosung_enabled(detail_config):
+        import bosung_mapping as bosung
+
+        label = f"TraThuong {first:%Y-%m}"
+        TODO_UPDATES[label] = bosung.aggregate(bosung.todo_rows(detail_issues, detail_config), label)
     if issues:
         frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
     manifest["template_rows"] = len(report)
@@ -579,6 +585,15 @@ def _calc_month_frames(
     return frames
 
 
+# Fill-in rows per month ("TraThuong YYYY-MM") for 08_BoSungDanhMuc/CanBoSung_TongHop.xlsx.
+TODO_UPDATES: dict[str, list[dict[str, Any]]] = {}
+
+
+def _bosung_enabled(cfg: dict[str, Any] | None = None) -> bool:
+    return (os.environ.get("BOSUNG_MAPPING", "").strip().casefold() == "true"
+            and (cfg is None or bool(cfg.get("bosung_mapping", False))))
+
+
 def _load_template_config(client: MobiWorkClient) -> dict[str, Any]:
     """Enrich once per run; a failed lookup is retried on the next run."""
     from promotion_detail import enrich_product_config
@@ -596,6 +611,10 @@ def _load_template_config(client: MobiWorkClient) -> dict[str, Any]:
             cfg = enrich_employee_config(client, cfg)
         except Exception as exc:
             LOG.warning("Sales structure unavailable for template: %s", exc)
+    if _bosung_enabled(cfg):
+        import bosung_mapping as bosung
+
+        cfg = bosung.apply_overrides(cfg, bosung.load_overrides())
     return cfg
 
 
@@ -838,6 +857,11 @@ def run() -> dict[str, Any]:
                 }
             )
 
+        if TODO_UPDATES and _bosung_enabled():
+            import bosung_mapping as bosung
+
+            manifest["bosung"] = bosung.publish(dict(TODO_UPDATES), None if dry_run else sharepoint,
+                                                "" if dry_run else drive_id, dry_run=dry_run)
         manifest.update(
             {
                 "status": "success",
