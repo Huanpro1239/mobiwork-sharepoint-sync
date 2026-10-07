@@ -79,19 +79,29 @@ Các report được khai báo tại `config/reports.json`:
 | `order` | `DonDatHang_YYYY-MM.xlsx` | header + detail | `ma_phieu` |
 | `bill` | `DonBanHang_YYYY-MM.xlsx` | header + detail | `ma_phieu` |
 
-Báo cáo trả thưởng là dataset snapshot riêng, cấu hình tại `config/promotion_bonus.json`, vì endpoint `PromotionBonusReport` bắt buộc `id_ct` và không hỗ trợ truy vấn trạng thái lịch sử theo ngày:
+Báo cáo trả thưởng được tính từ danh mục chương trình, đơn bán hàng theo ngày giao,
+danh mục khách và kết quả trưng bày (`PROMOTION_BONUS_SOURCE=auto` → `calc`).
+Cấu hình đích lưu tại `config/promotion_bonus.json`:
 
 ```text
 06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
-├─ ChuongTrinh
-├─ Data
-├─ ChiTieu
-└─ TraThuong
+├─ BaoCao: chi tiết theo mẫu, chỉ khách đủ điều kiện có dòng TRẢ THƯỞNG
+├─ Tong_hop: chỉ tiêu và thưởng dự kiến theo khách/chương trình
+├─ Ket_qua: sản phẩm thưởng của khách đủ điều kiện
+├─ Kiem_tra: nguồn, kỳ và trạng thái chương trình
+├─ CanBoSung: chỉ tạo khi thiếu mapping hoặc lỗi nguồn/quy đổi
+└─ Can_xem: chỉ tạo khi có quy tắc chưa hỗ trợ
 ```
 
 Tài liệu API chính thức: [Danh sách chương trình trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonus/findPromotionBonus) và [Báo cáo trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonusReport/findPromotionBonusReport). Chi tiết tham số và mapping nằm trong [data contract](docs/DATA_CONTRACT.md#promotion-bonus-snapshot-contract).
 
-Pipeline tự phân trang `/OpenAPI/V1/PromotionBonus` để lấy toàn bộ chương trình, sau đó gọi `/OpenAPI/V1/PromotionBonusReport` từng chương trình để giữ provenance chính xác. Snapshot được refresh trong workflow `MobiWork DMS Sync`; bootstrap/full-month rebuild 4 report lịch sử không giả lập backfill cho dataset này.
+Workflow `MobiWork DMS Sync` cập nhật file Current và bản tháng
+`06_BaoCaoTraThuong/YYYY/MM/BaoCaoTraThuong_YYYY-MM.xlsx`. `promotion_history`
+tính các tháng đã có Bill monthly master, không ghi đè Current.
+Danh sách đăng ký và cây phòng ban là dữ liệu hiện tại, nên chưa cam kết tái tạo
+đầy đủ lịch sử hoặc khớp mọi dòng DMS. `CanBoSung` phân biệt thiếu thông tin mô tả
+với lỗi chặn xuất bản; lỗi nguồn, identity hoặc quy đổi không được đưa lên SharePoint.
+Nguồn `ui` và `openapi` vẫn có thể chọn khi chạy CLI để đối chiếu; không phải nguồn mặc định.
 
 `makh` của `new_customer` là mã nghiệp vụ và **không được giả định unique**: dữ liệu lịch sử đã có các record khác `ID` nhưng dùng lại cùng `makh`. Pipeline giữ đủ các record đó và dùng `ID` làm identity/upsert key. `order` và `bill` kiểm uniqueness header theo `ma_phieu`; detail kiểm theo `ma_phieu + stt`. `bill` còn đối chiếu `API total == fetched rows` trước khi chấp nhận dữ liệu.
 

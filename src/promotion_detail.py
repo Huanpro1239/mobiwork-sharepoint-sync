@@ -314,6 +314,15 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
     return report, _frame(issues, "CanBoSung")
 
 
+OPTIONAL_MAPPING_FIELDS = frozenset({"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
+                                     "Brand", "Package", "Loại KH"})
+
+
+def blocking_issue_count(issues: pd.DataFrame) -> int:
+    """Source identities, quantities and amounts must be valid before publication."""
+    return int((~issues["Trường"].isin(OPTIONAL_MAPPING_FIELDS)).sum()) if not issues.empty else 0
+
+
 def unit_trace(detail: pd.DataFrame, report: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
     orders = set(report["Mã Đơn hàng"])
     result = []
@@ -399,9 +408,7 @@ def run() -> dict[str, Any]:
                       "filename": path.name, "source_scope": "requested_dates" if dry and scope == "touched" else "monthly_master",
                       "source_rows": source_rows, "outside_order_month_rows": outside_month,
                       "source_sha256": hashlib.sha256(content).hexdigest()}
-            allowed_fields = {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
-                              "Brand", "Package", "Loại KH"}
-            result["blocking_issues"] = int((~issues["Trường"].isin(allowed_fields)).sum()) if not issues.empty else 0
+            result["blocking_issues"] = blocking_issue_count(issues)
             manifest["results"].append(result)
             prepared.append((anchor, path, result))
         incomplete = any(result["issues"] for _, _, result in prepared)

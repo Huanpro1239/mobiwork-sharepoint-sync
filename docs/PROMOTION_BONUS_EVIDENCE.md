@@ -1,6 +1,32 @@
-# Promotion Bonus: DMS request evidence still required
+# Promotion Bonus: implementation and DMS evidence
 
-This PR is a diagnostic and isolated workflow change, not a verified replacement of Paybonus. It does not change visit/new_customer/order/bill, photo processing, monthly masters, quality gates, recovery or OIDC.
+Current source: `auto` resolves to `calc`. The dated records below describe the
+investigation and earlier adapters, not the current default. Partial monetary and
+quantity comparisons exist; complete customer listing and historical equivalence
+to Paybonus remain unverified.
+
+## Stability and cleanup (2026-10-07)
+
+- Re-read paginated report windows at most three times when the source total changes;
+  discard previous pass rows and retain completeness/identity gates.
+- Reject missing identity and non-finite Bill values rather than silently using zero.
+  Missing units block only lines belonging to a registered customer and programme SKU.
+- Keep proposed rewards in `Thưởng dự kiến`; publish reward rows only for eligible
+  customers. A missing display grading cannot create a `TRẢ THƯỞNG` line.
+- Customer region/NPP uses unambiguous sales assignments from the department tree,
+  with customer-region metadata taking precedence. Keep programme eligibility region
+  separately as `Vùng áp dụng CT`; missing or conflicting assignments stay unknown.
+- Share the existing CTKM blocking-issue classification. Diagnostic dry-runs retain
+  `CanBoSung`; invalid identity/quantity/amount/conversion prevents production publication.
+- Load template catalogues once per run instead of process-global mutable caching.
+  Remove employee-specific exploratory probes; keep schema/count diagnostics.
+- `quality_status` describes gaps independently of execution success;
+  `dms_equivalence_verified=false` avoids presenting unit tests as financial reconciliation.
+
+Read-only regression against the saved October Bill/catalogue snapshot: 2,108
+sale lines, 98 catalogue entries (89 supported and 9 unsupported). One reward row
+was eligible and 15 reached rows required display review. No source workbook was
+modified and this older snapshot is not a live DMS reconciliation.
 
 ## Evidence as of 2026-10-06
 

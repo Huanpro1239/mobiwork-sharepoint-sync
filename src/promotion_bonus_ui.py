@@ -390,7 +390,7 @@ def reward_cells(row: dict[str, Any], rewards: list[dict[str, Any]]) -> list[tup
 
 
 def text(value: Any) -> str:
-    if value is None:
+    if value is None or value is pd.NA or (isinstance(value, float) and math.isnan(value)):
         return ""
     if isinstance(value, dict):
         for key in ("viewData", "name", "ten", "label", "value"):

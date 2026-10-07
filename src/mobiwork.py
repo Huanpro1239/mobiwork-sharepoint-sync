@@ -21,6 +21,10 @@ else:
 LOG = logging.getLogger("mobiwork_sync")
 
 
+class _SnapshotChanged(RuntimeError):
+    """A paginated read no longer agrees with its reported source total."""
+
+
 @dataclass(frozen=True)
 class ReportConfig:
     key: str
@@ -323,6 +327,22 @@ class MobiWorkClient:
     def fetch_report_range(
         self, cfg: ReportConfig, from_date: date, to_date: date
     ) -> list[dict[str, Any]]:
+        # Re-read the whole window, never concatenate pages from different passes.
+        # Keep max_retries=0 useful for diagnostics and deterministic fail-fast callers.
+        attempts = 1 + min(self.max_retries, 2)
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._fetch_report_range_once(cfg, from_date, to_date)
+            except _SnapshotChanged:
+                if attempt == attempts:
+                    raise
+                LOG.warning("Report %s: source total changed; restarting read %s/%s",
+                            cfg.key, attempt + 1, attempts)
+        raise AssertionError("unreachable")
+
+    def _fetch_report_range_once(
+        self, cfg: ReportConfig, from_date: date, to_date: date
+    ) -> list[dict[str, Any]]:
         if to_date < from_date:
             raise ValueError("to_date must be on or after from_date")
 
@@ -365,16 +385,21 @@ class MobiWorkClient:
                     f"{payload.get('message', '')}"
                 )
 
-            if cfg.total_path and expected_total is None:
+            if cfg.total_path:
                 total_value = get_by_path(payload, cfg.total_path)
                 if total_value not in (None, ""):
                     try:
-                        expected_total = int(total_value)
+                        page_total = int(total_value)
                     except (TypeError, ValueError) as exc:
                         raise TypeError(
                             f"Report {cfg.key}: total_path={cfg.total_path!r} "
                             f"is not an integer: {total_value!r}"
                         ) from exc
+                    if page_total < 0:
+                        raise ValueError(f"Report {cfg.key}: total must be non-negative")
+                    if expected_total is not None and page_total != expected_total:
+                        raise _SnapshotChanged(f"Report {cfg.key}: API total changed between pages")
+                    expected_total = page_total
 
             records = get_by_path(payload, cfg.data_path)
             if records is None:
@@ -425,7 +450,7 @@ class MobiWorkClient:
                 raise RuntimeError(f"Report {cfg.key}: pagination safety limit exceeded")
 
         if expected_total is not None and raw_record_count != expected_total:
-            raise RuntimeError(
+            raise _SnapshotChanged(
                 f"Report {cfg.key}: API total={expected_total}, fetched={raw_record_count}. "
                 "Refusing to export an incomplete dataset."
             )

@@ -93,6 +93,22 @@ class RuleTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_invalid_sale_values_are_rejected_instead_of_becoming_zero_or_nan(self):
+        for row in ({"so_luong": float("nan")}, {"thanh_tien": float("inf")},
+                    {"so_luong": True}, {"ID_khachhang": float("nan")},
+                    {"ma_sp": ""}):
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                calc.sold_lines(bill([row]), OCT1, OCT31)
+
+    def test_missing_unit_blocks_only_a_qualifying_programme_line(self):
+        detail = bill([{"so_luong": 80, "ten_dvt": float("nan"), "ma_dvt": ""}])
+        lines = calc.sold_lines(detail, OCT1, OCT31)
+        with self.assertRaisesRegex(ValueError, "missing its unit"):
+            calc.compute([qty_program()], lines, {})
+        unrelated = bill([{"ma_sp": "OTHER", "ten_dvt": float("nan"), "ma_dvt": ""}])
+        results, _ = calc.compute([qty_program()], calc.sold_lines(unrelated, OCT1, OCT31), {})
+        self.assertEqual(results[0].rows[0]["objThucHien"][calc.TARGET_ID], 0)
+
     def test_delivery_date_is_converted_to_vietnam_day(self):
         self.assertEqual(calc.local_day("2026-09-30T17:00:00.000Z"), date(2026, 10, 1))
         self.assertEqual(calc.local_day("2026-10-31T16:59:59.000Z"), date(2026, 10, 31))
@@ -181,7 +197,7 @@ class ComputeTests(unittest.TestCase):
         self.assertIn("Đủ điều kiện trả thưởng", frames["Tong_hop"].columns)
         self.assertIn("Đủ điều kiện trả thưởng", frames["Ket_qua"].columns)
         self.assertEqual(frames["Tong_hop"].iloc[0]["Tên khách hàng"], "Quán A")
-        self.assertIn("Miền Trung 1", frames)
+        self.assertIn(ui.UNKNOWN_REGION, frames)
 
     def test_missing_display_data_is_explicit(self):
         program = qty_program(cttb={"ten": "CTTB PET", "ket_qua": {"label": "Đạt"}})
@@ -189,7 +205,27 @@ class ComputeTests(unittest.TestCase):
         row = next(r for r in results[0].rows if r["ma"] == "KHHO112323")
         self.assertEqual(row["extra"]["Kết quả trưng bày"], "Chưa có dữ liệu")
         self.assertEqual(row["extra"]["Đủ điều kiện trả thưởng"], "Cần kiểm tra trưng bày")
-        self.assertTrue(row["objTraThuong"])
+        self.assertFalse(row["objTraThuong"])
+        self.assertTrue(row["objThuongDuKien"])
+        frames = ui.build_ui_frames(results, OCT1, OCT31)
+        self.assertTrue(frames["Ket_qua"].empty)
+        self.assertTrue(frames["Tong_hop"]["Thưởng dự kiến"].str.contains("12").any())
+        detail = calc.detail_source(results, "10/2026")[0][1]
+        self.assertNotIn(calc.GIFT_ORDER, detail["ma_phieu"].tolist())
+
+    def test_region_uses_customer_or_unambiguous_sales_assignment(self):
+        lines = calc.sold_lines(bill([{"so_luong": 80}]), OCT1, OCT31)
+        mappings, conflicts = calc.customer_sales_metadata(
+            lines, {"KHHO0303": {"Vùng": "Miền Trung 1B", "Tên NPP": "NPP A"}})
+        results, _ = calc.compute([qty_program(region="Tất cả")], lines, {}, sales_metadata=mappings)
+        row = results[0].rows[0]
+        self.assertEqual((row["kv"], row["npp"], conflicts), ("Miền Trung 1B", "NPP A", 0))
+        self.assertEqual(row["extra"]["Vùng áp dụng CT"], "Tất cả")
+        other = calc.sold_lines(bill([{"ma_nv_dat": "NV2"}]), OCT1, OCT31)
+        mappings, conflicts = calc.customer_sales_metadata(
+            lines + other, {"KHHO0303": {"Vùng": "Miền Trung 1B"}, "NV2": {"Vùng": "Miền Bắc"}})
+        self.assertEqual((mappings[C1], conflicts), ({}, 1))
+
 
 
 class RunTests(unittest.TestCase):
@@ -268,6 +304,28 @@ class RunTests(unittest.TestCase):
                 self.assertRaises(ValueError):
             bonus.run()
 
+    def test_source_errors_block_publication_but_dry_run_keeps_diagnostics(self):
+        env = {"PROMOTION_BONUS_SOURCE": "calc", "PROMOTION_BONUS_FROM_DATE": "2026-10-01",
+               "PROMOTION_BONUS_TO_DATE": "2026-10-31"}
+        with patch.dict(os.environ, env), \
+                patch.object(bonus, "fetch_programs", return_value=[qty_program()]), \
+                patch.object(bonus, "_bill_detail", return_value=bill([{"so_luong": 80}])):
+            audit = {}
+            frames = bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True,
+                                             {}, "test", audit, detail_config={})
+            self.assertGreater(audit["blocking_issues"], 0)
+            self.assertIn("Chặn xuất bản", set(frames["CanBoSung"]["Mức độ"]))
+            with self.assertRaisesRegex(ValueError, "Nothing published"):
+                bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, False,
+                                         {}, "test", {}, detail_config={})
+
+    def test_unsupported_calculation_option_is_not_silently_ignored(self):
+        with patch.dict(os.environ, {"PROMOTION_BONUS_STTT": "2"}), \
+                patch.object(bonus, "fetch_programs") as fetch, \
+                self.assertRaisesRegex(ValueError, "only sttt=0"):
+            bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True, {}, "", {})
+        fetch.assert_not_called()
+
 
 class TemplateTests(unittest.TestCase):
     def test_bonus_codes_keep_levels(self):
@@ -280,7 +338,8 @@ class TemplateTests(unittest.TestCase):
     def test_detail_source_repeats_counted_lines_and_adds_reward_line(self):
         detail = bill([{"so_luong": 40, "ten_dvt": "Thùng"}, {"so_luong": 80}, {"ma_sp": "999", "so_luong": 5}])
         program = qty_program(cttb={"ten": "CTTB", "ket_qua": {"label": "Đạt"}})
-        results, _ = calc.compute([program], calc.sold_lines(detail, OCT1, OCT31), {})
+        results, _ = calc.compute([program], calc.sold_lines(detail, OCT1, OCT31), {},
+                                  displays={("KHHO112323", "cttb"): "Đạt"})
         sources = calc.detail_source(results, "10/2026")
         self.assertEqual(len(sources), 1)
         code, frame = sources[0]
@@ -289,13 +348,12 @@ class TemplateTests(unittest.TestCase):
         gift = frame.iloc[-1]
         self.assertEqual((gift["ma_sp"], gift["so_luong"], gift["ten_dvt"], gift["is_km"]),
                          ("230100110", 12, "Chai", True))
-        self.assertIn("cần kiểm tra trưng bày", gift["ten_sp"])
+        self.assertNotIn("cần kiểm tra trưng bày", gift["ten_sp"])
 
     def test_template_report_uses_ctkm_layout_and_pack_units(self):
         detail = bill([{"so_luong": 72, "thanh_tien": 326_000}])
         results, _ = calc.compute([qty_program()], calc.sold_lines(detail, OCT1, OCT31), {})
         with patch("promotion_detail.enrich_product_config", side_effect=RuntimeError("offline")):
-            bonus._DETAIL_CONFIG.clear()
             report, issues = bonus._template_report(Mock(), {}, results, OCT1)
         from promotion_detail import COLUMNS
         self.assertEqual(list(report.columns), COLUMNS)
@@ -312,7 +370,6 @@ class TemplateTests(unittest.TestCase):
         program["name"] = "008/TB/GT/01/2026_Q4_CT TÍCH LŨY VIPSHOP THEO THÁNG - MỨC 2"
         results, _ = calc.compute([program], calc.sold_lines(bill([{"so_luong": 80}]), OCT1, OCT31), {})
         with patch("promotion_detail.enrich_product_config", side_effect=RuntimeError("offline")):
-            bonus._DETAIL_CONFIG.clear()
             report, _ = bonus._template_report(Mock(), {}, results, OCT1)
         self.assertEqual(set(report["Mã CTKM"]), {"008/TB/GT/01/2026_Q4 - Mức 2"})
 
@@ -320,7 +377,6 @@ class TemplateTests(unittest.TestCase):
         import openpyxl
         detail = bill([{"so_luong": 72}])
         results, _ = calc.compute([qty_program()], calc.sold_lines(detail, OCT1, OCT31), {})
-        bonus._DETAIL_CONFIG.clear()
         with tempfile.TemporaryDirectory() as tmp, \
                 patch("promotion_detail.enrich_product_config", side_effect=RuntimeError("offline")):
             cwd = os.getcwd()

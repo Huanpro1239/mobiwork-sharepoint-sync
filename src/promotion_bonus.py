@@ -469,13 +469,16 @@ def _calc_month_frames(
     customer_note: str,
     manifest: dict[str, Any],
     verbose: bool = True,
+    detail_config: dict[str, Any] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Compute one calendar month; ``manifest`` receives that month's counts."""
     import promotion_bonus_calc as calc
-    from region_mapping import load_region_map
-
     if (first.year, first.month) != (last.year, last.month):
         raise ValueError("Computed Promotion Bonus report covers one calendar month at a time")
+    if os.environ.get("PROMOTION_BONUS_STTT", "").strip() not in {"", "0"}:
+        raise ValueError("Computed Promotion Bonus supports only sttt=0 (price × quantity)")
+    if detail_config is None:
+        detail_config = _load_template_config(client)
     filters = {"fromdate": first.strftime("%d/%m/%Y"), "todate": last.strftime("%d/%m/%Y")}
     programs = _select_programs(
         fetch_programs(client, cfg, filters=filters),
@@ -501,10 +504,10 @@ def _calc_month_frames(
         except Exception as exc:  # display data is informative; never block the report
             display_note = f"Không lấy được DisplayData ({type(exc).__name__})"
             manifest["display_error"] = f"{type(exc).__name__}: {exc}"
-    results, issues = calc.compute(
-        programs, lines, customer_map, displays=displays,
-        region_of=calc.region_from_code(load_region_map(str(ROOT / "config" / "employee_regions.json"))),
-    )
+    sales_metadata, conflicts = calc.customer_sales_metadata(lines, detail_config.get("employees", {}))
+    manifest["customer_assignment_conflicts"] = conflicts
+    results, issues = calc.compute(programs, lines, customer_map, displays=displays,
+                                  sales_metadata=sales_metadata)
     counts = ui.snapshot_counts(results)
     diag = calc.diagnostics(results)
     manifest.update(counts)
@@ -527,35 +530,70 @@ def _calc_month_frames(
     notes = [
         ("Quy tắc", "Khách đăng ký của chương trình; đơn bán (bỏ dòng khuyến mãi) có ngày giao trong kỳ; "
                     "chỉ cộng sản phẩm và đúng đơn vị khai trong chương trình; tiền = đơn giá × số lượng"),
-        ("Khu vực", "Vùng áp dụng của chương trình (OpenAPI không có khu vực chi tiết của khách)"),
+        ("Khu vực", "Danh mục khách nếu có; nếu không, dùng vùng/NPP duy nhất từ nhân viên trên đơn bán "
+                    "và cây phòng ban hiện tại. Thiếu hoặc nhiều giá trị thì để chưa xác định. "
+                    "Vùng áp dụng CT được ghi riêng, không thay cho khu vực khách."),
         ("Trưng bày", display_note + ". Khách đạt doanh số ở chương trình có trưng bày nhưng chưa có "
-                      "kết quả 'Đạt' được ghi 'Cần kiểm tra trưng bày'"),
+                      "kết quả 'Đạt' được ghi 'Cần kiểm tra trưng bày'; quà chỉ nằm ở Thưởng dự kiến, "
+                      "chưa đưa vào Ket_qua hoặc dòng TRẢ THƯỞNG"),
         ("Khách hàng", customer_note + ". Danh sách khách đăng ký là danh sách hiện tại của chương trình"),
         ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
     ]
     notes.append(("Sheet BaoCao", "Theo mẫu Báo cáo chi tiết CTKM theo KH: mỗi dòng hàng được tính vào chương "
-                                  "trình (quy đổi KÉT/THÙNG/BÌNH); khách đạt có thêm dòng 'TRẢ THƯỞNG' ghi quà. "
+                                  "trình (quy đổi KÉT/THÙNG/BÌNH); khách đủ điều kiện có thêm dòng 'TRẢ THƯỞNG' ghi quà. "
                                   "Thực hiện ở Tong_hop tính theo đơn vị khai trong chương trình"))
     summary_frames = ui.build_ui_frames(results, first, last, "",
                                         "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)", notes)
-    report, detail_issues = _template_report(client, customers, results, first)
+    report, detail_issues = _template_report(client, customers, results, first, detail_config)
     frames: dict[str, pd.DataFrame] = {"BaoCao": report}
     for name in ("Tong_hop", "Ket_qua", "Kiem_tra"):
         frames[name] = summary_frames[name]
     if not detail_issues.empty:
+        from promotion_detail import OPTIONAL_MAPPING_FIELDS
+
+        detail_issues = detail_issues.assign(**{"Mức độ": detail_issues["Trường"].map(
+            lambda field: "Thiếu thông tin mô tả" if field in OPTIONAL_MAPPING_FIELDS else "Chặn xuất bản")})
         frames["CanBoSung"] = detail_issues
     if issues:
         frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
     manifest["template_rows"] = len(report)
     manifest["template_issues"] = len(detail_issues)
+    from promotion_detail import blocking_issue_count
+
+    manifest["blocking_issues"] = blocking_issue_count(detail_issues)
     missing = (detail_issues["Trường"].value_counts().head(6).to_dict()
                if not detail_issues.empty and "Trường" in detail_issues else {})
+    manifest["missing_fields"] = missing
+    manifest["quality_status"] = "needs_review" if (
+        issues or not detail_issues.empty or conflicts or manifest["review_display_rows"]
+        or manifest.get("display_error") or not customers) else "complete_supported_rules"
+    manifest["dms_equivalence_verified"] = False
     _github_notice(f"Promotion Bonus template {first:%m/%Y}",
                    f"rows={len(report)} issues={len(detail_issues)} missing={missing}")
+    if manifest["blocking_issues"] and not dry_run:
+        raise ValueError("Promotion Bonus has invalid source values, identities or conversions; "
+                         "run dry-run to inspect CanBoSung. Nothing published.")
     return frames
 
 
-_DETAIL_CONFIG: dict[str, Any] = {}
+def _load_template_config(client: MobiWorkClient) -> dict[str, Any]:
+    """Enrich once per run; a failed lookup is retried on the next run."""
+    from promotion_detail import enrich_product_config
+    from promotion_detail import load_config as load_detail_config
+
+    cfg = load_detail_config()
+    if cfg.get("fetch_product_catalogue", False):
+        try:
+            cfg = enrich_product_config(client, cfg)
+        except Exception as exc:
+            LOG.warning("Product catalogue unavailable for template: %s", exc)
+    if cfg.get("fetch_sales_structure", False):
+        from sales_structure import enrich_employee_config
+        try:
+            cfg = enrich_employee_config(client, cfg)
+        except Exception as exc:
+            LOG.warning("Sales structure unavailable for template: %s", exc)
+    return cfg
 
 
 def _template_report(
@@ -563,27 +601,13 @@ def _template_report(
     customers: dict[str, Any],
     results: list[Any],
     first: Any,
+    detail_config: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Render counted sale lines and rewards with the CTKM detail template mappings."""
     import promotion_bonus_calc as calc
-    from promotion_detail import COLUMNS, build_report, enrich_product_config
-    from promotion_detail import load_config as load_detail_config
+    from promotion_detail import COLUMNS, build_report
 
-    if "cfg" not in _DETAIL_CONFIG:
-        cfg = load_detail_config()
-        if cfg.get("fetch_product_catalogue", False):
-            try:
-                cfg = enrich_product_config(client, cfg)
-            except Exception as exc:  # static reference still converts known SKUs
-                LOG.warning("Product catalogue unavailable for template: %s", exc)
-        if cfg.get("fetch_sales_structure", False):
-            from sales_structure import enrich_employee_config
-            try:
-                cfg = enrich_employee_config(client, cfg)
-            except Exception as exc:  # explicit mappings still apply
-                LOG.warning("Sales structure unavailable for template: %s", exc)
-        _DETAIL_CONFIG["cfg"] = cfg
-    cfg = dict(_DETAIL_CONFIG["cfg"])
+    cfg = dict(_load_template_config(client) if detail_config is None else detail_config)
     cfg["customer_catalogue"] = customers
     sources = calc.detail_source(results, f"{first:%m/%Y}")
     # Keep full bonus codes (e.g. "008/TB/GT/01/2026_Q4 - Mức 2"); the CTKM normaliser
@@ -670,6 +694,7 @@ def _build_calc_workbook(
         if (first.year, first.month) != (last.year, last.month):
             raise ValueError("Computed Promotion Bonus report covers one calendar month at a time")
     customers, customer_note = _load_customers(client, manifest)
+    detail_config = _load_template_config(client)
     if history:
         manifest["storage_mode"] = "monthly_history"
         outputs: list[tuple[Path, str]] = []
@@ -680,7 +705,8 @@ def _build_calc_workbook(
             manifest["months"][f"{first:%Y-%m}"] = month_manifest
             try:
                 frames = _calc_month_frames(client, cfg, first, last, dry_run, customers,
-                                            customer_note, month_manifest, verbose=False)
+                                            customer_note, month_manifest, verbose=False,
+                                            detail_config=detail_config)
             except Exception as exc:  # one missing month must not hide the others
                 month_manifest["error"] = f"{type(exc).__name__}: {exc}"
                 _github_notice(f"Promotion Bonus {first:%m/%Y} skipped", month_manifest["error"][:300])
@@ -692,7 +718,8 @@ def _build_calc_workbook(
         manifest["phase"] = "workbook_build"
         return outputs[0][0], outputs[0][1], outputs[1:]
 
-    frames = _calc_month_frames(client, cfg, first, last, dry_run, customers, customer_note, manifest)
+    frames = _calc_month_frames(client, cfg, first, last, dry_run, customers, customer_note, manifest,
+                               detail_config=detail_config)
     manifest["phase"] = "workbook_build"
     filename, folder = _monthly_target(cfg, first)
     monthly = _write_bonus(frames, filename, first)
@@ -719,6 +746,7 @@ def run() -> dict[str, Any]:
     try:
         source = resolve_source()
         manifest["source"] = source
+        manifest["historical_backfill_supported"] = source == "calc"
         if source == "openapi" and _env_bool("PROMOTION_BONUS_REQUIRE_DMS_MATCH", False):
             raise RuntimeError(
                 "DMS-equivalent export blocked: report date parameters, calculation enum "

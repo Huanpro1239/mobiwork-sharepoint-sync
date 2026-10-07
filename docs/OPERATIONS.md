@@ -174,7 +174,8 @@ Sheet `Data_anh` có một dòng cho mỗi link ảnh viếng thăm (link gốc 
 
 ## Báo cáo trả thưởng
 
-Trong mỗi lần `MobiWork DMS Sync`, sau khi luồng report chính và Data chấm ảnh hoàn tất, `src/promotion_bonus.py` refresh snapshot:
+Trong mỗi lần `MobiWork DMS Sync`, sau khi luồng report chính và Data chấm ảnh hoàn tất,
+`src/promotion_bonus.py` tính báo cáo tháng hiện tại (`auto` → `calc`):
 
 ```text
 06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
@@ -183,14 +184,31 @@ Trong mỗi lần `MobiWork DMS Sync`, sau khi luồng report chính và Data ch
 Luồng thực hiện:
 
 1. phân trang `/OpenAPI/V1/PromotionBonus` với `page_size <= 200`;
-2. yêu cầu mỗi chương trình có `_id`;
-3. gọi `/OpenAPI/V1/PromotionBonusReport?id_ct=<id>` riêng cho từng chương trình;
-4. kiểm `total == len(data)` khi API trả `total`;
-5. build 4 sheet `ChuongTrinh`, `Data`, `ChiTieu`, `TraThuong`;
+2. lấy khách đăng ký/điều kiện từ chương trình và Bill `ChiTietSP` của tháng;
+3. bỏ hàng khuyến mãi, lọc ngày giao theo Việt Nam, chỉ cộng SKU/ĐVT khai trong chương trình;
+4. nối danh mục khách và DisplayData; chỉ `sttt=0` hoặc mặc định được hỗ trợ;
+5. tạo `BaoCao`, `Tong_hop`, `Ket_qua`, `Kiem_tra` và sheet lỗi khi cần;
 6. staged semantic upload vào SharePoint; workbook không đổi thì tránh ghi lại;
 7. ghi audit `output/promotion_bonus_manifest.json` và state tại `06_BaoCaoTraThuong/_sync_state/promotion_bonus.json`.
 
-Không chạy Promotion Bonus trong bootstrap/full-month rebuild/historical reconcile. Endpoint report không có ngày/as-of nên rebuild dữ liệu cũ sẽ tạo lịch sử giả. File `Current` luôn là snapshot mới nhất tại thời điểm sync.
+`promotion_history` hoặc `bonus_months` tính lại tháng từ Bill monthly master, lưu
+`06_BaoCaoTraThuong/YYYY/MM/BaoCaoTraThuong_YYYY-MM.xlsx`. Backfill không ghi đè Current.
+Khách đăng ký/cây phòng ban dùng danh mục hiện tại; lịch sử và danh sách khách DMS
+chưa được xác nhận tương đương hoàn toàn.
+
+`Thưởng dự kiến` giữ quà của khách đạt doanh số; `Ket_qua` và dòng `TRẢ THƯỞNG` chỉ
+gồm khách đủ điều kiện, kể cả kết quả trưng bày khi chương trình yêu cầu.
+Khu vực khách lấy từ metadata hoặc vùng duy nhất của nhân viên trên đơn bán;
+`Vùng áp dụng CT` được ghi riêng. Nhiều vùng/NPP thì để trống, không chọn tùy ý.
+
+`CanBoSung.Mức độ` phân biệt `Thiếu thông tin mô tả` và `Chặn xuất bản`.
+Lỗi identity, số tiền/số lượng hoặc quy đổi chặn upload; dùng dry-run để xem chi tiết.
+Manifest có `blocking_issues`, `missing_fields`, `quality_status` và số khách cần
+kiểm tra trưng bày. `status=success` là chạy xong, không đồng nghĩa đã đối chiếu DMS.
+
+API thay đổi tổng khi phân trang được đọc lại cả khoảng tối đa 3 lần (giới hạn thêm
+bởi `MOBIWORK_MAX_RETRIES`; 0 là không thử lại). Mọi lần đọc có bộ nhớ riêng;
+vẫn từ chối dữ liệu nếu tổng không ổn định hoặc identity bị xung đột.
 
 
 ## Concurrency và an toàn
