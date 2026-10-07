@@ -105,15 +105,15 @@ def ss_gap_probe(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> d
                 sup_by_prov[province(unit) or unit].add(str(sale.get("ma") or ""))
             sup_units[str(sale.get("ma") or "")] = str(sale.get("ma_don_vi") or "")
     gaps = collections.Counter()
-    units = collections.defaultdict(set)
+    npp_units = collections.defaultdict(set)
     for item in mapping.values():
         if item.get("SS Code") or not item.get("DB Code"):
             continue
         prov = province(item["DB Code"])
         gaps[prov] += 1
-        units[prov].add(item["DB Code"])
+        npp_units[prov].add(item["DB Code"])
     return {"employees_without_ss_by_province": dict(gaps.most_common(15)),
-            "npp_units_without_ss": {k: len(v) for k, v in units.items()},
+            "npp_units_without_ss": {k: len(v) for k, v in npp_units.items()},
             "supervisors_in_those_provinces": {k: sorted(sup_by_prov.get(k, set()))[:6] for k in gaps},
             "supervisor_unit_kinds": dict(collections.Counter(
                 "npp" if NPP_UNIT.match(u or "") else (u or "-") for u in sup_units.values()).most_common(10))}
