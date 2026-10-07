@@ -335,8 +335,10 @@ Quy tắc đã xác nhận:
   dữ liệu, không phải tiền hàng bằng 0.
 - Ngày đơn dùng `ngay_dat` (fallback `ngay_ban_hang` nếu thiếu); nhân viên dùng người đặt (`ma_nv_dat`). Giữ nguyên
   trạng thái đơn của nguồn, chưa tự suy đoán mã trạng thái hủy/trả hàng.
-- ĐVT Thùng/Két/Bình giữ nguyên. Chai hoặc ĐVT khác cần mapping SKU + ĐVT nguồn;
-  chưa có hệ số thì để trống số lượng chuẩn và ghi issue, không ngầm dùng 24 chai.
+- ĐVT Thùng/Két/Bình giữ nguyên; hàng tính theo Cái (vật phẩm) không có quy cách thùng
+  giữ nguyên theo CÁI. Chai hoặc ĐVT khác cần mapping SKU + ĐVT nguồn; chưa có hệ số
+  (hoặc đơn hàng thiếu ĐVT) thì để trống số lượng chuẩn và ghi issue "Thiếu quy đổi…" —
+  issue này KHÔNG chặn xuất báo cáo (manifest `unit_gaps`), không ngầm dùng 24 chai.
 - Giữ tên CTKM đầy đủ khi chưa có mapping mã. Không cắt tên ở dấu `_`, vì hậu tố
   như `_Q3` có ý nghĩa. Có thể ánh xạ tên/ID sang mã bằng `program_codes`.
 
