@@ -30,12 +30,17 @@ def fetch(client: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     return sales, groups
 
 
+def units(sale: dict[str, Any]) -> list[str]:
+    """A user can belong to several units, stored comma-separated in ``ma_don_vi``."""
+    return [u.strip() for u in str(sale.get("ma_don_vi") or "").split(",") if u.strip()]
+
+
 def chains(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
     by_code = {str(g.get("ma_nhom") or "").strip(): g for g in groups if g.get("ma_nhom")}
     out: dict[str, list[dict[str, str]]] = {}
     for sale in sales:
         code = str(sale.get("ma") or "").strip()
-        node = str(sale.get("ma_don_vi") or "").strip()
+        node = (units(sale) or [""])[0]
         chain, seen = [], set()
         while node and node in by_code and node not in seen:
             seen.add(node)
@@ -80,10 +85,39 @@ def main() -> None:
     result = summary(sales, groups, os.environ.get("SALES_STRUCTURE_SAMPLE", "KHHO0303"))
     print(f"::notice title=Sales structure::{json.dumps(result, ensure_ascii=False)[:3500]}")
     print(f"::notice title=Sales roles::{json.dumps(supervisor_probe(sales), ensure_ascii=False)[:3500]}")
+    try:
+        gaps = ss_gap_probe(sales, groups)
+    except Exception as exc:  # diagnostic only
+        import traceback
+        gaps = {"error": f"{type(exc).__name__}: {exc}", "where": traceback.format_exc()[-600:]}
+    print(f"::notice title=SS gaps::{json.dumps(gaps, ensure_ascii=False)[:3500]}")
 
 
-if __name__ == "__main__":
-    main()
+def ss_gap_probe(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, Any]:
+    """Where employees have no supervisor: their NPP province and supervisors in that province."""
+    mapping = employee_mapping(sales, groups)
+    province = lambda unit: unit.split("-")[1] if NPP_UNIT.match(unit or "") else ""  # noqa: E731
+    sup_by_prov: dict[str, set[str]] = collections.defaultdict(set)
+    sup_units: dict[str, str] = {}
+    for sale in sales:
+        if is_supervisor(sale):
+            for unit in units(sale):
+                sup_by_prov[province(unit) or unit].add(str(sale.get("ma") or ""))
+            sup_units[str(sale.get("ma") or "")] = str(sale.get("ma_don_vi") or "")
+    gaps = collections.Counter()
+    npp_units = collections.defaultdict(set)
+    for item in mapping.values():
+        if item.get("SS Code") or not item.get("DB Code"):
+            continue
+        prov = province(item["DB Code"])
+        gaps[prov] += 1
+        npp_units[prov].add(item["DB Code"])
+    return {"employees_without_ss_by_province": dict(gaps.most_common(15)),
+            "npp_units_without_ss": {k: len(v) for k, v in npp_units.items()},
+            "supervisors_in_those_provinces": {k: sorted(sup_by_prov.get(k, set()))[:6] for k in gaps},
+            "supervisor_unit_kinds": dict(collections.Counter(
+                "npp" if NPP_UNIT.match(u or "") else (u or "-") for u in sup_units.values()).most_common(10))}
+
 
 
 NPP_UNIT = re.compile(r"^[A-Z]-[A-Z]+-\d+$")
@@ -119,7 +153,15 @@ def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) 
     supervisors: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for sale in sales:
         if is_supervisor(sale):
-            supervisors[str(sale.get("ma_don_vi") or "").strip()].append(sale)
+            for unit in units(sale):
+                supervisors[unit].append(sale)
+    province_supervisors: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for unit_code, people in supervisors.items():
+        if NPP_UNIT.match(unit_code):
+            for person in people:
+                bucket = province_supervisors[unit_code.split("-")[1]]
+                if person not in bucket:
+                    bucket.append(person)
     out: dict[str, dict[str, str]] = {}
     for sale in sales:
         code = str(sale.get("ma") or "").strip()
@@ -138,6 +180,13 @@ def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) 
                 item["SS Code"] = "; ".join(str(s.get("ma") or "").strip() for s in found)
                 item["SS Name"] = "; ".join(" ".join(str(s.get("ten") or "").split()) for s in found)
                 break
+        if "SS Code" not in item and NPP_UNIT.match(unit["ma_nhom"]):
+            # Unit without its own supervisor: use the province's supervisor only when the
+            # province (B-<PROV>-NNNN) has exactly one; several -> leave blank for review.
+            only = province_supervisors.get(unit["ma_nhom"].split("-")[1], [])
+            if len(only) == 1 and str(only[0].get("ma") or "").strip() != code:
+                item["SS Code"] = str(only[0].get("ma") or "").strip()
+                item["SS Name"] = " ".join(str(only[0].get("ten") or "").split())
         for node in chain[1:] or chain:
             label = region_label(node["ma_nhom"])
             if label:
@@ -164,3 +213,7 @@ def enrich_employee_config(client: Any, cfg: dict[str, Any]) -> dict[str, Any]:
                                        "with_ss": sum(1 for v in derived.values() if v.get("SS Code")),
                                        "with_npp": sum(1 for v in derived.values() if v.get("DB Code"))}
     return result
+
+
+if __name__ == "__main__":
+    main()

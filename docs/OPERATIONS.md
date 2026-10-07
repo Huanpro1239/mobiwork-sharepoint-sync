@@ -345,8 +345,10 @@ Mapping ở `config/promotion_detail.json`: `employees` keyed by `ma_nv_dat`,
 với tên cột đầu ra (Vùng/Tỉnh/SS Code/SS Name/DB Code/Tên NPP/Brand/Package/Loại KH).
 `fetch_sales_structure=true` tự suy ra mapping nhân viên từ cây phòng ban DMS
 (OpenAPI `Sale` + `SaleGroup`): DB Code/Tên NPP = đơn vị trực tiếp dạng `B-XXXX-NNNN`
-của nhân viên; SS Code/SS Name = nhân viên có chức vụ "Giám sát kinh doanh" cùng đơn vị
-(hoặc đơn vị cha gần nhất); Vùng = đơn vị cha mã MB/MT/MN/TN (vd `MT1B` → "Miền Trung 1B").
+của nhân viên; SS Code/SS Name = nhân viên có chức vụ "Giám sát kinh doanh" (hoặc chức
+danh "Giám sát" khi chức vụ trống) cùng đơn vị — `ma_don_vi` có thể chứa nhiều đơn vị cách
+nhau dấu phẩy — hoặc đơn vị cha gần nhất; NPP chưa gán giám sát dùng giám sát duy nhất
+của tỉnh (B-<TỈNH>-NNNN), tỉnh có nhiều giám sát thì để trống để bổ sung trên DMS; Vùng = đơn vị cha mã MB/MT/MN/TN (vd `MT1B` → "Miền Trung 1B").
 Mapping khai báo tay trong `employees` luôn được ưu tiên. Áp dụng cho cả báo cáo trả thưởng.
 `unit_conversions` keyed by `SKU|ĐVT nguồn`, value:
 `{"target_unit": "Thùng", "factor": "0.04166666666666666666666666667"}`.
