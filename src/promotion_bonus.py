@@ -626,6 +626,9 @@ def run() -> dict[str, Any]:
             }
         )
         _write_manifest(manifest)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            detail = " ".join(f"{type(exc).__name__}: {exc}".split())[:500]
+            print(f"::error title=Promotion Bonus failed ({manifest.get('phase')})::{detail}")
         raise
 
 
