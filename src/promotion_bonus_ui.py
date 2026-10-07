@@ -413,6 +413,7 @@ TARGET_COLUMNS = ["Chỉ tiêu", "Hạng mục", "Kế hoạch", "Mức tối th
                   "Thực hiện", "Còn lại", "Tỷ lệ (%)", "Đạt"]
 SUMMARY_COLUMNS = CUSTOMER_COLUMNS + TARGET_COLUMNS + ["Kết quả", "Mã CT (id)"]
 UNKNOWN_REGION = "Chưa xác định"
+REWARD_EXTRA = ("Trưng bày yêu cầu", "Kết quả trưng bày", "Đủ điều kiện trả thưởng")
 
 
 def build_records(results: list[ProgramResult]) -> tuple[list[dict], list[dict], list[dict]]:
@@ -435,12 +436,15 @@ def build_records(results: list[ProgramResult]) -> tuple[list[dict], list[dict],
                 "Timepass": text(row.get("timepass")), "Loại CT": text(row.get("type")),
                 "Số suất": row.get("soSuatCT"),
             }
+            extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+            customer.update({str(k): v for k, v in extra.items() if str(k) not in customer})
             given = reward_cells(row, result.rewards)
             outcome = "; ".join(f"{name}: {_fmt_qty(qty)}" for name, qty in given)
             for name, qty in given:
                 rewards_out.append({**{k: customer[k] for k in ("Chương trình", "Mã khách hàng",
                                     "Tên khách hàng", "Nhà phân phối", "Khu vực")},
                                     "Sản phẩm thưởng": name, "Số lượng": qty,
+                                    **{k: customer[k] for k in extra if k in REWARD_EXTRA},
                                     "Mã CT (id)": result.program_id})
             cells = target_cells(row, result.targets) or [{c: None for c in TARGET_COLUMNS}]
             for cell in cells:
@@ -463,21 +467,31 @@ def sheet_name(label: str, used: set[str]) -> str:
     return name
 
 
+def _extra_columns(records: list[dict[str, Any]], known: list[str]) -> list[str]:
+    seen = dict.fromkeys(known)
+    extra = [k for record in records for k in record if k not in seen]
+    return list(dict.fromkeys(extra))
+
+
 def build_ui_frames(results: list[ProgramResult], first: date, last: date,
-                    sttt: str = "") -> dict[str, pd.DataFrame]:
+                    sttt: str = "", source: str = "DMS Paybonus (gọi từng chương trình)",
+                    notes: list[tuple[str, str]] | None = None) -> dict[str, pd.DataFrame]:
     summary, rewards, checks = build_records(results)
-    frame = pd.DataFrame(summary, columns=SUMMARY_COLUMNS, dtype=object)
+    columns = SUMMARY_COLUMNS[:-1] + _extra_columns(summary, SUMMARY_COLUMNS) + SUMMARY_COLUMNS[-1:]
+    frame = pd.DataFrame(summary, columns=columns, dtype=object)
+    reward_columns = ["Chương trình", "Mã khách hàng", "Tên khách hàng", "Nhà phân phối",
+                      "Khu vực", "Sản phẩm thưởng", "Số lượng"]
+    reward_columns += _extra_columns(rewards, reward_columns + ["Mã CT (id)"]) + ["Mã CT (id)"]
     frames: dict[str, pd.DataFrame] = {
         "Tong_hop": frame,
-        "Ket_qua": pd.DataFrame(rewards, columns=["Chương trình", "Mã khách hàng", "Tên khách hàng",
-                                                  "Nhà phân phối", "Khu vực", "Sản phẩm thưởng",
-                                                  "Số lượng", "Mã CT (id)"], dtype=object),
+        "Ket_qua": pd.DataFrame(rewards, columns=reward_columns, dtype=object),
     }
     check = pd.DataFrame(checks, dtype=object)
     meta = pd.DataFrame([
         {"Chương trình": "Kỳ báo cáo", "Trạng thái": f"{first:%d/%m/%Y} - {last:%d/%m/%Y}"},
         {"Chương trình": "Cách tính", "Trạng thái": STTT_LABELS.get(sttt, sttt)},
-        {"Chương trình": "Nguồn", "Trạng thái": "DMS Paybonus (gọi từng chương trình)"},
+        {"Chương trình": "Nguồn", "Trạng thái": source},
+        *({"Chương trình": k, "Trạng thái": v} for k, v in (notes or [])),
     ], dtype=object)
     frames["Kiem_tra"] = pd.concat([meta, check], ignore_index=True)
     used = set(RESERVED_SHEETS)

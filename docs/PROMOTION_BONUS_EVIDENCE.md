@@ -137,3 +137,16 @@ Web source behaviour:
 - Kế hoạch/Thực hiện/Còn lại/Tỷ lệ follow `renderData` for so_tien, MUTI_SP_SL_*, GR_* and default target types.
 
 Setup: add the three web secrets (optionally `MOBIWORK_ORG_ID`) in GitHub → Settings → Secrets and variables → Actions, then run `MobiWork DMS Sync` with `report_scope=promotion_bonus_only`, `dry_run=true` first. The session token expires with the DMS web session (cookie lifetime 30 days); a 401/403 means it must be refreshed.
+
+## 2026-10-07: Computed report from OpenAPI data (default source)
+
+`PROMOTION_BONUS_SOURCE=auto` now resolves to `calc` (src/promotion_bonus_calc.py). No web session is needed.
+
+Inputs: dated PromotionBonus catalogue (rules + registered `customer` IDs), Bill monthly master ChiTietSP, Customer catalogue (code, name, phone, address, type, group, province) and DisplayData for programmes linked to a display programme (`cttb`).
+
+Rules verified against the DMS export `ReportPromotionBonus_ngo_cam_van_1791271808290.xlsx` (2026-10-06 14:30, 57 sheets, 258 rows) using Bill deliveries 01–05/10: 200 of 221 comparable customer rows matched exactly (amounts to the đồng, e.g. 7,064,081; quantities 72/144/324/1,080), 21 differed only because the customer's qualifying orders were delivered after the Bill snapshot; 0 rule mismatches.
+1. registered customers only; 2. delivery date (Vietnam day) within the period; 3. sold lines only (`is_km` excluded); 4. a line counts only when its unit equals a unit declared for the SKU in the programme — DMS does not convert cases to bottles (40 cases + 60 bottles on a bottle programme = 60); 5. amount = `thanh_tien` (đơn giá × SL, sttt 0), quantity = `so_luong`; 6. reached when actual ≥ min and (max = 0 or actual < max); `BoiSo` multiplies the reward.
+
+Open point: DMS does not list every registered customer (e.g. 581: 254 registered, 196 listed; 588: 23 registered, 1 listed while 5 others reached 144 bottles). Display grading (`cttb`) is the leading hypothesis, so the workbook adds `Trưng bày yêu cầu`, `Kết quả trưng bày` and `Đủ điều kiện trả thưởng` (reached and, when required, display passed). Run annotations print per-programme registered/sales/reached/display_ok/eligible counts to confirm the rule.
+
+Output: `06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx` plus `06_BaoCaoTraThuong/YYYY/MM/BaoCaoTraThuong_YYYY-MM.xlsx`, refreshed by every scheduled sync. `Khu vực` is the programme's applicable region (`ctype`) because OpenAPI exposes no customer area.

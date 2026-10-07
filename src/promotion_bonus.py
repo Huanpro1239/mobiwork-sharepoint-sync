@@ -347,17 +347,19 @@ def _write_manifest(payload: dict[str, Any]) -> None:
     )
 
 
-SOURCES = {"auto", "ui", "openapi"}
+SOURCES = {"auto", "calc", "ui", "openapi"}
 
 
 def resolve_source() -> str:
-    """auto -> DMS web source when its session secrets exist, else legacy OpenAPI."""
+    """auto -> compute from OpenAPI data (PromotionBonus + Bill + DisplayData).
+
+    ``ui`` reads the DMS web page (needs web session secrets) and ``openapi`` keeps
+    the legacy raw PromotionBonusReport snapshot.
+    """
     requested = os.environ.get("PROMOTION_BONUS_SOURCE", "auto").strip().casefold() or "auto"
     if requested not in SOURCES:
         raise ValueError(f"PROMOTION_BONUS_SOURCE must be one of {sorted(SOURCES)}")
-    if requested == "auto":
-        return "ui" if ui.WebSession.configured() else "openapi"
-    return requested
+    return "calc" if requested == "auto" else requested
 
 
 def _select_programs(programs: list[dict[str, Any]], selected: str) -> list[dict[str, Any]]:
@@ -401,6 +403,112 @@ def _build_ui_workbook(
     return write_workbook(ui.build_ui_frames(results, first, last, sttt), cfg.filename)
 
 
+def _bill_detail(first: Any, dry_run: bool, manifest: dict[str, Any]) -> pd.DataFrame:
+    """Bill monthly master ChiTietSP for the report month (local file in dry runs)."""
+    from io import BytesIO
+
+    from data_cham_anh_export import _monthly_master_path
+    from main import load_reports
+    from monthly_master import master_filename
+
+    bill = next(r for r in load_reports(ROOT / "config" / "reports.json") if r.key == "bill" and r.enabled)
+    local = Path("output") / master_filename(bill.name, first)
+    if dry_run and local.exists():
+        content = local.read_bytes()
+        manifest["bill_source"] = f"local:{local.name}"
+    else:
+        sharepoint = SemanticSharePointClient.from_env()
+        drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip() or sharepoint.get_drive_id(
+            sharepoint.get_site_id())
+        remote = _monthly_master_path(bill, first)
+        content = sharepoint.download_file_bytes(drive, remote)
+        if not content:
+            raise ValueError(f"Bill monthly master missing: {remote}")
+        manifest["bill_source"] = f"sharepoint:{remote}"
+    manifest["bill_sha256"] = hashlib.sha256(content).hexdigest()
+    return pd.read_excel(BytesIO(content), sheet_name="ChiTietSP", dtype=object)
+
+
+def _github_notice(title: str, message: str) -> None:
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::notice title={title}::{message}")
+
+
+def _build_calc_workbook(
+    client: MobiWorkClient,
+    cfg: PromotionBonusConfig,
+    manifest: dict[str, Any],
+    dry_run: bool,
+) -> tuple[Path, list[tuple[Path, str]]]:
+    import promotion_bonus_calc as calc
+    from customer_catalogue import enrich_customer_config
+    from region_mapping import load_region_map
+
+    first, last = ui.report_period(
+        os.environ.get("PROMOTION_BONUS_FROM_DATE", "").strip(),
+        os.environ.get("PROMOTION_BONUS_TO_DATE", "").strip(),
+    )
+    if (first.year, first.month) != (last.year, last.month):
+        raise ValueError("Computed Promotion Bonus report covers one calendar month at a time")
+    filters = {"fromdate": first.strftime("%d/%m/%Y"), "todate": last.strftime("%d/%m/%Y")}
+    programs = _select_programs(
+        fetch_programs(client, cfg, filters=filters),
+        os.environ.get("PROMOTION_BONUS_PROGRAM", "all"),
+    )
+    manifest.update({"from_date": first.isoformat(), "to_date": last.isoformat(),
+                     "program_count": len(programs)})
+    lines = calc.sold_lines(_bill_detail(first, dry_run, manifest), first, last)
+    manifest["sold_line_count"] = len(lines)
+    customers = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900"})
+    manifest["customer_catalogue_count"] = customers["customer_catalogue_audit"]["count"]
+    displays: dict[tuple[str, str], str] = {}
+    display_note = "Không có chương trình yêu cầu trưng bày"
+    if any(isinstance(p.get("cttb"), dict) and p["cttb"].get("ten") for p in programs):
+        try:
+            records = calc.fetch_display_records(client, first, last)
+            displays = calc.display_passes(records)
+            display_note = f"DisplayData {len(records)} lượt chấm"
+            manifest["display_record_count"] = len(records)
+        except Exception as exc:  # display data is informative; never block the report
+            display_note = f"Không lấy được DisplayData ({type(exc).__name__})"
+            manifest["display_error"] = f"{type(exc).__name__}: {exc}"
+    results, issues = calc.compute(
+        programs, lines, customers["customer_catalogue"], displays=displays,
+        region_of=calc.region_from_code(load_region_map(str(ROOT / "config" / "employee_regions.json"))),
+    )
+    counts = ui.snapshot_counts(results)
+    diag = calc.diagnostics(results)
+    manifest.update(counts)
+    manifest.update({"rule_issues": issues, "program_diagnostics": diag,
+                     "reached_rows": sum(d["reached"] for d in diag),
+                     "eligible_rows": sum(d["eligible"] for d in diag)})
+    _github_notice("Promotion Bonus (calc)",
+                   f"{first:%m/%Y}: programs={len(programs)} rows={counts['customer_row_count']} "
+                   f"reached={manifest['reached_rows']} eligible={manifest['eligible_rows']} "
+                   f"sold_lines={len(lines)} display={display_note}")
+    for item in diag:
+        if item["registered"]:
+            _github_notice("Promotion Bonus program",
+                           f"{item['name'][:60]} | reg={item['registered']} sales={item['with_sales']} "
+                           f"reached={item['reached']} display_ok={item['display_passed']} "
+                           f"eligible={item['eligible']}")
+    manifest["phase"] = "workbook_build"
+    notes = [
+        ("Quy tắc", "Khách đăng ký của chương trình; đơn bán (bỏ dòng khuyến mãi) có ngày giao trong kỳ; "
+                    "chỉ cộng sản phẩm và đúng đơn vị khai trong chương trình; tiền = đơn giá × số lượng"),
+        ("Khu vực", "Vùng áp dụng của chương trình (OpenAPI không có khu vực chi tiết của khách)"),
+        ("Trưng bày", display_note),
+        ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
+    ]
+    frames = ui.build_ui_frames(results, first, last, "", "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)",
+                                notes)
+    if issues:
+        frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
+    path = write_workbook(frames, cfg.filename)
+    monthly = write_workbook(frames, f"BaoCaoTraThuong_{first:%Y-%m}.xlsx")
+    return path, [(monthly, f"{cfg.folder}/{first:%Y}/{first:%m}")]
+
+
 def run() -> dict[str, Any]:
     dry_run = _env_bool("DRY_RUN", False)
     started_at = datetime.now(timezone.utc)
@@ -437,7 +545,10 @@ def run() -> dict[str, Any]:
 
         manifest["phase"] = "source_fetch"
         client = MobiWorkClient.from_env()
-        if source == "ui":
+        extra_uploads: list[tuple[Path, str]] = []
+        if source == "calc":
+            path, extra_uploads = _build_calc_workbook(client, cfg, manifest, dry_run)
+        elif source == "ui":
             path = _build_ui_workbook(client, cfg, manifest)
         else:
             programs = fetch_programs(client, cfg)
@@ -471,6 +582,9 @@ def run() -> dict[str, Any]:
                 drive_id = sharepoint.get_drive_id(site_id)
 
             uploaded = sharepoint.upload_file(drive_id, path, cfg.folder)
+            for extra_path, extra_folder in extra_uploads:
+                sharepoint.upload_file(drive_id, extra_path, extra_folder)
+                manifest.setdefault("extra_published", []).append(f"{extra_folder}/{extra_path.name}")
             manifest["workbook_published"] = True
             manifest.update(
                 {

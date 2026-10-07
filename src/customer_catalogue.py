@@ -10,7 +10,8 @@ from mobiwork import MobiWorkClient
 from promotion_bonus import _api_total, _expect_object_list
 
 FIELDS = {"Tỉnh": "tinh_thanh_moi", "Loại KH": "loai_kh", "Route": "code_router",
-          "Tên Khách hàng": "tenkh", "Địa chỉ": "dia_chi", "Số ĐT": "sdt"}
+          "Tên Khách hàng": "tenkh", "Địa chỉ": "dia_chi", "Số ĐT": "sdt",
+          "Nhóm KH": "nhom_kh"}
 
 
 def value(row: dict[str, Any], field: str) -> str:

@@ -172,7 +172,8 @@ class EvidenceTests(unittest.TestCase):
             self.assertNotIn('C1', json.dumps(result))
 
     def test_unverified_only_mode_never_fetches_or_writes(self):
-        with patch.dict('os.environ', {'PROMOTION_BONUS_REQUIRE_DMS_MATCH': 'true'}), \
+        with patch.dict('os.environ', {'PROMOTION_BONUS_REQUIRE_DMS_MATCH': 'true',
+                                       'PROMOTION_BONUS_SOURCE': 'openapi'}), \
              patch.object(bonus, 'MobiWorkClient') as api, \
              patch.object(bonus, 'SemanticSharePointClient') as sp, \
              patch.object(bonus, '_write_manifest'), \

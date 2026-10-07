@@ -224,14 +224,17 @@ class RunIntegrationTests(unittest.TestCase):
 
     def test_source_resolution(self):
         with patch.dict(os.environ, {**{k: "" for k in WEB_ENV}, "PROMOTION_BONUS_SOURCE": "auto"}):
-            self.assertEqual(bonus.resolve_source(), "openapi")
+            self.assertEqual(bonus.resolve_source(), "calc")
         with patch.dict(os.environ, {**WEB_ENV, "PROMOTION_BONUS_SOURCE": "auto"}):
-            self.assertEqual(bonus.resolve_source(), "ui")
+            self.assertEqual(bonus.resolve_source(), "calc")
+        for explicit in ("calc", "ui", "openapi"):
+            with patch.dict(os.environ, {"PROMOTION_BONUS_SOURCE": explicit}):
+                self.assertEqual(bonus.resolve_source(), explicit)
         with patch.dict(os.environ, {"PROMOTION_BONUS_SOURCE": "magic"}), self.assertRaises(ValueError):
             bonus.resolve_source()
 
     def _run(self, results, extra_env=None):
-        env = {**WEB_ENV, "DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "auto",
+        env = {**WEB_ENV, "DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "ui",
                "PROMOTION_BONUS_REQUIRE_DMS_MATCH": "true",
                "PROMOTION_BONUS_FROM_DATE": "2026-10-01", "PROMOTION_BONUS_TO_DATE": "2026-10-31",
                "PROMOTION_BONUS_PROGRAM": "all", **(extra_env or {})}
@@ -267,7 +270,8 @@ class RunIntegrationTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "success")
 
     def test_openapi_source_keeps_existing_gate(self):
-        env = {**{k: "" for k in WEB_ENV}, "PROMOTION_BONUS_REQUIRE_DMS_MATCH": "true", "DRY_RUN": "true"}
+        env = {**{k: "" for k in WEB_ENV}, "PROMOTION_BONUS_REQUIRE_DMS_MATCH": "true", "DRY_RUN": "true",
+               "PROMOTION_BONUS_SOURCE": "openapi"}
         with patch.dict(os.environ, env), self.assertRaises(RuntimeError):
             bonus.run()
 
