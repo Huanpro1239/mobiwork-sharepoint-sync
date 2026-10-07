@@ -56,5 +56,12 @@ class SalesStructureTests(unittest.TestCase):
         self.assertEqual(cfg["sales_structure_audit"]["with_npp"], 1)
 
 
+    def test_supervisor_detection(self):
+        self.assertTrue(ss.is_supervisor({"chuc_vu": "Giám sát  kinh doanh"}))
+        self.assertTrue(ss.is_supervisor({"chuc_vu": "", "chuc_danh": "Giám sát"}))
+        self.assertFalse(ss.is_supervisor({"chuc_vu": "Giám đốc kinh doanh vùng", "chuc_danh": "Giám sát"}))
+        self.assertFalse(ss.is_supervisor({"chuc_vu": "Nhân viên bán hàng", "chuc_danh": "Nhân viên"}))
+
+
 if __name__ == "__main__":
     unittest.main()

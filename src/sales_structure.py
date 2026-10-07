@@ -92,6 +92,13 @@ REGION_NAMES = {"MB": "Miền Bắc", "MT": "Miền Trung", "MN": "Miền Nam", 
 SUPERVISOR = "giám sát kinh doanh"
 
 
+def is_supervisor(sale: dict[str, Any]) -> bool:
+    """Chức vụ "Giám sát kinh doanh", or chức danh "Giám sát" when chức vụ is blank."""
+    norm = lambda v: " ".join(str(v or "").split()).casefold()  # noqa: E731
+    role, title = norm(sale.get("chuc_vu")), norm(sale.get("chuc_danh"))
+    return SUPERVISOR in role or (not role and title == "giám sát")
+
+
 def region_label(code: str) -> str:
     match = REGION.match(code.strip().upper())
     if not match:
@@ -111,7 +118,7 @@ def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) 
     tree = chains(sales, groups)
     supervisors: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for sale in sales:
-        if SUPERVISOR in " ".join(str(sale.get("chuc_vu") or "").split()).casefold():
+        if is_supervisor(sale):
             supervisors[str(sale.get("ma_don_vi") or "").strip()].append(sale)
     out: dict[str, dict[str, str]] = {}
     for sale in sales:
