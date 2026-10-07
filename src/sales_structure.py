@@ -84,3 +84,76 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+NPP_UNIT = re.compile(r"^[A-Z]-[A-Z]+-\d+$")
+REGION = re.compile(r"^(MB|MT|MN|TN)(.*)$")
+REGION_NAMES = {"MB": "Miền Bắc", "MT": "Miền Trung", "MN": "Miền Nam", "TN": "Tây Nguyên"}
+SUPERVISOR = "giám sát kinh doanh"
+
+
+def region_label(code: str) -> str:
+    match = REGION.match(code.strip().upper())
+    if not match:
+        return ""
+    rest = match.group(2).strip()
+    return f"{REGION_NAMES[match.group(1)]} {rest}".strip()
+
+
+def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """Mã NV -> Vùng / SS Code / SS Name / DB Code / Tên NPP from the department tree.
+
+    * DB Code / Tên NPP: the employee's own unit when it is a distributor unit (B-XXXX-NNNN).
+    * SS: the "Giám sát kinh doanh" employee(s) of the same unit; when the unit has none,
+      the nearest ancestor unit with supervisors. Several supervisors are joined with "; ".
+    * Vùng: the nearest ancestor coded MB/MT/MN/TN (e.g. MT1B -> "Miền Trung 1B").
+    """
+    tree = chains(sales, groups)
+    supervisors: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for sale in sales:
+        if SUPERVISOR in " ".join(str(sale.get("chuc_vu") or "").split()).casefold():
+            supervisors[str(sale.get("ma_don_vi") or "").strip()].append(sale)
+    out: dict[str, dict[str, str]] = {}
+    for sale in sales:
+        code = str(sale.get("ma") or "").strip()
+        chain = tree.get(code) or []
+        if not code or not chain:
+            continue
+        item: dict[str, str] = {}
+        unit = chain[0]
+        if NPP_UNIT.match(unit["ma_nhom"]):
+            item["DB Code"] = unit["ma_nhom"]
+            item["Tên NPP"] = unit["ten_nhom"]
+        for node in chain:
+            found = sorted(supervisors.get(node["ma_nhom"], []), key=lambda s: str(s.get("ma") or ""))
+            found = [s for s in found if str(s.get("ma") or "").strip() != code]
+            if found:
+                item["SS Code"] = "; ".join(str(s.get("ma") or "").strip() for s in found)
+                item["SS Name"] = "; ".join(" ".join(str(s.get("ten") or "").split()) for s in found)
+                break
+        for node in chain[1:] or chain:
+            label = region_label(node["ma_nhom"])
+            if label:
+                item["Vùng"] = label
+                break
+        if item:
+            out[code] = item
+    return out
+
+
+def enrich_employee_config(client: Any, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Add derived employee mappings; explicit config entries always win."""
+    sales, groups = fetch(client)
+    derived = employee_mapping(sales, groups)
+    result = dict(cfg)
+    employees = {code: dict(values) for code, values in (cfg.get("employees") or {}).items()}
+    for code, values in derived.items():
+        merged = dict(values)
+        merged.update(employees.get(code, {}))
+        employees[code] = merged
+    result["employees"] = employees
+    result["sales_structure_audit"] = {"sales": len(sales), "groups": len(groups),
+                                       "derived_employees": len(derived),
+                                       "with_ss": sum(1 for v in derived.values() if v.get("SS Code")),
+                                       "with_npp": sum(1 for v in derived.values() if v.get("DB Code"))}
+    return result
