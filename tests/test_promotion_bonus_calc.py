@@ -228,6 +228,23 @@ class RunTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "success")
         self.assertIn("PermissionError", manifest["display_error"])
 
+    def test_unstable_customer_catalogue_falls_back_to_bill_identity(self):
+        env = {"DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "calc", "PROMOTION_BONUS_FROM_DATE": "2026-10-01",
+               "PROMOTION_BONUS_TO_DATE": "2026-10-31"}
+        with patch.dict(os.environ, env), \
+                patch.object(bonus.MobiWorkClient, "from_env", return_value=Mock()), \
+                patch.object(bonus, "fetch_programs", return_value=[qty_program()]), \
+                patch.object(bonus, "_bill_detail", return_value=bill([{"so_luong": 80}])), \
+                patch("customer_catalogue.enrich_customer_config",
+                      side_effect=ValueError("Customer catalogue total changed")) as cat:
+            manifest = bonus.run()
+        self.assertEqual(cat.call_count, 3)
+        self.assertEqual(manifest["status"], "success")
+        sheet = pd.read_excel("output/BaoCaoTraThuong_Current.xlsx", sheet_name="Tong_hop", dtype=object)
+        self.assertIn("KHHO112323", sheet["Mã khách hàng"].tolist())
+        notes = pd.read_excel("output/BaoCaoTraThuong_Current.xlsx", sheet_name="Kiem_tra", dtype=object)
+        self.assertTrue(notes["Trạng thái"].astype(str).str.contains("Không tải ổn định").any())
+
     def test_period_must_be_one_month(self):
         env = {"DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "calc", "PROMOTION_BONUS_FROM_DATE": "2026-09-15",
                "PROMOTION_BONUS_TO_DATE": "2026-10-15"}

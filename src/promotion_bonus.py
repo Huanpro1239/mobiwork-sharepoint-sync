@@ -429,6 +429,15 @@ def _bill_detail(first: Any, dry_run: bool, manifest: dict[str, Any]) -> pd.Data
     return pd.read_excel(BytesIO(content), sheet_name="ChiTietSP", dtype=object)
 
 
+def _with_bill_identity(customers: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
+    """Fill code for buyers missing from the catalogue using the Bill line itself."""
+    merged = {key: dict(value) for key, value in customers.items()}
+    for line in lines:
+        if line["customer"] and line["code"]:
+            merged.setdefault(line["customer"], {}).setdefault("customer_code", line["code"])
+    return merged
+
+
 def _github_notice(title: str, message: str) -> None:
     if os.environ.get("GITHUB_ACTIONS") == "true":
         print(f"::notice title={title}::{message}")
@@ -459,8 +468,23 @@ def _build_calc_workbook(
                      "program_count": len(programs)})
     lines = calc.sold_lines(_bill_detail(first, dry_run, manifest), first, last)
     manifest["sold_line_count"] = len(lines)
-    customers = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900"})
-    manifest["customer_catalogue_count"] = customers["customer_catalogue_audit"]["count"]
+    customer_map: dict[str, Any] = {}
+    customer_note = ""
+    for attempt in range(1, 4):
+        try:
+            catalogue = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900"})
+            customer_map = catalogue["customer_catalogue"]
+            manifest["customer_catalogue_count"] = catalogue["customer_catalogue_audit"]["count"]
+            customer_note = f"Danh mục khách hàng OpenAPI ({len(customer_map)} khách)"
+            break
+        except ValueError as exc:  # live catalogue can change while paging
+            manifest.setdefault("customer_catalogue_retries", []).append(str(exc))
+            LOG.warning("Customer catalogue attempt %s failed: %s", attempt, exc)
+    else:
+        customer_note = ("Không tải ổn định được danh mục khách hàng; mã/tên lấy từ đơn hàng, "
+                         "khách chưa có đơn hiển thị theo ID")
+        manifest["customer_catalogue_count"] = 0
+    customer_map = _with_bill_identity(customer_map, lines)
     displays: dict[tuple[str, str], str] = {}
     display_note = "Không có chương trình yêu cầu trưng bày"
     if any(isinstance(p.get("cttb"), dict) and p["cttb"].get("ten") for p in programs):
@@ -473,7 +497,7 @@ def _build_calc_workbook(
             display_note = f"Không lấy được DisplayData ({type(exc).__name__})"
             manifest["display_error"] = f"{type(exc).__name__}: {exc}"
     results, issues = calc.compute(
-        programs, lines, customers["customer_catalogue"], displays=displays,
+        programs, lines, customer_map, displays=displays,
         region_of=calc.region_from_code(load_region_map(str(ROOT / "config" / "employee_regions.json"))),
     )
     counts = ui.snapshot_counts(results)
@@ -498,6 +522,7 @@ def _build_calc_workbook(
                     "chỉ cộng sản phẩm và đúng đơn vị khai trong chương trình; tiền = đơn giá × số lượng"),
         ("Khu vực", "Vùng áp dụng của chương trình (OpenAPI không có khu vực chi tiết của khách)"),
         ("Trưng bày", display_note),
+        ("Khách hàng", customer_note),
         ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
     ]
     frames = ui.build_ui_frames(results, first, last, "", "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)",
