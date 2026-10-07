@@ -114,9 +114,6 @@ def ss_gap_probe(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> d
                 "npp" if NPP_UNIT.match(u or "") else (u or "-") for u in sup_units.values()).most_common(10))}
 
 
-if __name__ == "__main__":
-    main()
-
 
 NPP_UNIT = re.compile(r"^[A-Z]-[A-Z]+-\d+$")
 REGION = re.compile(r"^(MB|MT|MN|TN)(.*)$")
@@ -196,3 +193,7 @@ def enrich_employee_config(client: Any, cfg: dict[str, Any]) -> dict[str, Any]:
                                        "with_ss": sum(1 for v in derived.values() if v.get("SS Code")),
                                        "with_npp": sum(1 for v in derived.values() if v.get("DB Code"))}
     return result
+
+
+if __name__ == "__main__":
+    main()
