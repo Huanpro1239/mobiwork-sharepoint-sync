@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -28,21 +28,51 @@ RETRYABLE = ("Customer catalogue total changed", "Customer catalogue total misma
 
 
 def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any], attempts: int = 3) -> dict[str, Any]:
-    """Fetch the live catalogue, retrying when customers are created while paging."""
-    for attempt in range(1, attempts + 1):
-        try:
-            return _enrich_customer_config_once(client, cfg)
-        except ValueError as exc:
-            if attempt == attempts or not str(exc).startswith(RETRYABLE):
-                raise
-    raise AssertionError("unreachable")
+    """Join current customer metadata by the observed API ID, never by name or code alone.
 
-
-def _enrich_customer_config_once(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
-    """Join current customer metadata by the observed API ID, never by name or code alone."""
+    Customers are created all day long, so one paginated pass up to "today" can see the
+    total change between pages. The catalogue is therefore read in two creation-date
+    windows: everything up to yesterday (stable) and today (small, cheap to re-read).
+    Each window is retried independently when its total changes while paging.
+    """
     start = cfg.get("customer_catalogue_start_date", "01/01/1900")
-    datetime.strptime(start, "%d/%m/%Y")
-    end = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%d/%m/%Y")
+    first = datetime.strptime(start, "%d/%m/%Y").date()
+    today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+    windows = [(first, today)] if first >= today else [(first, today - timedelta(days=1)), (today, today)]
+    customers: dict[str, Any] = {}
+    audit = {"source_rows": 0, "unkeyed_rows": 0, "fields": set(), "structured": {}}
+    for window_start, window_end in windows:
+        for attempt in range(1, attempts + 1):
+            try:
+                part = _fetch_window(client, window_start.strftime("%d/%m/%Y"),
+                                     window_end.strftime("%d/%m/%Y"))
+                break
+            except ValueError as exc:
+                if attempt == attempts or not str(exc).startswith(RETRYABLE):
+                    raise
+        overlap = customers.keys() & part["customers"].keys()
+        if overlap:
+            raise ValueError("Duplicate Customer catalogue ID; refusing ambiguous mapping")
+        customers.update(part["customers"])
+        audit["source_rows"] += part["count"]
+        audit["unkeyed_rows"] += part["unkeyed"]
+        audit["fields"].update(part["fields"])
+        for key, n in part["structured"].items():
+            audit["structured"][key] = audit["structured"].get(key, 0) + n
+    end = today.strftime("%d/%m/%Y")
+    count, unkeyed = audit["source_rows"], audit["unkeyed_rows"]
+    fields, structured_fields = audit["fields"], audit["structured"]
+    result = copy.deepcopy(cfg)
+    result["customer_catalogue"] = customers
+    result["customer_catalogue_audit"] = {"count": len(customers), "unkeyed_rows": unkeyed,
+                                          "source_rows": count, "fields": sorted(fields),
+                                          "structured_fields_not_mapped": structured_fields,
+                                          "from_date": start, "to_date": end,
+                                          "date_type": "cdate", "join_key": "ID=ID_khachhang"}
+    return result
+
+
+def _fetch_window(client: MobiWorkClient, start: str, end: str) -> dict[str, Any]:
     params = {"tu_ngay": start, "den_ngay": end, "kieu_ngay": "cdate", "page_size": 200}
     customers: dict[str, Any] = {}
     seen_pages: set[str] = set()
@@ -89,11 +119,5 @@ def _enrich_customer_config_once(client: MobiWorkClient, cfg: dict[str, Any]) ->
         raise ValueError("Customer catalogue pagination safety limit")
     if expected is not None and count != expected:
         raise ValueError("Customer catalogue total mismatch")
-    result = copy.deepcopy(cfg)
-    result["customer_catalogue"] = customers
-    result["customer_catalogue_audit"] = {"count": len(customers), "unkeyed_rows": unkeyed,
-                                          "source_rows": count, "fields": sorted(fields),
-                                          "structured_fields_not_mapped": structured_fields,
-                                          "from_date": start, "to_date": end,
-                                          "date_type": "cdate", "join_key": "ID=ID_khachhang"}
-    return result
+    return {"customers": customers, "count": count, "unkeyed": unkeyed, "fields": fields,
+            "structured": structured_fields}

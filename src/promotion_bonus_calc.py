@@ -224,12 +224,37 @@ def sold_lines(detail: pd.DataFrame, first: date, last: date) -> list[dict[str, 
     return lines
 
 
+def norm(text: Any) -> str:
+    """Case/space-insensitive key for names typed differently across DMS screens."""
+    return " ".join(str(text or "").split()).casefold()
+
+
+def display_summary(records: list[dict[str, Any]], programs: list[dict[str, Any]]) -> dict[str, Any]:
+    """PII-free shape of DisplayData to verify the programme/result join."""
+    wanted = {norm((p.get("cttb") or {}).get("ten")) for p in programs
+              if isinstance(p.get("cttb"), dict) and p["cttb"].get("ten")}
+    names = collections.Counter(norm(r.get("ten_ct")) for r in records)
+    values = collections.Counter()
+    keys = collections.Counter()
+    for record in records:
+        grading = record.get("cham_diem") if isinstance(record.get("cham_diem"), dict) else {}
+        keys.update(grading.keys())
+        values.update(str(v).strip() for v in grading.values() if isinstance(v, str) and v.strip())
+    return {"records": len(records), "programs_in_data": len(names),
+            "required_programs": len(wanted), "matched_programs": len(wanted & set(names)),
+            "matched_records": sum(n for name, n in names.items() if name in wanted),
+            "top_names": [f"{name[:45]}={n}" for name, n in names.most_common(6)],
+            "required_names": sorted(name[:45] for name in wanted)[:6],
+            "grading_keys": dict(keys.most_common(6)), "grading_values": dict(values.most_common(8)),
+            "status_values": dict(collections.Counter(str(r.get("tt_cham_diem")) for r in records))}
+
+
 def display_passes(records: Iterable[dict[str, Any]]) -> dict[tuple[str, str], str]:
-    """(customer code, display programme name) -> best grading result seen."""
+    """(customer code, normalised display programme name) -> best grading result seen."""
     best: dict[tuple[str, str], str] = {}
     for record in records:
         code = str(record.get("ma_kh") or "").strip()
-        program = str(record.get("ten_ct") or "").strip()
+        program = norm(record.get("ten_ct"))
         if not code or not program:
             continue
         grading = record.get("cham_diem") if isinstance(record.get("cham_diem"), dict) else {}
@@ -283,7 +308,7 @@ def compute(
             multiplier = reward_multiplier(actual, rule)
             display = ""
             if rule.display_program:
-                display = (displays or {}).get((code, rule.display_program), "Chưa có dữ liệu")
+                display = (displays or {}).get((code, norm(rule.display_program)), "Chưa có dữ liệu")
             eligible = multiplier > 0 and (not rule.display_program
                                            or display in {rule.display_result or DISPLAY_PASS, DISPLAY_PASS})
             rows.append({

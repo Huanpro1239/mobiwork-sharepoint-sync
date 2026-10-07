@@ -491,6 +491,9 @@ def _build_calc_workbook(
         try:
             records = calc.fetch_display_records(client, first, last)
             displays = calc.display_passes(records)
+            summary = calc.display_summary(records, programs)
+            manifest["display_summary"] = summary
+            _github_notice("Promotion Bonus DisplayData", json.dumps(summary, ensure_ascii=False)[:3000])
             display_note = f"DisplayData {len(records)} lượt chấm"
             manifest["display_record_count"] = len(records)
         except Exception as exc:  # display data is informative; never block the report

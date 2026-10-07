@@ -111,7 +111,10 @@ class InputTests(unittest.TestCase):
                    {"ma_kh": "K2", "ten_ct": "CTTB", "cham_diem": {"chon_1": "Không đạt"}},
                    {"ma_kh": "", "ten_ct": "CTTB"}]
         self.assertEqual(calc.display_passes(records),
-                         {("K1", "CTTB"): "Đạt", ("K2", "CTTB"): "Không đạt"})
+                         {("K1", "cttb"): "Đạt", ("K2", "cttb"): "Không đạt"})
+        summary = calc.display_summary(records, [{"cttb": {"ten": " cttb "}}])
+        self.assertEqual((summary["matched_programs"], summary["matched_records"]), (1, 4))
+        self.assertNotIn("K1", json.dumps(summary))
 
     def test_display_pagination_and_repeat_guard(self):
         client = Mock()
@@ -152,7 +155,9 @@ class ComputeTests(unittest.TestCase):
         detail = bill([{"so_luong": 72}, {"ID_khachhang": C2, "ma_kh": "K2", "so_luong": 144}])
         customers = {C1: {"customer_code": "KHHO112323", "Tên Khách hàng": "Quán A", "Tỉnh": "Khánh Hòa"},
                      C2: {"customer_code": "K2"}}
-        displays = {("KHHO112323", "CTTB PET"): "Đạt", ("K2", "CTTB PET"): "Không đạt"}
+        displays = calc.display_passes([
+            {"ma_kh": "KHHO112323", "ten_ct": "CTTB  PET", "cham_diem": {"chon_1": "Đạt"}},
+            {"ma_kh": "K2", "ten_ct": "cttb pet", "cham_diem": {"chon_1": "Không đạt"}}])
         results, _ = calc.compute([program], calc.sold_lines(detail, OCT1, OCT31), customers,
                                   displays=displays)
         extra = {row["ma"]: row["extra"] for row in results[0].rows}
