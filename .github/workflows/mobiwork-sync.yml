@@ -29,6 +29,10 @@ on:
         description: "Cách tính sttt: blank=mặc định, 0=Đơn giá*SL, 1=-CK SP, -1=-CK SP-CK đơn, 2=có VAT"
         type: string
         default: ""
+      bonus_months:
+        description: "Trả thưởng tháng cũ: YYYY-MM,YYYY-MM hoặc all_existing (chỉ ghi file tháng)"
+        type: string
+        default: ""
       bonus_date_variants:
         description: "Audit only: report date probes (id_only,epoch_ui,epoch_full_day,ddmmyyyy)"
         type: string
@@ -222,7 +226,7 @@ jobs:
         run: python src/run_data_cham_anh.py
 
       - name: Sync Promotion Bonus current snapshot
-        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' || inputs.report_scope == 'promotion_bonus_only' }}
+        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' || inputs.report_scope == 'promotion_bonus_only' || inputs.report_scope == 'promotion_history' }}
         id: promotion_bonus
         env:
           PROMOTION_BONUS_REQUIRE_DMS_MATCH: ${{ inputs.report_scope == 'promotion_bonus_only' && 'true' || 'false' }}
@@ -231,6 +235,7 @@ jobs:
           PROMOTION_BONUS_PROGRAM: ${{ inputs.bonus_program }}
           PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
           PROMOTION_BONUS_SOURCE: "auto"
+          PROMOTION_BONUS_MONTHS: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || inputs.bonus_months }}
           MOBIWORK_WEB_EMAIL: ${{ secrets.MOBIWORK_WEB_EMAIL }}
           MOBIWORK_WEB_TOKENKEY: ${{ secrets.MOBIWORK_WEB_TOKENKEY }}
           MOBIWORK_WEB_ALIAS: ${{ secrets.MOBIWORK_WEB_ALIAS }}

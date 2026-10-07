@@ -266,5 +266,78 @@ class RunTests(unittest.TestCase):
             bonus.run()
 
 
+class HistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cwd = os.getcwd()
+        os.chdir(self.tmp.name)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        self.tmp.cleanup()
+
+    def patches(self, env, bill_side_effect):
+        catalogue = {"customer_catalogue": {C1: {"customer_code": "KHHO112323"}},
+                     "customer_catalogue_audit": {"count": 1}}
+        return [patch.dict(os.environ, env),
+                patch.object(bonus.MobiWorkClient, "from_env", return_value=Mock()),
+                patch.object(bonus, "fetch_programs", return_value=[qty_program()]),
+                patch.object(bonus, "_bill_detail", side_effect=bill_side_effect),
+                patch("customer_catalogue.enrich_customer_config", return_value=catalogue)]
+
+    def run_with(self, env, bill_side_effect):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in self.patches(env, bill_side_effect)]
+            return bonus.run(), mocks
+
+    def test_explicit_months_write_monthly_files_only_and_skip_missing_month(self):
+        def bill_for(first, dry, manifest):
+            if first.month == 7:
+                raise ValueError("Bill monthly master missing")
+            return bill([{"so_luong": 80, "ngay_giao_hang": f"2026-{first.month:02d}-10T03:00:00.000Z"}])
+        env = {"DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "calc",
+               "PROMOTION_BONUS_MONTHS": "2026-09, 2026-08,2026-07"}
+        manifest, mocks = self.run_with(env, bill_for)
+        self.assertEqual(manifest["storage_mode"], "monthly_history")
+        self.assertTrue(Path("output/BaoCaoTraThuong_2026-09.xlsx").exists())
+        self.assertTrue(Path("output/BaoCaoTraThuong_2026-08.xlsx").exists())
+        self.assertFalse(Path("output/BaoCaoTraThuong_Current.xlsx").exists())
+        self.assertIn("error", manifest["months"]["2026-07"])
+        self.assertEqual(manifest["months"]["2026-09"]["reached_rows"], 1)
+        filters = [c.kwargs["filters"] for c in mocks[2].call_args_list]
+        self.assertIn({"fromdate": "01/08/2026", "todate": "31/08/2026"}, filters)
+        self.assertEqual(mocks[4].call_count, 1)  # customer catalogue fetched once
+
+    def test_past_month_dates_do_not_overwrite_current(self):
+        env = {"DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "calc",
+               "PROMOTION_BONUS_FROM_DATE": "2026-09-01", "PROMOTION_BONUS_TO_DATE": "2026-09-30"}
+        with patch.object(bonus.ui, "report_period", wraps=bonus.ui.report_period):
+            manifest, _ = self.run_with(env, lambda *a: bill([]))
+        self.assertEqual(manifest["storage_mode"], "monthly_history")
+        self.assertTrue(Path("output/BaoCaoTraThuong_2026-09.xlsx").exists())
+        self.assertFalse(Path("output/BaoCaoTraThuong_Current.xlsx").exists())
+
+    def test_history_publish_uses_month_folders_and_history_state(self):
+        sharepoint = Mock()
+        sharepoint.upload_file.return_value = {}
+        env = {"DRY_RUN": "false", "PROMOTION_BONUS_SOURCE": "calc", "SHAREPOINT_DRIVE_ID": "drive",
+               "PROMOTION_BONUS_MONTHS": "2026-08,2026-09"}
+        with patch.object(bonus.SemanticSharePointClient, "from_env", return_value=sharepoint):
+            manifest, _ = self.run_with(env, lambda *a: bill([]))
+        folders = [c.args[2] for c in sharepoint.upload_file.call_args_list]
+        self.assertEqual(folders, ["06_BaoCaoTraThuong/2026/08", "06_BaoCaoTraThuong/2026/09"])
+        self.assertTrue(sharepoint.upload_json.call_args.args[1].endswith("promotion_bonus_history.json"))
+        self.assertTrue(manifest["workbook_published"])
+
+    def test_invalid_month_list(self):
+        with self.assertRaises(ValueError):
+            bonus._history_months(" , ", True)
+        with self.assertRaises(ValueError):
+            bonus._history_months("all_existing", True)
+        self.assertEqual([m.isoformat() for m in bonus._history_months("2026-09,2026-08,2026-09", True)],
+                         ["2026-08-01", "2026-09-01"])
+
+
 if __name__ == "__main__":
     unittest.main()
