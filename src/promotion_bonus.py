@@ -567,7 +567,10 @@ def _history_months(raw: str, dry_run: bool) -> list[Any]:
     sharepoint = SemanticSharePointClient.from_env()
     drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip() or sharepoint.get_drive_id(sharepoint.get_site_id())
     today = datetime.now(ui.VN_TZ).date()
-    return sorted(m.replace(day=1) for m in discover_bill_months(sharepoint, drive, bill, today))
+    current = today.replace(day=1)
+    # The current month is kept fresh by the regular sync; history covers closed months.
+    return sorted(m.replace(day=1) for m in discover_bill_months(sharepoint, drive, bill, today)
+                  if m.replace(day=1) != current)
 
 
 def _month_end(first: Any) -> Any:
@@ -703,10 +706,28 @@ def run() -> dict[str, Any]:
                 site_id = sharepoint.get_site_id()
                 drive_id = sharepoint.get_drive_id(site_id)
 
-            uploaded = sharepoint.upload_file(drive_id, path, primary_folder)
-            for extra_path, extra_folder in extra_uploads:
-                sharepoint.upload_file(drive_id, extra_path, extra_folder)
-                manifest.setdefault("extra_published", []).append(f"{extra_folder}/{extra_path.name}")
+            history = manifest.get("storage_mode") == "monthly_history"
+            uploaded: dict[str, Any] = {}
+            failures: list[str] = []
+            targets = [(path, primary_folder, not history)] + [(p, f, False) for p, f in extra_uploads]
+            for target_path, target_folder, required in targets:
+                try:
+                    result = sharepoint.upload_file(drive_id, target_path, target_folder)
+                except Exception as exc:
+                    # A workbook someone has open in Excel is locked (HTTP 423). The current
+                    # snapshot must publish; archive/history copies are retried next run.
+                    if required:
+                        raise
+                    failures.append(f"{target_folder}/{target_path.name}: {type(exc).__name__}: {exc}"[:300])
+                    if os.environ.get("GITHUB_ACTIONS") == "true":
+                        print(f"::warning title=Promotion Bonus file not updated::{failures[-1]}")
+                    continue
+                uploaded = uploaded or result
+                manifest.setdefault("published_files", []).append(f"{target_folder}/{target_path.name}")
+            if failures:
+                manifest["publish_failures"] = failures
+            if not manifest.get("published_files"):
+                raise RuntimeError("No Promotion Bonus workbook could be published: " + "; ".join(failures))
             manifest["workbook_published"] = True
             manifest.update(
                 {

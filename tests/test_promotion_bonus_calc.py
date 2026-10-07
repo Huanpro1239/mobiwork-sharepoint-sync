@@ -330,6 +330,59 @@ class HistoryTests(unittest.TestCase):
         self.assertTrue(sharepoint.upload_json.call_args.args[1].endswith("promotion_bonus_history.json"))
         self.assertTrue(manifest["workbook_published"])
 
+    def test_locked_month_file_does_not_block_other_months(self):
+        sharepoint = Mock()
+        sharepoint.upload_file.side_effect = [RuntimeError("423 Locked"), {}]
+        env = {"DRY_RUN": "false", "PROMOTION_BONUS_SOURCE": "calc", "SHAREPOINT_DRIVE_ID": "drive",
+               "PROMOTION_BONUS_MONTHS": "2026-08,2026-09"}
+        with patch.object(bonus.SemanticSharePointClient, "from_env", return_value=sharepoint):
+            manifest, _ = self.run_with(env, lambda *a: bill([]))
+        self.assertEqual(manifest["published_files"], ["06_BaoCaoTraThuong/2026/09/BaoCaoTraThuong_2026-09.xlsx"])
+        self.assertIn("423", manifest["publish_failures"][0])
+        self.assertEqual(manifest["status"], "success")
+
+    def test_all_history_uploads_failing_is_an_error(self):
+        sharepoint = Mock()
+        sharepoint.upload_file.side_effect = RuntimeError("423 Locked")
+        env = {"DRY_RUN": "false", "PROMOTION_BONUS_SOURCE": "calc", "SHAREPOINT_DRIVE_ID": "drive",
+               "PROMOTION_BONUS_MONTHS": "2026-08"}
+        with patch.object(bonus.SemanticSharePointClient, "from_env", return_value=sharepoint), \
+                self.assertRaises(RuntimeError):
+            self.run_with(env, lambda *a: bill([]))
+
+    def test_current_snapshot_upload_failure_still_fails(self):
+        sharepoint = Mock()
+        sharepoint.upload_file.side_effect = [RuntimeError("423 Locked"), {}]
+        today = bonus.datetime.now(bonus.ui.VN_TZ).date()
+        env = {"DRY_RUN": "false", "PROMOTION_BONUS_SOURCE": "calc", "SHAREPOINT_DRIVE_ID": "drive",
+               "PROMOTION_BONUS_FROM_DATE": today.replace(day=1).isoformat(),
+               "PROMOTION_BONUS_TO_DATE": today.isoformat()}
+        with patch.object(bonus.SemanticSharePointClient, "from_env", return_value=sharepoint), \
+                self.assertRaises(RuntimeError):
+            self.run_with(env, lambda *a: bill([]))
+
+    def test_archive_copy_lock_does_not_fail_current_snapshot(self):
+        sharepoint = Mock()
+        sharepoint.upload_file.side_effect = [{}, RuntimeError("423 Locked")]
+        today = bonus.datetime.now(bonus.ui.VN_TZ).date()
+        env = {"DRY_RUN": "false", "PROMOTION_BONUS_SOURCE": "calc", "SHAREPOINT_DRIVE_ID": "drive",
+               "PROMOTION_BONUS_FROM_DATE": today.replace(day=1).isoformat(),
+               "PROMOTION_BONUS_TO_DATE": today.isoformat()}
+        with patch.object(bonus.SemanticSharePointClient, "from_env", return_value=sharepoint):
+            manifest, _ = self.run_with(env, lambda *a: bill([]))
+        self.assertEqual(manifest["published_files"], ["06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx"])
+        self.assertEqual(len(manifest["publish_failures"]), 1)
+
+    def test_all_existing_skips_current_month(self):
+        today = bonus.datetime.now(bonus.ui.VN_TZ).date()
+        current = today.replace(day=1)
+        from datetime import timedelta
+        previous = (current - timedelta(days=1)).replace(day=1)
+        with patch("promotion_months.discover_bill_months", return_value=[previous, current]), \
+                patch.object(bonus.SemanticSharePointClient, "from_env", return_value=Mock()), \
+                patch.dict(os.environ, {"SHAREPOINT_DRIVE_ID": "drive"}):
+            self.assertEqual(bonus._history_months("all_existing", False), [previous])
+
     def test_invalid_month_list(self):
         with self.assertRaises(ValueError):
             bonus._history_months(" , ", True)
