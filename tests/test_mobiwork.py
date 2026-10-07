@@ -155,6 +155,32 @@ class JsonRequestTests(unittest.TestCase):
 
 
 class PaginationIntegrityTests(unittest.TestCase):
+    def test_total_change_restarts_without_retaining_stale_rows(self):
+        session = FakeSession([
+            {"data": [{"id": "old1"}, {"id": "old2"}], "total": 3},
+            {"data": [{"id": "old3"}], "total": 4},
+            {"data": [{"id": "new1"}, {"id": "new2"}], "total": 3},
+            {"data": [{"id": "new3"}], "total": 3},
+        ])
+        client = MobiWorkClient("user", "token", min_interval_seconds=0,
+                               max_retries=2, session=session)
+        cfg = ReportConfig(key="bill", enabled=True, name="Bill", folder="Bill",
+                           url="https://example.test/bill", page_param="page_number",
+                           total_path="total", primary_key=["id"])
+        rows = client.fetch_report(cfg, date(2026, 10, 7))
+        self.assertEqual([r["id"] for r in rows], ["new1", "new2", "new3"])
+        self.assertEqual([call[1]["page_number"] for call in session.calls], [1, 2, 1, 2])
+
+    def test_total_mismatch_still_fails_after_bounded_retries(self):
+        session = FakeSession([{"data": [{"id": 1}, {"id": 2}], "total": 1}] * 3)
+        client = MobiWorkClient("user", "token", min_interval_seconds=0,
+                               max_retries=8, session=session)
+        cfg = ReportConfig(key="bill", enabled=True, name="Bill", folder="Bill",
+                           url="https://example.test/bill", total_path="total")
+        with self.assertRaisesRegex(RuntimeError, "Refusing to export an incomplete dataset"):
+            client.fetch_report(cfg, date(2026, 10, 7))
+        self.assertEqual(len(session.calls), 3)
+
     def test_total_count_controls_pagination_and_is_verified(self):
         session = FakeSession(
             [

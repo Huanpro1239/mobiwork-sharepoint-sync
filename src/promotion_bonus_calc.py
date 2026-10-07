@@ -1,7 +1,7 @@
 """Compute the Promotion Bonus (trả thưởng) report from OpenAPI data only.
 
-The OpenAPI PromotionBonusReport endpoint returns no customer rows, but every
-input the DMS page uses is available through OpenAPI:
+The observed OpenAPI PromotionBonusReport snapshot returned no customer rows.
+This adapter computes supported rules from the following available inputs:
 
 * PromotionBonus catalogue: rules, thresholds, rewards and the registered
   ``customer`` ID list of each programme;
@@ -11,7 +11,8 @@ input the DMS page uses is available through OpenAPI:
 * DisplayData: display (trưng bày) grading results for programmes linked to a
   display programme (``cttb``).
 
-Rules verified against a DMS export (docs/PROMOTION_BONUS_EVIDENCE.md):
+Supported rules compared with a DMS export (docs/PROMOTION_BONUS_EVIDENCE.md);
+customer listing and historical registration equivalence remain unverified:
 1. only customers listed in the programme ``customer`` field;
 2. only Bill lines whose delivery date (local) is in the report period;
 3. only sold lines (promotion/gift lines excluded) of the listed SKUs;
@@ -91,13 +92,15 @@ def _unit(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _number(value: Any, label: str) -> float:
+def _number(value: Any, label: str, *, non_negative: bool = True) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be numeric")
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label} must be numeric") from exc
-    if not math.isfinite(parsed) or parsed < 0:
-        raise ValueError(f"{label} must be a finite non-negative number")
+    if not math.isfinite(parsed) or (non_negative and parsed < 0):
+        raise ValueError(f"{label} must be finite" + (" and non-negative" if non_negative else ""))
     return parsed
 
 
@@ -216,12 +219,14 @@ def sold_lines(detail: pd.DataFrame, first: date, last: date) -> list[dict[str, 
         day = local_day(row.get("ngay_giao_hang"))
         if day is None or not first <= day <= last:
             continue
-        unit = str(row.get("ten_dvt") or row.get("ma_dvt") or "").strip()
-        lines.append({"raw": row, "customer": str(row.get("ID_khachhang") or "").strip(),
-                      "code": str(row.get("ma_kh") or "").strip(),
-                      "sku": str(row.get("ma_sp") or "").strip(), "unit": unit,
-                      "quantity": float(row.get("so_luong") or 0),
-                      "amount": float(row.get("thanh_tien") or 0)})
+        customer, sku = ui.text(row.get("ID_khachhang")), ui.text(row.get("ma_sp"))
+        unit = ui.text(row.get("ten_dvt")) or ui.text(row.get("ma_dvt"))
+        if not customer or not sku:
+            raise ValueError("Bill sale line is missing customer ID or product code")
+        lines.append({"raw": row, "customer": customer,
+                      "code": ui.text(row.get("ma_kh")), "sku": sku, "unit": unit,
+                      "quantity": _number(row.get("so_luong"), "Bill quantity", non_negative=False),
+                      "amount": _number(row.get("thanh_tien"), "Bill amount", non_negative=False)})
     return lines
 
 
@@ -292,7 +297,7 @@ def compute(
     customers: dict[str, dict[str, Any]],
     *,
     displays: dict[tuple[str, str], str] | None = None,
-    region_of: Any = None,
+    sales_metadata: dict[str, dict[str, str]] | None = None,
 ) -> tuple[list[ui.ProgramResult], list[dict[str, Any]]]:
     """Return per-programme results in the DMS row schema plus rule issues."""
     by_customer: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
@@ -320,10 +325,13 @@ def compute(
             actual = 0.0
             counted = []
             for line in by_customer.get(customer_id, []):
+                if line["sku"] in rule.units and not line["unit"]:
+                    raise ValueError("Qualifying Bill sale line is missing its unit")
                 if line["unit"] in rule.units.get(line["sku"], ()):
                     actual += line["amount"] if rule.kind == AMOUNT else line["quantity"]
                     counted.append(line.get("raw"))
             meta = customers.get(customer_id, {})
+            sales_meta = (sales_metadata or {}).get(customer_id, {})
             code = meta.get("customer_code") or code_of.get(customer_id, "")
             multiplier = reward_multiplier(actual, rule)
             display = ""
@@ -335,24 +343,30 @@ def compute(
                 eligible = "Có"
             else:
                 eligible = REVIEW_DISPLAY
+            proposed = {f"{sku}|{unit}": qty * multiplier
+                        for sku, _, unit, qty in rule.rewards} if multiplier else {}
             rows.append({
                 "_idCT": rule.program_id, "type": "", "ma": code or customer_id,
                 "ten": meta.get("Tên Khách hàng", ""), "sdt": meta.get("Số ĐT", ""),
-                "dc": meta.get("Địa chỉ", ""), "npp": "",
-                "kv": rule.region or (region_of(code) if region_of else ""),
+                "dc": meta.get("Địa chỉ", ""), "npp": sales_meta.get("Tên NPP", ""),
+                "kv": meta.get("Khu vực") or meta.get("Vùng") or sales_meta.get("Vùng", ""),
                 "loai": meta.get("Loại KH", ""), "nhom": meta.get("Nhóm KH", ""),
                 "timepass": "", "soSuatCT": program.get("soSuat"),
                 "objThucHien": {TARGET_ID: round(actual, 2)},
-                "objTraThuong": {f"{sku}|{unit}": qty * multiplier
-                                 for sku, _, unit, qty in rule.rewards} if multiplier else {},
+                "objTraThuong": proposed if eligible == "Có" else {},
+                "objThuongDuKien": proposed,
                 "extra": {"Tỉnh": meta.get("Tỉnh", ""),
+                          "Vùng áp dụng CT": rule.region,
                           "Trưng bày yêu cầu": rule.display_program,
                           "Kết quả trưng bày": display,
                           "Đủ điều kiện trả thưởng": eligible,
+                          "Thưởng dự kiến": "; ".join(f"{name or sku} ({unit}): {qty * multiplier:g}"
+                                                      for sku, name, unit, qty in rule.rewards)
+                          if multiplier else "",
                           "Bội số": multiplier if rule.multiple else ""},
                 "_lines": [line for line in counted if line is not None],
                 "_rewards": [(sku, name, unit, qty * multiplier) for sku, name, unit, qty in rule.rewards]
-                if multiplier else [],
+                if eligible == "Có" else [],
                 "_eligible": eligible,
             })
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
@@ -377,7 +391,7 @@ GIFT_ORDER = "TRẢ THƯỞNG"
 def detail_source(results: list[ui.ProgramResult], label: str) -> list[tuple[str, pd.DataFrame]]:
     """Bill-shaped rows per programme for the DMS CTKM template.
 
-    Each counted sale line is repeated under its programme code; a reached customer
+    Each counted sale line is repeated under its programme code; an eligible customer
     gets one synthetic gift line per reward product (order id ``TRẢ THƯỞNG``).
     """
     out = []
@@ -392,12 +406,11 @@ def detail_source(results: list[ui.ProgramResult], label: str) -> list[tuple[str
             if not lines or not row.get("_rewards"):
                 continue
             base = dict(lines[-1])
-            review = row.get("_eligible") == REVIEW_DISPLAY
             for index, (sku, name, unit, qty) in enumerate(row["_rewards"], start=1):
                 rows.append({**base, "ma_phieu": GIFT_ORDER, "stt": f"{row['ma']}-{index}",
                              "ctkm": code, "promotion": None, "ctkmFull_id": None,
                              "ctkmFull_ten_khuyen_mai": None, "is_km": True, "loai_hang": "Khuyến mãi",
-                             "ma_sp": sku, "ten_sp": name + (" (cần kiểm tra trưng bày)" if review else ""),
+                             "ma_sp": sku, "ten_sp": name,
                              "so_luong": qty, "ten_dvt": unit, "ma_dvt": unit,
                              "ma_sp_km": None, "ten_sp_km": None, "so_luong_km": None,
                              "ma_dvt_km": None, "ten_dvt_km": None, "ngay_dat": base.get("ngay_dat")})
@@ -406,13 +419,28 @@ def detail_source(results: list[ui.ProgramResult], label: str) -> list[tuple[str
     return out
 
 
-def region_from_code(region_map: dict[str, dict[str, str]]) -> Any:
-    from region_mapping import employee_prefix
-
-    def resolve(code: str) -> str:
-        prefix = employee_prefix(code)
-        return (region_map.get(prefix or "") or {}).get("vung", "")
-    return resolve
+def customer_sales_metadata(
+    lines: list[dict[str, Any]], employees: dict[str, dict[str, str]],
+) -> tuple[dict[str, dict[str, str]], int]:
+    """Use unambiguous sales-employee assignments, never programme eligibility regions."""
+    candidates: dict[str, dict[str, set[str]]] = collections.defaultdict(
+        lambda: collections.defaultdict(set))
+    for line in lines:
+        raw = line.get("raw") or {}
+        employee = employees.get(ui.text(raw.get("ma_nv_dat")), {})
+        for field in ("Vùng", "Tên NPP"):
+            value = ui.text(employee.get(field))
+            if value:
+                candidates[line["customer"]][field].add(value)
+    result, conflicts = {}, 0
+    for customer, fields in candidates.items():
+        result[customer] = {}
+        for field, values in fields.items():
+            if len(values) == 1:
+                result[customer][field] = next(iter(values))
+            else:
+                conflicts += 1
+    return result, conflicts
 
 
 DISPLAY_URL = "https://openapi.mobiwork.vn/OpenAPI/V1/DisplayData"
@@ -453,7 +481,7 @@ def diagnostics(results: list[ui.ProgramResult]) -> list[dict[str, Any]]:
             "id": result.program_id, "name": result.program_name[:80],
             "registered": len(rows),
             "with_sales": sum(1 for r in rows if (r.get("objThucHien") or {}).get(TARGET_ID, 0) > 0),
-            "reached": sum(1 for r in rows if r.get("objTraThuong")),
+            "reached": sum(1 for r in rows if r.get("objThuongDuKien")),
             "display_required": bool(extra and extra[0].get("Trưng bày yêu cầu")),
             "display_passed": sum(1 for e in extra if e.get("Kết quả trưng bày") == DISPLAY_PASS),
             "eligible": sum(1 for e in extra if e.get("Đủ điều kiện trả thưởng") == "Có"),

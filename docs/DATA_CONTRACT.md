@@ -22,6 +22,10 @@ Tài liệu này là hợp đồng dữ liệu giữa MobiWork DMS, pipeline đ�
 
 ### Promotion Bonus snapshot contract
 
+**Phạm vi:** phần dưới mô tả adapter snapshot thô `PROMOTION_BONUS_SOURCE=openapi`.
+Nguồn mặc định hiện tại là `calc`; xem [vận hành trả thưởng](OPERATIONS.md#báo-cáo-trả-thưởng).
+Không dùng schema snapshot thô để đọc workbook tính toán `BaoCao/Tong_hop/Ket_qua`.
+
 Nguồn contract: [findPromotionBonus](https://dms.mobiwork.vn/openapi/#/PromotionBonus/findPromotionBonus) và [findPromotionBonusReport](https://dms.mobiwork.vn/openapi/#/PromotionBonusReport/findPromotionBonusReport), đối chiếu ngày 2026-10-05. Host thực thi là `https://openapi.mobiwork.vn`; host `dms.mobiwork.vn` phục vụ tài liệu.
 
 | Operation | Endpoint GET | Tham số bắt buộc | Tham số tùy chọn |

@@ -263,7 +263,7 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
                     exec(compile(script, '<workflow summary>', 'exec'),
                          {'Path': lambda value, root=root: original_path(root / value)})
                 content = summary.read_text(encoding='utf-8')
-                self.assertIn('Promotion Bonus Snapshot', content)
+                self.assertIn('## Promotion Bonus', content)
                 self.assertIn(status or 'skipped', content)
                 for label in ('Programs', 'Data rows', 'Target rows', 'Reward rows', 'Workbook bytes', 'Dry run'):
                     self.assertIn(label, content)

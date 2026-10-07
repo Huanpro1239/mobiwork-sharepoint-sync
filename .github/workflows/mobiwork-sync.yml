@@ -332,17 +332,27 @@ jobs:
 
           bonus_path = Path("output/promotion_bonus_manifest.json")
           bonus = json.loads(bonus_path.read_text(encoding="utf-8")) if bonus_path.exists() else {}
-          lines.extend(["", "## Promotion Bonus Snapshot", "", "| Metric | Value |", "|---|---|"])
+          lines.extend(["", "## Promotion Bonus", "", "| Metric | Value |", "|---|---|"])
           for label, key in [
               ("Status", "status"), ("Programs", "program_count"),
               ("Data rows", "data_row_count"), ("Target rows", "target_row_count"),
               ("Reward rows", "reward_row_count"), ("Workbook bytes", "workbook_bytes"),
+              ("Source", "source"), ("Customer target rows", "customer_row_count"),
+              ("Reached", "reached_rows"), ("Eligible", "eligible_rows"),
+              ("Display needs review", "review_display_rows"),
+              ("Quality", "quality_status"), ("Blocking issues", "blocking_issues"),
+              ("Template issues", "template_issues"),
               ("Dry run", "dry_run"),
           ]:
               fallback = os.environ.get("PROMOTION_BONUS_OUTCOME", "not run") if key == "status" else "—"
               lines.append(f"| {label} | {bonus.get(key, fallback)} |")
           if bonus.get("error"):
               lines.append(f"- Promotion Bonus error: `{bonus['error']}`")
+          for month, item in bonus.get("months", {}).items():
+              lines.append(f"- {month}: {item.get('quality_status', 'failed' if item.get('error') else 'unknown')}; "
+                           f"rows={item.get('customer_row_count', 0)}; eligible={item.get('eligible_rows', 0)}")
+          for failure in bonus.get("publish_failures", []):
+              lines.append(f"- Promotion Bonus upload issue: `{failure}`")
 
           detail_path = Path("output/promotion_detail_manifest.json")
           if detail_path.exists():

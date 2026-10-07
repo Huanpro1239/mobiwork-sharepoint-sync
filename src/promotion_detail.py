@@ -318,6 +318,22 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
     return report, _frame(issues, "CanBoSung")
 
 
+OPTIONAL_MAPPING_FIELDS = frozenset({"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
+                                     "Brand", "Package", "Loại KH"})
+
+
+def blocking_issue_count(issues: pd.DataFrame) -> int:
+    return len(blocking_issue_rows(issues))
+
+
+def blocking_issue_rows(issues: pd.DataFrame) -> pd.DataFrame:
+    """Missing mappings remain visible; invalid source values block publication."""
+    if issues.empty:
+        return issues
+    return issues[~issues["Trường"].isin(OPTIONAL_MAPPING_FIELDS)
+                  & ~issues["Lý do"].astype(str).str.startswith(UNIT_GAP)]
+
+
 def unit_trace(detail: pd.DataFrame, report: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
     orders = set(report["Mã Đơn hàng"])
     result = []
@@ -403,10 +419,7 @@ def run() -> dict[str, Any]:
                       "filename": path.name, "source_scope": "requested_dates" if dry and scope == "touched" else "monthly_master",
                       "source_rows": source_rows, "outside_order_month_rows": outside_month,
                       "source_sha256": hashlib.sha256(content).hexdigest()}
-            allowed_fields = {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP",
-                              "Brand", "Package", "Loại KH"}
-            blocking = issues.iloc[0:0] if issues.empty else issues[
-                ~issues["Trường"].isin(allowed_fields) & ~issues["Lý do"].astype(str).str.startswith(UNIT_GAP)]
+            blocking = blocking_issue_rows(issues)
             result["blocking_issues"] = int(len(blocking))
             result["unit_gaps"] = 0 if issues.empty else int(issues["Lý do"].astype(str).str.startswith(UNIT_GAP).sum())
             if result["blocking_issues"]:
