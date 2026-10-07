@@ -26,6 +26,7 @@ from mobiwork import MobiWorkClient
 from region_mapping import employee_prefix, load_region_map
 from run_all_reports import incremental_target_dates
 from run_data_cham_anh import month_anchors
+from sales_structure import enrich_employee_config
 from sharepoint_semantic import SemanticSharePointClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +44,8 @@ def load_config() -> dict[str, Any]:
     cfg = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
         raise ValueError("publish_enabled must be an explicit boolean")
-    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "fetch_program_catalogue", "allow_incomplete_publish"):
+    for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "fetch_program_catalogue",
+                 "fetch_sales_structure", "allow_incomplete_publish"):
         if type(cfg.get(flag, False)) is not bool:
             raise ValueError(f"{flag} must be an explicit boolean")
     for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
@@ -370,6 +372,12 @@ def run() -> dict[str, Any]:
         if cfg.get("fetch_customer_catalogue", False):
             cfg = enrich_customer_config(MobiWorkClient.from_env(), cfg)
             manifest["customer_catalogue"] = cfg["customer_catalogue_audit"]
+        if cfg.get("fetch_sales_structure", False):
+            try:  # SS / NPP / Vùng from the DMS department tree; explicit mappings win
+                cfg = enrich_employee_config(MobiWorkClient.from_env(), cfg)
+                manifest["sales_structure"] = cfg["sales_structure_audit"]
+            except Exception as exc:
+                manifest["sales_structure_error"] = f"{type(exc).__name__}: {exc}"
         prepared = []
         for anchor in anchors:
             if dry and scope == "touched":

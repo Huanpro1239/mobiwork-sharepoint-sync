@@ -548,6 +548,10 @@ def _calc_month_frames(
         frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
     manifest["template_rows"] = len(report)
     manifest["template_issues"] = len(detail_issues)
+    missing = (detail_issues["Trường"].value_counts().head(6).to_dict()
+               if not detail_issues.empty and "Trường" in detail_issues else {})
+    _github_notice(f"Promotion Bonus template {first:%m/%Y}",
+                   f"rows={len(report)} issues={len(detail_issues)} missing={missing}")
     return frames
 
 
@@ -572,6 +576,12 @@ def _template_report(
                 cfg = enrich_product_config(client, cfg)
             except Exception as exc:  # static reference still converts known SKUs
                 LOG.warning("Product catalogue unavailable for template: %s", exc)
+        if cfg.get("fetch_sales_structure", False):
+            from sales_structure import enrich_employee_config
+            try:
+                cfg = enrich_employee_config(client, cfg)
+            except Exception as exc:  # explicit mappings still apply
+                LOG.warning("Sales structure unavailable for template: %s", exc)
         _DETAIL_CONFIG["cfg"] = cfg
     cfg = dict(_DETAIL_CONFIG["cfg"])
     cfg["customer_catalogue"] = customers

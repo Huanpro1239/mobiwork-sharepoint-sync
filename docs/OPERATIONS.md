@@ -343,6 +343,11 @@ Quy tắc đã xác nhận:
 Mapping ở `config/promotion_detail.json`: `employees` keyed by `ma_nv_dat`,
 `customers` keyed by `ID_khachhang`, `products` keyed by `ma_sp`; giá trị là object
 với tên cột đầu ra (Vùng/Tỉnh/SS Code/SS Name/DB Code/Tên NPP/Brand/Package/Loại KH).
+`fetch_sales_structure=true` tự suy ra mapping nhân viên từ cây phòng ban DMS
+(OpenAPI `Sale` + `SaleGroup`): DB Code/Tên NPP = đơn vị trực tiếp dạng `B-XXXX-NNNN`
+của nhân viên; SS Code/SS Name = nhân viên có chức vụ "Giám sát kinh doanh" cùng đơn vị
+(hoặc đơn vị cha gần nhất); Vùng = đơn vị cha mã MB/MT/MN/TN (vd `MT1B` → "Miền Trung 1B").
+Mapping khai báo tay trong `employees` luôn được ưu tiên. Áp dụng cho cả báo cáo trả thưởng.
 `unit_conversions` keyed by `SKU|ĐVT nguồn`, value:
 `{"target_unit": "Thùng", "factor": "0.04166666666666666666666666667"}`.
 Ví dụ hệ số chỉ minh họa 1/24; phải thay bằng quy cách chính thức cho đúng SKU.
