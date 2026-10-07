@@ -60,13 +60,26 @@ def summary(sales: list[dict[str, Any]], groups: list[dict[str, Any]], sample: s
             "sample_employee": sample, "sample_chain": tree.get(sample, [])}
 
 
+def supervisor_probe(sales: list[dict[str, Any]], sample: str = "KHA04") -> dict[str, Any]:
+    """Shape of role fields, to find how supervisors (SS) are represented."""
+    pick = lambda s: {k: str(s.get(k) or "") for k in ("ma", "chuc_vu", "chuc_danh", "bo_phan", "ma_don_vi")}  # noqa: E731
+    short = [s for s in sales if re.fullmatch(r"[A-Z]{2,4}\d{2}", str(s.get("ma") or "").strip())]
+    return {"chuc_vu": dict(collections.Counter(str(s.get("chuc_vu") or "") for s in sales).most_common(12)),
+            "chuc_danh": dict(collections.Counter(str(s.get("chuc_danh") or "") for s in sales).most_common(12)),
+            "bo_phan": dict(collections.Counter(str(s.get("bo_phan") or "") for s in sales).most_common(12)),
+            "short_codes": len(short),
+            "short_units": dict(collections.Counter(str(s.get("ma_don_vi") or "") for s in short).most_common(12)),
+            "sample": [pick(s) for s in sales if str(s.get("ma") or "").strip() == sample],
+            "sample_employee": [pick(s) for s in sales if str(s.get("ma") or "").strip() == "KHHO0303"]}
+
+
 def main() -> None:
     from mobiwork import MobiWorkClient
 
     sales, groups = fetch(MobiWorkClient.from_env())
     result = summary(sales, groups, os.environ.get("SALES_STRUCTURE_SAMPLE", "KHHO0303"))
-    text = json.dumps(result, ensure_ascii=False)
-    print(f"::notice title=Sales structure::{text[:3500]}")
+    print(f"::notice title=Sales structure::{json.dumps(result, ensure_ascii=False)[:3500]}")
+    print(f"::notice title=Sales roles::{json.dumps(supervisor_probe(sales), ensure_ascii=False)[:3500]}")
 
 
 if __name__ == "__main__":
