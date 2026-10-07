@@ -443,20 +443,37 @@ def _github_notice(title: str, message: str) -> None:
         print(f"::notice title={title}::{message}")
 
 
-def _build_calc_workbook(
+def _load_customers(client: MobiWorkClient, manifest: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    from customer_catalogue import enrich_customer_config
+
+    try:  # enrich_customer_config already retries live-change races per window
+        catalogue = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900"})
+    except ValueError as exc:
+        manifest.setdefault("customer_catalogue_retries", []).append(str(exc))
+        LOG.warning("Customer catalogue failed: %s", exc)
+        manifest["customer_catalogue_count"] = 0
+        return {}, ("Không tải ổn định được danh mục khách hàng; mã/tên lấy từ đơn hàng, "
+                    "khách chưa có đơn hiển thị theo ID")
+    customers = catalogue["customer_catalogue"]
+    manifest["customer_catalogue_count"] = catalogue["customer_catalogue_audit"]["count"]
+    return customers, f"Danh mục khách hàng OpenAPI ({len(customers)} khách)"
+
+
+def _calc_month_frames(
     client: MobiWorkClient,
     cfg: PromotionBonusConfig,
-    manifest: dict[str, Any],
+    first: Any,
+    last: Any,
     dry_run: bool,
-) -> tuple[Path, list[tuple[Path, str]]]:
+    customers: dict[str, Any],
+    customer_note: str,
+    manifest: dict[str, Any],
+    verbose: bool = True,
+) -> dict[str, pd.DataFrame]:
+    """Compute one calendar month; ``manifest`` receives that month's counts."""
     import promotion_bonus_calc as calc
-    from customer_catalogue import enrich_customer_config
     from region_mapping import load_region_map
 
-    first, last = ui.report_period(
-        os.environ.get("PROMOTION_BONUS_FROM_DATE", "").strip(),
-        os.environ.get("PROMOTION_BONUS_TO_DATE", "").strip(),
-    )
     if (first.year, first.month) != (last.year, last.month):
         raise ValueError("Computed Promotion Bonus report covers one calendar month at a time")
     filters = {"fromdate": first.strftime("%d/%m/%Y"), "todate": last.strftime("%d/%m/%Y")}
@@ -468,23 +485,7 @@ def _build_calc_workbook(
                      "program_count": len(programs)})
     lines = calc.sold_lines(_bill_detail(first, dry_run, manifest), first, last)
     manifest["sold_line_count"] = len(lines)
-    customer_map: dict[str, Any] = {}
-    customer_note = ""
-    for attempt in range(1, 2):  # enrich_customer_config already retries live-change races
-        try:
-            catalogue = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900"})
-            customer_map = catalogue["customer_catalogue"]
-            manifest["customer_catalogue_count"] = catalogue["customer_catalogue_audit"]["count"]
-            customer_note = f"Danh mục khách hàng OpenAPI ({len(customer_map)} khách)"
-            break
-        except ValueError as exc:  # live catalogue can change while paging
-            manifest.setdefault("customer_catalogue_retries", []).append(str(exc))
-            LOG.warning("Customer catalogue attempt %s failed: %s", attempt, exc)
-    else:
-        customer_note = ("Không tải ổn định được danh mục khách hàng; mã/tên lấy từ đơn hàng, "
-                         "khách chưa có đơn hiển thị theo ID")
-        manifest["customer_catalogue_count"] = 0
-    customer_map = _with_bill_identity(customer_map, lines)
+    customer_map = _with_bill_identity(customers, lines)
     displays: dict[tuple[str, str], str] = {}
     display_note = "Không có chương trình yêu cầu trưng bày"
     if any(isinstance(p.get("cttb"), dict) and p["cttb"].get("ten") for p in programs):
@@ -493,7 +494,8 @@ def _build_calc_workbook(
             displays = calc.display_passes(records)
             summary = calc.display_summary(records, programs)
             manifest["display_summary"] = summary
-            _github_notice("Promotion Bonus DisplayData", json.dumps(summary, ensure_ascii=False)[:3000])
+            if verbose:
+                _github_notice("Promotion Bonus DisplayData", json.dumps(summary, ensure_ascii=False)[:3000])
             display_note = f"DisplayData {len(records)} lượt chấm"
             manifest["display_record_count"] = len(records)
         except Exception as exc:  # display data is informative; never block the report
@@ -510,34 +512,122 @@ def _build_calc_workbook(
                      "reached_rows": sum(d["reached"] for d in diag),
                      "eligible_rows": sum(d["eligible"] for d in diag),
                      "review_display_rows": sum(d["review_display"] for d in diag)})
-    _github_notice("Promotion Bonus (calc)",
-                   f"{first:%m/%Y}: programs={len(programs)} rows={counts['customer_row_count']} "
+    _github_notice(f"Promotion Bonus {first:%m/%Y}",
+                   f"programs={len(programs)} rows={counts['customer_row_count']} "
                    f"reached={manifest['reached_rows']} eligible={manifest['eligible_rows']} "
                    f"review_display={manifest['review_display_rows']} "
                    f"sold_lines={len(lines)} display={display_note}")
-    lines_out = [f"{item['name'][:28]}|r{item['registered']}|s{item['with_sales']}|"
-                 f"d{item['reached']}|tb{item['display_passed']}|e{item['eligible']}"
-                 for item in diag if item["registered"]]
-    for start in range(0, len(lines_out), 20):  # GitHub keeps only 10 notices per step
-        _github_notice(f"Promotion Bonus programs {start + 1}-{start + len(lines_out[start:start + 20])}",
-                       " ; ".join(lines_out[start:start + 20]))
-    manifest["phase"] = "workbook_build"
+    if verbose:
+        lines_out = [f"{item['name'][:28]}|r{item['registered']}|s{item['with_sales']}|"
+                     f"d{item['reached']}|tb{item['display_passed']}|e{item['eligible']}"
+                     for item in diag if item["registered"]]
+        for start in range(0, len(lines_out), 20):  # GitHub keeps only 10 notices per step
+            _github_notice(f"Promotion Bonus programs {start + 1}-{start + len(lines_out[start:start + 20])}",
+                           " ; ".join(lines_out[start:start + 20]))
     notes = [
         ("Quy tắc", "Khách đăng ký của chương trình; đơn bán (bỏ dòng khuyến mãi) có ngày giao trong kỳ; "
                     "chỉ cộng sản phẩm và đúng đơn vị khai trong chương trình; tiền = đơn giá × số lượng"),
         ("Khu vực", "Vùng áp dụng của chương trình (OpenAPI không có khu vực chi tiết của khách)"),
         ("Trưng bày", display_note + ". Khách đạt doanh số ở chương trình có trưng bày nhưng chưa có "
                       "kết quả 'Đạt' được ghi 'Cần kiểm tra trưng bày'"),
-        ("Khách hàng", customer_note),
+        ("Khách hàng", customer_note + ". Danh sách khách đăng ký là danh sách hiện tại của chương trình"),
         ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
     ]
     frames = ui.build_ui_frames(results, first, last, "", "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)",
                                 notes)
     if issues:
         frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
-    path = write_workbook(frames, cfg.filename)
-    monthly = write_workbook(frames, f"BaoCaoTraThuong_{first:%Y-%m}.xlsx")
-    return path, [(monthly, f"{cfg.folder}/{first:%Y}/{first:%m}")]
+    return frames
+
+
+def _monthly_target(cfg: PromotionBonusConfig, first: Any) -> tuple[str, str]:
+    return f"BaoCaoTraThuong_{first:%Y-%m}.xlsx", f"{cfg.folder}/{first:%Y}/{first:%m}"
+
+
+def _history_months(raw: str, dry_run: bool) -> list[Any]:
+    """Explicit YYYY-MM list, or every month that has a Bill monthly master."""
+    from datetime import date
+
+    if raw.strip().casefold() != "all_existing":
+        months = []
+        for part in raw.split(","):
+            part = part.strip()
+            if part:
+                year, month = part.split("-")
+                months.append(date(int(year), int(month), 1))
+        if not months:
+            raise ValueError("PROMOTION_BONUS_MONTHS must list YYYY-MM months or all_existing")
+        return sorted(set(months))
+    if dry_run:
+        raise ValueError("all_existing needs SharePoint access; use explicit months in dry runs")
+    from main import load_reports
+    from promotion_months import discover_bill_months
+
+    bill = next(r for r in load_reports(ROOT / "config" / "reports.json") if r.key == "bill" and r.enabled)
+    sharepoint = SemanticSharePointClient.from_env()
+    drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip() or sharepoint.get_drive_id(sharepoint.get_site_id())
+    today = datetime.now(ui.VN_TZ).date()
+    return sorted(m.replace(day=1) for m in discover_bill_months(sharepoint, drive, bill, today))
+
+
+def _month_end(first: Any) -> Any:
+    import calendar
+
+    return first.replace(day=calendar.monthrange(first.year, first.month)[1])
+
+
+def _build_calc_workbook(
+    client: MobiWorkClient,
+    cfg: PromotionBonusConfig,
+    manifest: dict[str, Any],
+    dry_run: bool,
+) -> tuple[Path, str, list[tuple[Path, str]]]:
+    """Return (primary workbook, its folder, extra uploads).
+
+    Current month -> BaoCaoTraThuong_Current.xlsx plus the monthly archive copy.
+    Past months (explicit dates, or PROMOTION_BONUS_MONTHS) -> monthly files only, so
+    a backfill never overwrites the current snapshot.
+    """
+    history = os.environ.get("PROMOTION_BONUS_MONTHS", "").strip()
+    today = datetime.now(ui.VN_TZ).date()
+    if not history:
+        first, last = ui.report_period(
+            os.environ.get("PROMOTION_BONUS_FROM_DATE", "").strip(),
+            os.environ.get("PROMOTION_BONUS_TO_DATE", "").strip(),
+        )
+        if (first.year, first.month) != (last.year, last.month):
+            raise ValueError("Computed Promotion Bonus report covers one calendar month at a time")
+    customers, customer_note = _load_customers(client, manifest)
+    if history:
+        manifest["storage_mode"] = "monthly_history"
+        outputs: list[tuple[Path, str]] = []
+        manifest["months"] = {}
+        for first in _history_months(history, dry_run):
+            last = _month_end(first)
+            month_manifest: dict[str, Any] = {}
+            manifest["months"][f"{first:%Y-%m}"] = month_manifest
+            try:
+                frames = _calc_month_frames(client, cfg, first, last, dry_run, customers,
+                                            customer_note, month_manifest, verbose=False)
+            except Exception as exc:  # one missing month must not hide the others
+                month_manifest["error"] = f"{type(exc).__name__}: {exc}"
+                _github_notice(f"Promotion Bonus {first:%m/%Y} skipped", month_manifest["error"][:300])
+                continue
+            filename, folder = _monthly_target(cfg, first)
+            outputs.append((write_workbook(frames, filename), folder))
+        if not outputs:
+            raise RuntimeError("No Promotion Bonus month could be computed")
+        manifest["phase"] = "workbook_build"
+        return outputs[0][0], outputs[0][1], outputs[1:]
+
+    frames = _calc_month_frames(client, cfg, first, last, dry_run, customers, customer_note, manifest)
+    manifest["phase"] = "workbook_build"
+    filename, folder = _monthly_target(cfg, first)
+    monthly = write_workbook(frames, filename)
+    if (first.year, first.month) != (today.year, today.month):
+        manifest["storage_mode"] = "monthly_history"
+        return monthly, folder, []
+    return write_workbook(frames, cfg.filename), cfg.folder, [(monthly, folder)]
 
 
 def run() -> dict[str, Any]:
@@ -577,8 +667,9 @@ def run() -> dict[str, Any]:
         manifest["phase"] = "source_fetch"
         client = MobiWorkClient.from_env()
         extra_uploads: list[tuple[Path, str]] = []
+        primary_folder = cfg.folder
         if source == "calc":
-            path, extra_uploads = _build_calc_workbook(client, cfg, manifest, dry_run)
+            path, primary_folder, extra_uploads = _build_calc_workbook(client, cfg, manifest, dry_run)
         elif source == "ui":
             path = _build_ui_workbook(client, cfg, manifest)
         else:
@@ -612,7 +703,7 @@ def run() -> dict[str, Any]:
                 site_id = sharepoint.get_site_id()
                 drive_id = sharepoint.get_drive_id(site_id)
 
-            uploaded = sharepoint.upload_file(drive_id, path, cfg.folder)
+            uploaded = sharepoint.upload_file(drive_id, path, primary_folder)
             for extra_path, extra_folder in extra_uploads:
                 sharepoint.upload_file(drive_id, extra_path, extra_folder)
                 manifest.setdefault("extra_published", []).append(f"{extra_folder}/{extra_path.name}")
@@ -636,7 +727,9 @@ def run() -> dict[str, Any]:
             manifest["phase"] = "state_publish"
             sharepoint.upload_json(
                 drive_id,
-                f"{cfg.folder}/_sync_state/promotion_bonus.json",
+                f"{cfg.folder}/_sync_state/"
+                + ("promotion_bonus_history.json" if manifest.get("storage_mode") == "monthly_history"
+                   else "promotion_bonus.json"),
                 {**manifest, "phase": "complete"},
             )
         manifest["phase"] = "complete"
