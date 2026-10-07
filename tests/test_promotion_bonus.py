@@ -318,6 +318,12 @@ class PromotionBonusSafetyTests(unittest.TestCase):
 
 
 class PromotionBonusRunTests(unittest.TestCase):
+    def setUp(self):
+        from unittest.mock import patch as _patch
+        patcher = _patch.dict("os.environ", {"PROMOTION_BONUS_SOURCE": "openapi"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def execute(self, *, dry=False, failure=None, noop=False, disabled=False, drive=True):
         import json
         import os

@@ -11,7 +11,28 @@ on:
           - all_reports
           - promotion_history
           - promotion_api_audit
+          - promotion_bonus_only
         default: all_reports
+      bonus_from_date:
+        description: "Promotion Bonus requested from date (YYYY-MM-DD; default current month)"
+        type: string
+        default: ""
+      bonus_to_date:
+        description: "Promotion Bonus requested to date (YYYY-MM-DD; default month end)"
+        type: string
+        default: ""
+      bonus_program:
+        description: "Promotion Bonus program ID or all"
+        type: string
+        default: "all"
+      bonus_sttt_probe:
+        description: "Cách tính sttt: blank=mặc định, 0=Đơn giá*SL, 1=-CK SP, -1=-CK SP-CK đơn, 2=có VAT"
+        type: string
+        default: ""
+      bonus_date_variants:
+        description: "Audit only: report date probes (id_only,epoch_ui,epoch_full_day,ddmmyyyy)"
+        type: string
+        default: "id_only,epoch_ui,epoch_full_day,ddmmyyyy"
       sync_scope:
         description: "Target: today, yesterday, or previous N days"
         required: true
@@ -201,9 +222,19 @@ jobs:
         run: python src/run_data_cham_anh.py
 
       - name: Sync Promotion Bonus current snapshot
-        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' }}
+        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' || inputs.report_scope == 'promotion_bonus_only' }}
         id: promotion_bonus
         env:
+          PROMOTION_BONUS_REQUIRE_DMS_MATCH: ${{ inputs.report_scope == 'promotion_bonus_only' && 'true' || 'false' }}
+          PROMOTION_BONUS_FROM_DATE: ${{ inputs.bonus_from_date }}
+          PROMOTION_BONUS_TO_DATE: ${{ inputs.bonus_to_date }}
+          PROMOTION_BONUS_PROGRAM: ${{ inputs.bonus_program }}
+          PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
+          PROMOTION_BONUS_SOURCE: "auto"
+          MOBIWORK_WEB_EMAIL: ${{ secrets.MOBIWORK_WEB_EMAIL }}
+          MOBIWORK_WEB_TOKENKEY: ${{ secrets.MOBIWORK_WEB_TOKENKEY }}
+          MOBIWORK_WEB_ALIAS: ${{ secrets.MOBIWORK_WEB_ALIAS }}
+          MOBIWORK_ORG_ID: ${{ secrets.MOBIWORK_ORG_ID }}
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
@@ -211,10 +242,16 @@ jobs:
 
       - name: Audit PromotionBonusReport API
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.report_scope == 'promotion_api_audit' }}
+        env:
+          PROMOTION_BONUS_FROM_DATE: ${{ inputs.bonus_from_date }}
+          PROMOTION_BONUS_TO_DATE: ${{ inputs.bonus_to_date }}
+          PROMOTION_BONUS_PROGRAM: ${{ inputs.bonus_program }}
+          PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
+          PROMOTION_BONUS_DATE_VARIANTS: ${{ inputs.bonus_date_variants }}
         run: python src/promotion_api_audit.py
 
       - name: Build promotion detail report
-        if: ${{ inputs.report_scope != 'promotion_api_audit' }}
+        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' || inputs.report_scope == 'promotion_history' }}
         id: promotion_detail
         env:
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
@@ -334,11 +371,5 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload dry-run Excel artifacts
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: mobiwork-dry-run-output-${{ github.run_id }}
-          path: output/*.xlsx
-          if-no-files-found: ignore
-          retention-days: 3
+      # Authenticated DMS rows are production data even with DRY_RUN=true.
+      # Keep workbooks on the runner/SharePoint; never upload them as artifacts.

@@ -1,0 +1,410 @@
+"""Compute the Promotion Bonus (trả thưởng) report from OpenAPI data only.
+
+The OpenAPI PromotionBonusReport endpoint returns no customer rows, but every
+input the DMS page uses is available through OpenAPI:
+
+* PromotionBonus catalogue: rules, thresholds, rewards and the registered
+  ``customer`` ID list of each programme;
+* Bill monthly master (ChiTietSP): sold lines with delivery date, SKU, unit,
+  quantity and line amount;
+* Customer catalogue: customer code, type, group, province;
+* DisplayData: display (trưng bày) grading results for programmes linked to a
+  display programme (``cttb``).
+
+Rules verified against a DMS export (docs/PROMOTION_BONUS_EVIDENCE.md):
+1. only customers listed in the programme ``customer`` field;
+2. only Bill lines whose delivery date (local) is in the report period;
+3. only sold lines (promotion/gift lines excluded) of the listed SKUs;
+4. a line counts only when its unit equals a unit declared for that SKU in the
+   programme (DMS does not convert cases to bottles);
+5. amount programmes add ``thanh_tien`` (đơn giá × số lượng), quantity
+   programmes add ``so_luong``;
+6. reached when actual >= min and (max == 0 or actual < max); multiples
+   (``BoiSo``) multiply the reward by floor(actual / min).
+
+The output reuses the DMS page row schema so promotion_bonus_ui renders the
+same workbook layout.
+"""
+from __future__ import annotations
+
+import collections
+import logging
+import math
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from typing import Any, Iterable
+from zoneinfo import ZoneInfo
+
+import pandas as pd
+
+import promotion_bonus_ui as ui
+
+LOG = logging.getLogger("mobiwork_promotion_bonus_calc")
+VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+TARGET_ID = "chi_tieu"
+AMOUNT = "amount"
+QUANTITY = "quantity"
+SUPPORTED_TYPES = {"MUTI_SP_ST_SP", "MUTI_SP_SL_SP", "SP_SL_SP"}
+DISPLAY_PASS = "Đạt"
+REVIEW_DISPLAY = "Cần kiểm tra trưng bày"
+
+
+# --------------------------------------------------------------------------- rules
+
+
+@dataclass(frozen=True)
+class Rule:
+    program_id: str
+    name: str
+    ptype: str
+    kind: str
+    minimum: float
+    maximum: float
+    units: dict[str, frozenset[str]]
+    product_names: dict[str, str]
+    rewards: tuple[tuple[str, str, str, float], ...]  # sku, name, unit, qty
+    multiple: bool
+    customers: frozenset[str]
+    display_program: str
+    display_result: str
+    region: str = ""
+
+    @property
+    def plan_text(self) -> str:
+        def fmt(value: float) -> str:
+            return f"{value:,.0f}" if float(value).is_integer() else f"{value:,.2f}"
+        text = f" >= {fmt(self.minimum)}"
+        if self.maximum:
+            text += f" - {fmt(self.maximum)}" if self.kind == AMOUNT else f" < {fmt(self.maximum)}"
+        return text
+
+    @property
+    def target_name(self) -> str:
+        items = " + ".join(f"{self.product_names.get(sku, sku)}({'/'.join(sorted(units))})"
+                           for sku, units in self.units.items())
+        return f"{self.name} - {items}"
+
+
+def _unit(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("viewData") or value.get("choice_values") or "").strip()
+    return str(value or "").strip()
+
+
+def _number(value: Any, label: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be numeric") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ValueError(f"{label} must be a finite non-negative number")
+    return parsed
+
+
+def parse_rule(program: dict[str, Any]) -> Rule:
+    pid = str(program.get("_id", ""))
+    name = str(program.get("name", "")).strip()
+    ptype = str((program.get("ptype") or {}).get("value", ""))
+    if ptype not in SUPPORTED_TYPES:
+        raise ValueError(f"Programme {name or pid}: unsupported type {ptype!r}")
+    products = program.get("products") or []
+    if len(products) != 1 or not isinstance(products[0], dict):
+        raise ValueError(f"Programme {name or pid}: expected exactly one product rule")
+    rule = products[0]
+    units: dict[str, set[str]] = collections.defaultdict(set)
+    names: dict[str, str] = {}
+    if ptype == "SP_SL_SP":
+        buy = [rule]
+        minimum, maximum, kind = _number(rule.get("yeu_cau"), f"{name} yeu_cau"), 0.0, QUANTITY
+        gifts: Iterable[dict[str, Any]] = rule.get("khuyen_mai") or []
+    else:
+        buy = rule.get("san_pham_mua") or []
+        requirement = rule.get("yeu_cau") or {}
+        if "amountMin" in requirement:
+            kind = AMOUNT
+            minimum = _number(requirement.get("amountMin"), f"{name} amountMin")
+            maximum = _number(requirement.get("amountMax") or 0, f"{name} amountMax")
+        else:
+            kind = QUANTITY
+            minimum = _number(requirement.get("qualityMin"), f"{name} qualityMin")
+            maximum = _number(requirement.get("qualityMax") or 0, f"{name} qualityMax")
+        gifts = [gift for group in rule.get("san_pham_khuyen_mai") or [] for gift in
+                 (group if isinstance(group, list) else [group])]
+        if (rule.get("chon_tat_ca_sp") or {}).get("chon_tat_ca_sp"):
+            raise ValueError(f"Programme {name or pid}: 'all products' rules are not supported")
+    for item in buy:
+        sku = str(item.get("ma_san_pham", "")).strip()
+        unit = _unit(item.get("don_vi_tinh"))
+        if not sku or not unit:
+            raise ValueError(f"Programme {name or pid}: product without code or unit")
+        units[sku].add(unit)
+        names.setdefault(sku, str(item.get("ten_san_pham", "")).strip())
+    if not units:
+        raise ValueError(f"Programme {name or pid}: no purchase products")
+    rewards = tuple(
+        (str(g.get("ma_san_pham", "")).strip(), str(g.get("ten_san_pham", "")).strip(),
+         _unit(g.get("don_vi_tinh")), _number(g.get("so_luong"), f"{name} reward"))
+        for g in gifts if isinstance(g, dict)
+    )
+    display = program.get("cttb") if isinstance(program.get("cttb"), dict) else {}
+    result = display.get("ket_qua") if isinstance(display.get("ket_qua"), dict) else {}
+    return Rule(
+        program_id=pid, name=name, ptype=ptype, kind=kind, minimum=minimum, maximum=maximum,
+        units={sku: frozenset(v) for sku, v in units.items()}, product_names=names,
+        rewards=rewards, multiple=bool((program.get("settings") or {}).get("BoiSo")),
+        customers=frozenset(str(c) for c in program.get("customer") or [] if c),
+        display_program=str(display.get("ten") or "").strip(),
+        display_result=str(result.get("label") or result.get("value") or "").strip(),
+        region=str((program.get("ctype") or {}).get("label") or "").strip()
+        if isinstance(program.get("ctype"), dict) else "",
+    )
+
+
+def reached(actual: float, rule: Rule) -> bool:
+    return actual >= rule.minimum and (rule.maximum == 0 or actual < rule.maximum)
+
+
+def reward_multiplier(actual: float, rule: Rule) -> int:
+    if not reached(actual, rule):
+        return 0
+    if rule.multiple and rule.minimum > 0:
+        return max(1, int(actual // rule.minimum))
+    return 1
+
+
+# --------------------------------------------------------------------------- inputs
+
+
+def local_day(value: Any) -> date | None:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    if isinstance(value, pd.Timestamp):
+        value = value.to_pydatetime()
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)  # Bill API timestamps are UTC
+    return moment.astimezone(VN_TZ).date()
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().casefold() in {"true", "1", "yes"}
+    return bool(value) and not (isinstance(value, float) and math.isnan(value))
+
+
+SALE_COLUMNS = ("ID_khachhang", "ma_kh", "ma_sp", "ten_dvt", "ma_dvt", "so_luong",
+                "thanh_tien", "ngay_giao_hang", "is_km")
+
+
+def sold_lines(detail: pd.DataFrame, first: date, last: date) -> list[dict[str, Any]]:
+    """Bill ChiTietSP rows that can count toward a programme in the period."""
+    if detail.empty:
+        return []
+    missing = [c for c in SALE_COLUMNS if c not in detail.columns]
+    if missing:
+        raise ValueError(f"Bill ChiTietSP is missing columns: {missing}")
+    lines = []
+    for row in detail.to_dict("records"):
+        if _truthy(row.get("is_km")):
+            continue
+        day = local_day(row.get("ngay_giao_hang"))
+        if day is None or not first <= day <= last:
+            continue
+        unit = str(row.get("ten_dvt") or row.get("ma_dvt") or "").strip()
+        lines.append({"customer": str(row.get("ID_khachhang") or "").strip(),
+                      "code": str(row.get("ma_kh") or "").strip(),
+                      "sku": str(row.get("ma_sp") or "").strip(), "unit": unit,
+                      "quantity": float(row.get("so_luong") or 0),
+                      "amount": float(row.get("thanh_tien") or 0)})
+    return lines
+
+
+def norm(text: Any) -> str:
+    """Case/space-insensitive key for names typed differently across DMS screens."""
+    return " ".join(str(text or "").split()).casefold()
+
+
+def display_summary(records: list[dict[str, Any]], programs: list[dict[str, Any]]) -> dict[str, Any]:
+    """PII-free shape of DisplayData to verify the programme/result join."""
+    wanted = {norm((p.get("cttb") or {}).get("ten")) for p in programs
+              if isinstance(p.get("cttb"), dict) and p["cttb"].get("ten")}
+    names = collections.Counter(norm(r.get("ten_ct")) for r in records)
+    values = collections.Counter()
+    keys = collections.Counter()
+    for record in records:
+        grading = record.get("cham_diem") if isinstance(record.get("cham_diem"), dict) else {}
+        keys.update(grading.keys())
+        values.update(str(v).strip() for v in grading.values() if isinstance(v, str) and v.strip())
+    fields = collections.Counter(k for r in records for k in r)
+    return {"records": len(records), "programs_in_data": len(names),
+            "record_fields": sorted(fields)[:30],
+            "required_programs": len(wanted), "matched_programs": len(wanted & set(names)),
+            "matched_records": sum(n for name, n in names.items() if name in wanted),
+            "top_names": [f"{name[:45]}={n}" for name, n in names.most_common(6)],
+            "required_names": sorted(name[:45] for name in wanted)[:6],
+            "grading_keys": dict(keys.most_common(6)), "grading_values": dict(values.most_common(8)),
+            "status_values": dict(collections.Counter(str(r.get("tt_cham_diem")) for r in records))}
+
+
+def display_passes(records: Iterable[dict[str, Any]]) -> dict[tuple[str, str], str]:
+    """(customer code, normalised display programme name) -> grading status text.
+
+    "Đạt" only when a grading value literally says so; otherwise the raw grading
+    state is reported, never interpreted.
+    """
+    rank = {DISPLAY_PASS: 3}
+    best: dict[tuple[str, str], str] = {}
+    for record in records:
+        code = str(record.get("ma_kh") or "").strip()
+        program = norm(record.get("ten_ct"))
+        if not code or not program:
+            continue
+        grading = record.get("cham_diem") if isinstance(record.get("cham_diem"), dict) else {}
+        values = {str(v).strip() for v in grading.values() if isinstance(v, str) and v.strip()}
+        state = record.get("tt_cham_diem")
+        if DISPLAY_PASS in values:
+            result = DISPLAY_PASS
+        elif values:
+            result = sorted(values)[0]
+        elif state not in (None, ""):
+            result = f"Đã ghi nhận (trạng thái {state})"
+        else:
+            result = "Đã ghi nhận, chưa chấm"
+        current = best.get((code, program))
+        if current is None or rank.get(result, 1 if result.startswith("Đã ghi nhận (") else 0) > \
+                rank.get(current, 1 if current.startswith("Đã ghi nhận (") else 0):
+            best[(code, program)] = result
+    return best
+
+
+# --------------------------------------------------------------------------- compute
+
+
+def compute(
+    programs: list[dict[str, Any]],
+    lines: list[dict[str, Any]],
+    customers: dict[str, dict[str, Any]],
+    *,
+    displays: dict[tuple[str, str], str] | None = None,
+    region_of: Any = None,
+) -> tuple[list[ui.ProgramResult], list[dict[str, Any]]]:
+    """Return per-programme results in the DMS row schema plus rule issues."""
+    by_customer: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    code_of: dict[str, str] = {}
+    for line in lines:
+        by_customer[line["customer"]].append(line)
+        if line["code"]:
+            code_of.setdefault(line["customer"], line["code"])
+    results: list[ui.ProgramResult] = []
+    issues: list[dict[str, Any]] = []
+    for program in programs:
+        try:
+            rule = parse_rule(program)
+        except ValueError as exc:
+            issues.append({"Chương trình": program.get("name"), "Mã CT (id)": program.get("_id"),
+                           "Vấn đề": str(exc)})
+            results.append(ui.ProgramResult(program, "unsupported", 0))
+            continue
+        target = {"_id": TARGET_ID, "_idCT": rule.program_id, "ten": rule.target_name,
+                  "kh": rule.plan_text, "min": rule.minimum, "max": rule.maximum}
+        rewards = [{"_id": f"{sku}|{unit}", "ten": f"{name or sku}({unit})"}
+                   for sku, name, unit, _ in rule.rewards]
+        rows = []
+        for customer_id in sorted(rule.customers):
+            actual = 0.0
+            for line in by_customer.get(customer_id, []):
+                if line["unit"] in rule.units.get(line["sku"], ()):
+                    actual += line["amount"] if rule.kind == AMOUNT else line["quantity"]
+            meta = customers.get(customer_id, {})
+            code = meta.get("customer_code") or code_of.get(customer_id, "")
+            multiplier = reward_multiplier(actual, rule)
+            display = ""
+            if rule.display_program:
+                display = (displays or {}).get((code, norm(rule.display_program)), "Chưa có dữ liệu")
+            if multiplier == 0:
+                eligible = "Không"
+            elif not rule.display_program or display in {rule.display_result or DISPLAY_PASS, DISPLAY_PASS}:
+                eligible = "Có"
+            else:
+                eligible = REVIEW_DISPLAY
+            rows.append({
+                "_idCT": rule.program_id, "type": "", "ma": code or customer_id,
+                "ten": meta.get("Tên Khách hàng", ""), "sdt": meta.get("Số ĐT", ""),
+                "dc": meta.get("Địa chỉ", ""), "npp": "",
+                "kv": rule.region or (region_of(code) if region_of else ""),
+                "loai": meta.get("Loại KH", ""), "nhom": meta.get("Nhóm KH", ""),
+                "timepass": "", "soSuatCT": program.get("soSuat"),
+                "objThucHien": {TARGET_ID: round(actual, 2)},
+                "objTraThuong": {f"{sku}|{unit}": qty * multiplier
+                                 for sku, _, unit, qty in rule.rewards} if multiplier else {},
+                "extra": {"Tỉnh": meta.get("Tỉnh", ""),
+                          "Trưng bày yêu cầu": rule.display_program,
+                          "Kết quả trưng bày": display,
+                          "Đủ điều kiện trả thưởng": eligible,
+                          "Bội số": multiplier if rule.multiple else ""},
+            })
+        results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
+                                        [target], rewards))
+    return results, issues
+
+
+def region_from_code(region_map: dict[str, dict[str, str]]) -> Any:
+    from region_mapping import employee_prefix
+
+    def resolve(code: str) -> str:
+        prefix = employee_prefix(code)
+        return (region_map.get(prefix or "") or {}).get("vung", "")
+    return resolve
+
+
+DISPLAY_URL = "https://openapi.mobiwork.vn/OpenAPI/V1/DisplayData"
+
+
+def fetch_display_records(client: Any, first: date, last: date,
+                          page_size: int = 1000, max_pages: int = 500) -> list[dict[str, Any]]:
+    """All DisplayData gradings in the period (paginated, repeat-page guarded)."""
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page in range(1, max_pages + 1):
+        payload = client.get_json(
+            DISPLAY_URL,
+            {"tu_ngay": first.strftime("%d/%m/%Y"), "den_ngay": last.strftime("%d/%m/%Y"),
+             "page_size": page_size, "page_number": page},
+            operation_key="promotion_bonus_display", request_number=page,
+        )
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            raise ValueError("DisplayData response is missing data array")
+        rows = [row for row in rows if isinstance(row, dict)]
+        signature = repr([(r.get("ma_kh"), r.get("ten_ct"), r.get("ngay_cap_nhat")) for r in rows])
+        if rows and signature in seen:
+            raise ValueError("DisplayData repeated page; refusing incomplete pagination")
+        seen.add(signature)
+        records.extend(rows)
+        if len(rows) < page_size:
+            return records
+    raise ValueError("DisplayData pagination safety limit exceeded")
+
+
+def diagnostics(results: list[ui.ProgramResult]) -> list[dict[str, Any]]:
+    out = []
+    for result in results:
+        rows = result.rows
+        extra = [row.get("extra") or {} for row in rows]
+        out.append({
+            "id": result.program_id, "name": result.program_name[:80],
+            "registered": len(rows),
+            "with_sales": sum(1 for r in rows if (r.get("objThucHien") or {}).get(TARGET_ID, 0) > 0),
+            "reached": sum(1 for r in rows if r.get("objTraThuong")),
+            "display_required": bool(extra and extra[0].get("Trưng bày yêu cầu")),
+            "display_passed": sum(1 for e in extra if e.get("Kết quả trưng bày") == DISPLAY_PASS),
+            "eligible": sum(1 for e in extra if e.get("Đủ điều kiện trả thưởng") == "Có"),
+            "review_display": sum(1 for e in extra if e.get("Đủ điều kiện trả thưởng") == REVIEW_DISPLAY),
+        })
+    return out

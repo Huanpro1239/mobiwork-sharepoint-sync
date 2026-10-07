@@ -21,7 +21,8 @@ def customer(**changes):
 class CustomerCatalogueTests(unittest.TestCase):
     def client(self, payloads):
         client = Mock()
-        client.get_json.side_effect = payloads
+        # Second creation-date window (today) is empty unless a test says otherwise.
+        client.get_json.side_effect = list(payloads) + [{"total": 0, "data": []}] * 3
         return client
 
     def test_complete_catalogue_joins_by_id_and_keeps_transaction_values(self):
@@ -37,8 +38,10 @@ class CustomerCatalogueTests(unittest.TestCase):
         self.assertEqual(report.iloc[0]["Tên Khách hàng"], "Order name")
         self.assertEqual(report.iloc[0]["Số ĐT"], "0123456789")
         self.assertNotIn("Tỉnh", issues["Trường"].tolist())
-        params = client.get_json.call_args.args[1]
+        params = client.get_json.call_args_list[0].args[1]
         self.assertEqual(params["tu_ngay"], "01/01/1900")
+        today_params = client.get_json.call_args_list[-1].args[1]
+        self.assertEqual(today_params["tu_ngay"], today_params["den_ngay"])
         self.assertEqual(params["kieu_ngay"], "cdate")
         for name in ("status", "nhan_vien", "phong_ban_nv", "loai_kh"):
             self.assertNotIn(name, params)
@@ -64,7 +67,7 @@ class CustomerCatalogueTests(unittest.TestCase):
                               {"data": [customer(ID="other", makh="KH02")]}, {"data": []}])
         cfg = enrich_customer_config(client, config())
         self.assertEqual(cfg["customer_catalogue_audit"]["count"], 2)
-        self.assertEqual(client.get_json.call_count, 3)
+        self.assertEqual(client.get_json.call_count, 4)  # 3 historical pages + today window
 
     def test_invalid_catalogue_rejected_before_enrichment(self):
         cases = [
@@ -77,7 +80,20 @@ class CustomerCatalogueTests(unittest.TestCase):
         ]
         for payloads in cases:
             with self.subTest(payloads=payloads), self.assertRaises((ValueError, TypeError)):
-                enrich_customer_config(self.client(payloads), config())
+                enrich_customer_config(self.client(payloads), config(), attempts=1)
+
+    def test_customer_created_in_both_windows_is_rejected(self):
+        client = Mock()
+        client.get_json.side_effect = [{"total": 1, "data": [customer()]},
+                                       {"total": 1, "data": [customer()]}]
+        with self.assertRaises(ValueError):
+            enrich_customer_config(client, config())
+
+    def test_live_total_change_is_retried_then_succeeds(self):
+        payloads = [{"total": 2, "data": [customer()]}, {"total": 3, "data": []},
+                    {"total": 1, "data": [customer()]}]
+        cfg = enrich_customer_config(self.client(payloads), config())
+        self.assertEqual(list(cfg["customer_catalogue"]), ["customer-id"])
 
     def test_missing_id_reported_without_code_fallback(self):
         cfg = enrich_customer_config(self.client([{"total": 1, "data": [customer(ID=None)]}]), config())
