@@ -99,15 +99,9 @@ def region_label(code: str) -> str:
     return f"{REGION_NAMES[match.group(1)]} {rest}".strip()
 
 
-def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
-    """Mã NV -> Vùng / SS Code / SS Name / DB Code / Tên NPP from the department tree.
-
-    * DB Code / Tên NPP: the employee's own unit when it is a distributor unit (B-XXXX-NNNN).
-    * SS: the "Giám sát kinh doanh" employee(s) of the same unit; when the unit has none,
-      the nearest ancestor unit with supervisors. Several supervisors are joined with "; ".
-    * Vùng: the nearest ancestor coded MB/MT/MN/TN (e.g. MT1B -> "Miền Trung 1B").
-    """
-    tree = chains(sales, groups)
+def _supervisor_index(sales: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]],
+                                                              dict[str, list[dict[str, Any]]]]:
+    """Supervisors per unit, and per province (B-<PROV>-NNNN units only)."""
     supervisors: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for sale in sales:
         if is_supervisor(sale):
@@ -120,6 +114,58 @@ def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) 
                 bucket = province_supervisors[unit_code.split("-")[1]]
                 if person not in bucket:
                     bucket.append(person)
+    return supervisors, province_supervisors
+
+
+def _person(sale: dict[str, Any]) -> tuple[str, str]:
+    return str(sale.get("ma") or "").strip(), " ".join(str(sale.get("ten") or "").split())
+
+
+def _assign(item: dict[str, str], chain: list[dict[str, str]], supervisors: dict[str, list[dict[str, Any]]],
+            province_supervisors: dict[str, list[dict[str, Any]]], exclude: str = "") -> None:
+    """Fill SS (own unit, else nearest ancestor, else unique province supervisor) and Vùng."""
+    for node in chain:
+        found = sorted(supervisors.get(node["ma_nhom"], []), key=lambda s: str(s.get("ma") or ""))
+        found = [s for s in found if _person(s)[0] != exclude]
+        if found:
+            item["SS Code"] = "; ".join(_person(s)[0] for s in found)
+            item["SS Name"] = "; ".join(_person(s)[1] for s in found)
+            break
+    unit = chain[0]["ma_nhom"] if chain else ""
+    if "SS Code" not in item and NPP_UNIT.match(unit):
+        # Unit without its own supervisor: use the province's supervisor only when the
+        # province (B-<PROV>-NNNN) has exactly one; several -> leave blank for review.
+        only = province_supervisors.get(unit.split("-")[1], [])
+        if len(only) == 1 and _person(only[0])[0] != exclude:
+            item["SS Code"], item["SS Name"] = _person(only[0])
+    for node in chain[1:] or chain:
+        label = region_label(node["ma_nhom"])
+        if label:
+            item["Vùng"] = label
+            break
+
+
+def _unit_chain(code: str, by_code: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
+    chain, seen, node = [], set(), code
+    while node and node in by_code and node not in seen:
+        seen.add(node)
+        group = by_code[node]
+        chain.append({"ma_nhom": node, "ten_nhom": str(group.get("ten_nhom") or "").strip(),
+                      "loai_nhom": str(group.get("loai_nhom") or "").strip()})
+        node = str(group.get("ma_nhom_cha") or "").strip()
+    return chain
+
+
+def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """Mã NV -> Vùng / SS Code / SS Name / DB Code / Tên NPP from the department tree.
+
+    * DB Code / Tên NPP: the employee's own unit when it is a distributor unit (B-XXXX-NNNN).
+    * SS: the "Giám sát kinh doanh" employee(s) of the same unit; when the unit has none,
+      the nearest ancestor unit with supervisors. Several supervisors are joined with "; ".
+    * Vùng: the nearest ancestor coded MB/MT/MN/TN (e.g. MT1B -> "Miền Trung 1B").
+    """
+    tree = chains(sales, groups)
+    supervisors, province_supervisors = _supervisor_index(sales)
     out: dict[str, dict[str, str]] = {}
     for sale in sales:
         code = str(sale.get("ma") or "").strip()
@@ -131,28 +177,32 @@ def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) 
         if NPP_UNIT.match(unit["ma_nhom"]):
             item["DB Code"] = unit["ma_nhom"]
             item["Tên NPP"] = unit["ten_nhom"]
-        for node in chain:
-            found = sorted(supervisors.get(node["ma_nhom"], []), key=lambda s: str(s.get("ma") or ""))
-            found = [s for s in found if str(s.get("ma") or "").strip() != code]
-            if found:
-                item["SS Code"] = "; ".join(str(s.get("ma") or "").strip() for s in found)
-                item["SS Name"] = "; ".join(" ".join(str(s.get("ten") or "").split()) for s in found)
-                break
-        if "SS Code" not in item and NPP_UNIT.match(unit["ma_nhom"]):
-            # Unit without its own supervisor: use the province's supervisor only when the
-            # province (B-<PROV>-NNNN) has exactly one; several -> leave blank for review.
-            only = province_supervisors.get(unit["ma_nhom"].split("-")[1], [])
-            if len(only) == 1 and str(only[0].get("ma") or "").strip() != code:
-                item["SS Code"] = str(only[0].get("ma") or "").strip()
-                item["SS Name"] = " ".join(str(only[0].get("ten") or "").split())
-        for node in chain[1:] or chain:
-            label = region_label(node["ma_nhom"])
-            if label:
-                item["Vùng"] = label
-                break
+        _assign(item, chain, supervisors, province_supervisors, exclude=code)
         if item:
             out[code] = item
     return out
+
+
+def unit_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """NPP unit (B-XXXX-NNNN, the order's warehouse code) -> Tên NPP / SS / Vùng."""
+    by_code = {str(g.get("ma_nhom") or "").strip(): g for g in groups if g.get("ma_nhom")}
+    supervisors, province_supervisors = _supervisor_index(sales)
+    out: dict[str, dict[str, str]] = {}
+    for code in by_code:
+        if not NPP_UNIT.match(code):
+            continue
+        chain = _unit_chain(code, by_code)
+        item = {"DB Code": code, "Tên NPP": chain[0]["ten_nhom"]}
+        _assign(item, chain, supervisors, province_supervisors)
+        out[code] = item
+    return out
+
+
+def supervisor_candidates(sales: list[dict[str, Any]]) -> dict[str, str]:
+    """Province code -> "MA - Tên; ..." of its supervisors, as a hint for manual filling."""
+    _, province_supervisors = _supervisor_index(sales)
+    return {province: "; ".join(" - ".join(_person(s)) for s in people)
+            for province, people in province_supervisors.items()}
 
 
 def enrich_employee_config(client: Any, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -166,10 +216,20 @@ def enrich_employee_config(client: Any, cfg: dict[str, Any]) -> dict[str, Any]:
         merged.update(employees.get(code, {}))
         employees[code] = merged
     result["employees"] = employees
+    # Explicit mappings stay distinguishable from derived ones: the order's warehouse
+    # (historical NPP) beats the current department tree, but never an explicit entry.
+    result["employees_explicit"] = {code: dict(values) for code, values in (cfg.get("employees") or {}).items()}
+    npp_units = unit_mapping(sales, groups)
+    for code, values in (cfg.get("npp_units") or {}).items():
+        npp_units[code] = {**npp_units.get(code, {}), **values}
+    result["npp_units"] = npp_units
+    result["supervisor_candidates"] = supervisor_candidates(sales)
     result["sales_structure_audit"] = {"sales": len(sales), "groups": len(groups),
                                        "derived_employees": len(derived),
                                        "with_ss": sum(1 for v in derived.values() if v.get("SS Code")),
-                                       "with_npp": sum(1 for v in derived.values() if v.get("DB Code"))}
+                                       "with_npp": sum(1 for v in derived.values() if v.get("DB Code")),
+                                       "npp_units": len(npp_units),
+                                       "npp_units_with_ss": sum(1 for v in npp_units.values() if v.get("SS Code"))}
     return result
 
 

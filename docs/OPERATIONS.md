@@ -387,6 +387,26 @@ Audit: `output/promotion_detail_manifest.json`; Summary hiển thị `needs_mapp
 thay vì báo dữ liệu đã chuẩn khi thiếu thông tin. Đây là báo cáo phát sinh từ đơn,
 không thay thế hoặc thêm history cho Promotion Bonus.
 
+### Bổ sung CanBoSung (NPP theo kho xuất + file BoSung_Mapping)
+
+- NPP của mỗi dòng = mã kho xuất trên đơn (`ma_kho_xuat`, hàng tặng `ma_kho_xuat_km` bỏ tiền tố
+  `KM - `), dạng `B-XXXX-NNNN`. Đây là NPP tại thời điểm bán nên đúng cả cho tháng cũ khi nhân
+  viên đã nghỉ/chuyển. Tên NPP / SS / Vùng lấy theo đơn vị đó trên cây phòng ban (`npp_units`).
+  Đơn không có kho xuất mới dùng đơn vị hiện tại của nhân viên.
+- Thứ tự ưu tiên: `BoSung_Mapping.xlsx` > `employees` trong config > kho xuất của đơn >
+  cây phòng ban hiện tại > danh mục DMS. Ô trống không ghi đè.
+- Mỗi lần chạy, `08_BoSungDanhMuc/CanBoSung_TongHop.xlsx` liệt kê mỗi NPP / nhân viên / sản phẩm /
+  ĐVT / khách hàng còn thiếu đúng 1 dòng (cột `Còn thiếu`, `Hiện có`, `Gợi ý`, `Số dòng`, `Nguồn`),
+  gộp mọi tháng đã chạy (state `08_BoSungDanhMuc/_sync_state/canbosung_todo.json`). Sheet
+  `SuaTrenDMS` là lỗi dữ liệu gốc phải sửa trên DMS.
+- Người dùng điền cột vàng trong `08_BoSungDanhMuc/BoSung_Mapping.xlsx` (pipeline tạo một lần,
+  không bao giờ ghi đè). QuyDoi nhập `ĐVT báo cáo` (Thùng/Két/Bình) và số ĐVT nguồn trong 1 ĐVT
+  báo cáo (vd 24). Dòng sai bị bỏ qua và báo trong annotation `BoSung_Mapping`.
+- Lần đồng bộ sau tự áp dụng; tháng cũ chạy `report_scope=promotion_history`.
+- Khách hàng đổi mã trên DMS nhưng cùng ID: đơn giữ mã cũ, metadata lấy theo ID, không chặn.
+- Tắt: `"bosung_mapping": false` trong `config/promotion_detail.json`; bước trả thưởng cần thêm
+  env `BOSUNG_MAPPING=true` (đã đặt trong workflow).
+
 Có thể chọn config runtime riêng bằng `PROMOTION_DETAIL_CONFIG` để không đưa mapping khách hàng vào Git.
 
 File mẫu chỉ quy định cơ cấu 26 cột và định dạng, không cung cấp mapping dữ liệu.

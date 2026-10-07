@@ -53,14 +53,22 @@ class CustomerCatalogueTests(unittest.TestCase):
         self.assertEqual(report.iloc[0]["Tỉnh"], "KHÁNH HÒA")
         self.assertTrue(issues.empty)
 
-    def test_wrong_id_or_changed_code_does_not_join_by_code(self):
-        for api in [customer(ID="other-id"), customer(makh="CHANGED")]:
-            cfg = config()
-            cfg["customers"] = {}
-            cfg = enrich_customer_config(self.client([{"total": 1, "data": [api]}]), cfg)
-            report, issues = build_report(pd.DataFrame([source()]), cfg)
-            self.assertTrue(pd.isna(report.iloc[0]["Tỉnh"]))
-            self.assertIn("Tỉnh", issues["Trường"].tolist())
+    def test_wrong_id_does_not_join_by_code(self):
+        cfg = config()
+        cfg["customers"] = {}
+        cfg = enrich_customer_config(self.client([{"total": 1, "data": [customer(ID="other-id")]}]), cfg)
+        report, issues = build_report(pd.DataFrame([source()]), cfg)
+        self.assertTrue(pd.isna(report.iloc[0]["Tỉnh"]))
+        self.assertIn("Tỉnh", issues["Trường"].tolist())
+
+    def test_changed_code_joins_by_id_and_keeps_order_code(self):
+        cfg = config()
+        cfg["customers"] = {}
+        cfg = enrich_customer_config(self.client([{"total": 1, "data": [customer(makh="CHANGED")]}]), cfg)
+        report, issues = build_report(pd.DataFrame([source()]), cfg)
+        self.assertFalse(pd.isna(report.iloc[0]["Tỉnh"]))
+        self.assertNotEqual(report.iloc[0]["Mã Khách hàng"], "CHANGED")
+        self.assertNotIn("Mã Khách hàng", issues["Trường"].tolist() if not issues.empty else [])
 
     def test_no_total_short_page_is_not_end(self):
         client = self.client([{"data": [customer()]},

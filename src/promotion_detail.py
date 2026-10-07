@@ -26,6 +26,7 @@ from mobiwork import MobiWorkClient
 from region_mapping import employee_prefix, load_region_map
 from run_all_reports import incremental_target_dates
 from run_data_cham_anh import month_anchors
+import bosung_mapping as bosung
 from sales_structure import enrich_employee_config
 from sharepoint_semantic import SemanticSharePointClient
 
@@ -40,6 +41,43 @@ LOG = logging.getLogger("promotion_detail")
 # A missing pack conversion leaves that line's quantity blank and is listed in CanBoSung,
 # but no longer blocks publishing the whole month (other source errors still do).
 UNIT_GAP = "Thiếu quy đổi sang KÉT/THÙNG/BÌNH"
+SALES_FIELDS = ("Vùng", "SS Code", "SS Name", "DB Code", "Tên NPP")
+NPP_UNIT = re.compile(r"^[A-Z]-[A-Z]+-\d+$")
+
+
+def warehouse(row: dict[str, Any]) -> str:
+    """The order's issuing warehouse: the distributor (NPP) unit at the time of sale."""
+    for field in ("ma_kho_xuat", "ma_kho_xuat_km"):
+        value = re.sub(r"^KM\s*-\s*", "", text(row.get(field))).strip()
+        if NPP_UNIT.match(value):
+            return value
+    return ""
+
+
+def sales_layers(row: dict[str, Any], cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Vùng/SS/NPP sources, lowest priority first.
+
+    The order's warehouse identifies its NPP even after staff leave or move, so it replaces
+    the employee's *current* unit. Explicit config and the user's BoSung_Mapping file win.
+    """
+    employee_code = text(row.get("ma_nv_dat"))
+    code = warehouse(row)
+    if code:
+        base = {"DB Code": code, **cfg.get("npp_units", {}).get(code, {}),
+                **cfg.get("npp_overrides", {}).get(code, {})}
+    else:
+        base = cfg.get("employees", {}).get(employee_code, {})
+    explicit = cfg.get("employees_explicit", cfg.get("employees", {})).get(employee_code, {})
+    return [base, explicit, cfg.get("employee_overrides", {}).get(employee_code, {})]
+
+
+def resolve_sales(row: dict[str, Any], cfg: dict[str, Any]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for layer in sales_layers(row, cfg):
+        for field in SALES_FIELDS:
+            if text(layer.get(field)):
+                result[field] = text(layer[field])
+    return result
 
 
 def load_config() -> dict[str, Any]:
@@ -48,7 +86,7 @@ def load_config() -> dict[str, Any]:
     if not isinstance(cfg, dict) or type(cfg.get("publish_enabled")) is not bool:
         raise ValueError("publish_enabled must be an explicit boolean")
     for flag in ("fetch_product_catalogue", "fetch_customer_catalogue", "fetch_program_catalogue",
-                 "fetch_sales_structure", "allow_incomplete_publish"):
+                 "fetch_sales_structure", "allow_incomplete_publish", "bosung_mapping"):
         if type(cfg.get(flag, False)) is not bool:
             raise ValueError(f"{flag} must be an explicit boolean")
     for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
@@ -230,7 +268,12 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         def issue(field: str, reason: str, key=key, sku=sku, unit=unit, row=row) -> None:
             issues.append({**key, "Trường": field, "Lý do": reason,
                            "Mã SP nguồn": sku, "ĐVT nguồn": unit,
-                           "Số lượng nguồn": row.get("so_luong")})
+                           "Số lượng nguồn": row.get("so_luong"),
+                           "Tên SP nguồn": text(row.get("ten_sp")),
+                           "Kho/NPP": warehouse(row), "Mã NV": text(row.get("ma_nv_dat")),
+                           "Tên Nhân viên": text(row.get("ten_nguoi_dat")),
+                           "Mã Khách hàng": text(row.get("ma_kh")),
+                           "Tên Khách hàng": text(row.get("ten_kh"))})
 
         if not sku:
             issue("Mã sản phẩm", "Thiếu mã sản phẩm nguồn")
@@ -259,13 +302,11 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
             item["Mã CTKM"] = direct or item["Mã CTKM"]
             if not direct:
                 issue("Mã CTKM", "Hàng tặng thiếu liên kết CTKM trực tiếp")
-        employee = cfg.get("employees", {}).get(text(row.get("ma_nv_dat")), {})
         region = cfg.get("employee_regions", {}).get(employee_prefix(text(row.get("ma_nv_dat"))), {})
         item["Vùng"] = region.get("vung") or None
+        # Joined by the customer's internal ID; a later change of customer code on DMS keeps
+        # the ID, so the order keeps its historical code and still gets current metadata.
         current_customer = cfg.get("customer_catalogue", {}).get(text(row.get("ID_khachhang")), {})
-        if current_customer.get("customer_code") and current_customer["customer_code"] != text(row.get("ma_kh")):
-            issue("Mã Khách hàng", "ID khách hàng khớp nhưng mã KH khác danh mục hiện tại")
-            current_customer = {}
         for label in ("Tỉnh", "Loại KH", "Route", "Tên Khách hàng", "Địa chỉ", "Số ĐT"):
             if not text(item[label]) and text(current_customer.get(label)):
                 item[label] = current_customer[label]
@@ -278,9 +319,13 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
             elif code_mapping.get("employee_code") != text(row.get("ma_nv_dat")):
                 issue("DB Code", "NVBH không khớp mapping tham chiếu; chưa xác định NPP")
                 code_mapping = {}
-        product = cfg.get("products", {}).get(sku, {})
-        for mapping in (employee, code_mapping, customer, product):
+        product = {**cfg.get("products", {}).get(sku, {}), **cfg.get("product_overrides", {}).get(sku, {})}
+        layers = sales_layers(row, cfg)
+        for mapping in (layers[0], layers[1], code_mapping, customer,
+                        cfg.get("customer_overrides", {}).get(text(row.get("ma_kh")), {}), layers[2], product):
             for label, value in mapping.items():
+                if not text(value):
+                    continue
                 if label in {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"}:
                     item[label] = value
         for label in ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"]:
@@ -398,7 +443,12 @@ def run() -> dict[str, Any]:
                 manifest["sales_structure"] = cfg["sales_structure_audit"]
             except Exception as exc:
                 manifest["sales_structure_error"] = f"{type(exc).__name__}: {exc}"
+        use_bosung = cfg.get("bosung_mapping", False)
+        if use_bosung and sharepoint is not None:
+            cfg = bosung.apply_overrides(cfg, bosung.load_overrides(sharepoint, drive))
+            manifest["bosung_overrides"] = cfg["bosung_override_counts"]
         prepared = []
+        todo_updates: dict[str, list[dict[str, Any]]] = {}
         for anchor in anchors:
             if dry and scope == "touched":
                 source = Path("output") / master_filename(bill.name, anchor)
@@ -434,6 +484,10 @@ def run() -> dict[str, Any]:
                           f"samples={json.dumps(result['blocking_samples'], ensure_ascii=False)}")
             manifest["results"].append(result)
             prepared.append((anchor, path, result))
+            label = f"CTKM {anchor:%Y-%m}"
+            todo_updates[label] = bosung.aggregate(bosung.todo_rows(issues, cfg), label)
+        if use_bosung:  # also when the month is blocked: the list says what to fix on DMS
+            manifest["bosung"] = bosung.publish(todo_updates, sharepoint, drive, dry_run=dry)
         incomplete = any(result["issues"] for _, _, result in prepared)
         if not dry and cfg.get("publish_enabled", False) and any(result["blocking_issues"] for _, _, result in prepared):
             raise ValueError("CTKM report has invalid source values or identity links. Nothing published.")
