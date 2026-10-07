@@ -533,11 +533,70 @@ def _calc_month_frames(
         ("Khách hàng", customer_note + ". Danh sách khách đăng ký là danh sách hiện tại của chương trình"),
         ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
     ]
-    frames = ui.build_ui_frames(results, first, last, "", "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)",
-                                notes)
+    notes.append(("Sheet BaoCao", "Theo mẫu Báo cáo chi tiết CTKM theo KH: mỗi dòng hàng được tính vào chương "
+                                  "trình (quy đổi KÉT/THÙNG/BÌNH); khách đạt có thêm dòng 'TRẢ THƯỞNG' ghi quà. "
+                                  "Thực hiện ở Tong_hop tính theo đơn vị khai trong chương trình"))
+    summary_frames = ui.build_ui_frames(results, first, last, "",
+                                        "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)", notes)
+    report, detail_issues = _template_report(client, customers, results, first)
+    frames: dict[str, pd.DataFrame] = {"BaoCao": report}
+    for name in ("Tong_hop", "Ket_qua", "Kiem_tra"):
+        frames[name] = summary_frames[name]
+    if not detail_issues.empty:
+        frames["CanBoSung"] = detail_issues
     if issues:
         frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
+    manifest["template_rows"] = len(report)
+    manifest["template_issues"] = len(detail_issues)
     return frames
+
+
+_DETAIL_CONFIG: dict[str, Any] = {}
+
+
+def _template_report(
+    client: MobiWorkClient,
+    customers: dict[str, Any],
+    results: list[Any],
+    first: Any,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Render counted sale lines and rewards with the CTKM detail template mappings."""
+    import promotion_bonus_calc as calc
+    from promotion_detail import COLUMNS, build_report, enrich_product_config
+    from promotion_detail import load_config as load_detail_config
+
+    if "cfg" not in _DETAIL_CONFIG:
+        cfg = load_detail_config()
+        if cfg.get("fetch_product_catalogue", False):
+            try:
+                cfg = enrich_product_config(client, cfg)
+            except Exception as exc:  # static reference still converts known SKUs
+                LOG.warning("Product catalogue unavailable for template: %s", exc)
+        _DETAIL_CONFIG["cfg"] = cfg
+    cfg = dict(_DETAIL_CONFIG["cfg"])
+    cfg["customer_catalogue"] = customers
+    sources = calc.detail_source(results, f"{first:%m/%Y}")
+    # Keep full bonus codes (e.g. "008/TB/GT/01/2026_Q4 - Mức 2"); the CTKM normaliser
+    # would otherwise shorten them.
+    cfg["program_codes"] = {**cfg.get("program_codes", {}), **{code: code for code, _ in sources}}
+    reports, issues = [], []
+    for code, source in sources:
+        report, issue = build_report(source, cfg)
+        reports.append(report)
+        if not issue.empty:
+            issues.append(issue.assign(**{"Mã CTKM": code}))
+    report = pd.concat(reports, ignore_index=True) if reports else pd.DataFrame(columns=COLUMNS)
+    return report.reindex(columns=COLUMNS), (pd.concat(issues, ignore_index=True) if issues
+                                             else pd.DataFrame())
+
+
+TEMPLATE_TITLE = "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG"
+
+
+def _write_bonus(frames: dict[str, pd.DataFrame], filename: str, first: Any) -> Path:
+    from promotion_workbook import write_detail_workbook
+
+    return write_detail_workbook(frames, filename, first, title=f"{TEMPLATE_TITLE} - THÁNG {first:%m/%Y}")
 
 
 def _monthly_target(cfg: PromotionBonusConfig, first: Any) -> tuple[str, str]:
@@ -617,7 +676,7 @@ def _build_calc_workbook(
                 _github_notice(f"Promotion Bonus {first:%m/%Y} skipped", month_manifest["error"][:300])
                 continue
             filename, folder = _monthly_target(cfg, first)
-            outputs.append((write_workbook(frames, filename), folder))
+            outputs.append((_write_bonus(frames, filename, first), folder))
         if not outputs:
             raise RuntimeError("No Promotion Bonus month could be computed")
         manifest["phase"] = "workbook_build"
@@ -626,11 +685,11 @@ def _build_calc_workbook(
     frames = _calc_month_frames(client, cfg, first, last, dry_run, customers, customer_note, manifest)
     manifest["phase"] = "workbook_build"
     filename, folder = _monthly_target(cfg, first)
-    monthly = write_workbook(frames, filename)
+    monthly = _write_bonus(frames, filename, first)
     if (first.year, first.month) != (today.year, today.month):
         manifest["storage_mode"] = "monthly_history"
         return monthly, folder, []
-    return write_workbook(frames, cfg.filename), cfg.folder, [(monthly, folder)]
+    return _write_bonus(frames, cfg.filename, first), cfg.folder, [(monthly, folder)]
 
 
 def run() -> dict[str, Any]:

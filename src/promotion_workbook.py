@@ -16,7 +16,8 @@ from promotion_bonus import write_workbook
 LAYOUT = Path(__file__).resolve().parents[1] / "config/promotion_detail_layout.json"
 
 
-def write_detail_workbook(frames, filename: str, month: date, output_dir: Path = Path("output")) -> Path:
+def write_detail_workbook(frames, filename: str, month: date, output_dir: Path = Path("output"),
+                          title: str | None = None) -> Path:
     """Production workbook writer: apply the user's sanitized template without customer data."""
     layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
     if len(frames["BaoCao"]) + 4 > 1_048_576:
@@ -33,7 +34,7 @@ def write_detail_workbook(frames, filename: str, month: date, output_dir: Path =
             sheet["B1"] = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%d/%m/%Y %H:%M:%S")
             sheet["A2"] = "Tháng báo cáo:"
             sheet["B2"] = month.strftime("%Y-%m")
-            sheet["A3"] = layout["title"]
+            sheet["A3"] = title or layout["title"]
             sheet["Y3"] = "(Đơn vị: KÉT/THÙNG/BÌNH; vật phẩm tặng: CÁI)"
             for merged in layout["merged"]:
                 sheet.merge_cells(merged)
