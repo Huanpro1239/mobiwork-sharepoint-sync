@@ -63,5 +63,17 @@ class SalesStructureTests(unittest.TestCase):
         self.assertFalse(ss.is_supervisor({"chuc_vu": "Nhân viên bán hàng", "chuc_danh": "Nhân viên"}))
 
 
+    def test_supervisor_of_several_units(self):
+        sales = [{"ma": "E1", "ma_don_vi": "B-DANO-0016"},
+                 {"ma": "GS", "ten": "GS Đắk Nông", "chuc_vu": "Giám sát kinh doanh",
+                  "ma_don_vi": "B-DANO-0012, B-DANO-0016"}]
+        groups = [{"ma_nhom": "B-DANO-0016", "ten_nhom": "NPP B", "ma_nhom_cha": "MT1A"},
+                  {"ma_nhom": "B-DANO-0012", "ten_nhom": "NPP A", "ma_nhom_cha": "MT1A"},
+                  {"ma_nhom": "MT1A", "ten_nhom": "MT1A", "ma_nhom_cha": ""}]
+        mapping = ss.employee_mapping(sales, groups)
+        self.assertEqual(mapping["E1"]["SS Code"], "GS")
+        self.assertEqual(mapping["GS"]["DB Code"], "B-DANO-0012")
+
+
 if __name__ == "__main__":
     unittest.main()

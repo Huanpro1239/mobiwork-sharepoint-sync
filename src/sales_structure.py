@@ -30,12 +30,17 @@ def fetch(client: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     return sales, groups
 
 
+def units(sale: dict[str, Any]) -> list[str]:
+    """A user can belong to several units, stored comma-separated in ``ma_don_vi``."""
+    return [u.strip() for u in str(sale.get("ma_don_vi") or "").split(",") if u.strip()]
+
+
 def chains(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
     by_code = {str(g.get("ma_nhom") or "").strip(): g for g in groups if g.get("ma_nhom")}
     out: dict[str, list[dict[str, str]]] = {}
     for sale in sales:
         code = str(sale.get("ma") or "").strip()
-        node = str(sale.get("ma_don_vi") or "").strip()
+        node = (units(sale) or [""])[0]
         chain, seen = [], set()
         while node and node in by_code and node not in seen:
             seen.add(node)
@@ -96,9 +101,9 @@ def ss_gap_probe(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) -> d
     sup_units: dict[str, str] = {}
     for sale in sales:
         if is_supervisor(sale):
-            unit = str(sale.get("ma_don_vi") or "")
-            sup_by_prov[province(unit) or unit].add(str(sale.get("ma") or ""))
-            sup_units[str(sale.get("ma") or "")] = unit
+            for unit in units(sale):
+                sup_by_prov[province(unit) or unit].add(str(sale.get("ma") or ""))
+            sup_units[str(sale.get("ma") or "")] = str(sale.get("ma_don_vi") or "")
     gaps = collections.Counter()
     units = collections.defaultdict(set)
     for item in mapping.values():
@@ -148,7 +153,8 @@ def employee_mapping(sales: list[dict[str, Any]], groups: list[dict[str, Any]]) 
     supervisors: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for sale in sales:
         if is_supervisor(sale):
-            supervisors[str(sale.get("ma_don_vi") or "").strip()].append(sale)
+            for unit in units(sale):
+                supervisors[unit].append(sale)
     out: dict[str, dict[str, str]] = {}
     for sale in sales:
         code = str(sale.get("ma") or "").strip()
