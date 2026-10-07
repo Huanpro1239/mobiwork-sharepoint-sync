@@ -508,10 +508,12 @@ def _build_calc_workbook(
     manifest.update(counts)
     manifest.update({"rule_issues": issues, "program_diagnostics": diag,
                      "reached_rows": sum(d["reached"] for d in diag),
-                     "eligible_rows": sum(d["eligible"] for d in diag)})
+                     "eligible_rows": sum(d["eligible"] for d in diag),
+                     "review_display_rows": sum(d["review_display"] for d in diag)})
     _github_notice("Promotion Bonus (calc)",
                    f"{first:%m/%Y}: programs={len(programs)} rows={counts['customer_row_count']} "
                    f"reached={manifest['reached_rows']} eligible={manifest['eligible_rows']} "
+                   f"review_display={manifest['review_display_rows']} "
                    f"sold_lines={len(lines)} display={display_note}")
     lines_out = [f"{item['name'][:28]}|r{item['registered']}|s{item['with_sales']}|"
                  f"d{item['reached']}|tb{item['display_passed']}|e{item['eligible']}"
@@ -524,7 +526,8 @@ def _build_calc_workbook(
         ("Quy tắc", "Khách đăng ký của chương trình; đơn bán (bỏ dòng khuyến mãi) có ngày giao trong kỳ; "
                     "chỉ cộng sản phẩm và đúng đơn vị khai trong chương trình; tiền = đơn giá × số lượng"),
         ("Khu vực", "Vùng áp dụng của chương trình (OpenAPI không có khu vực chi tiết của khách)"),
-        ("Trưng bày", display_note),
+        ("Trưng bày", display_note + ". Khách đạt doanh số ở chương trình có trưng bày nhưng chưa có "
+                      "kết quả 'Đạt' được ghi 'Cần kiểm tra trưng bày'"),
         ("Khách hàng", customer_note),
         ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
     ]

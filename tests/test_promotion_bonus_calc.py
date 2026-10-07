@@ -116,6 +116,13 @@ class InputTests(unittest.TestCase):
         self.assertEqual((summary["matched_programs"], summary["matched_records"]), (1, 4))
         self.assertNotIn("K1", json.dumps(summary))
 
+    def test_display_state_without_grading_is_reported_raw(self):
+        records = [{"ma_kh": "K3", "ten_ct": "CTTB", "tt_cham_diem": 1},
+                   {"ma_kh": "K3", "ten_ct": "CTTB"},
+                   {"ma_kh": "K4", "ten_ct": "CTTB"}]
+        self.assertEqual(calc.display_passes(records),
+                         {("K3", "cttb"): "Đã ghi nhận (trạng thái 1)", ("K4", "cttb"): "Đã ghi nhận, chưa chấm"})
+
     def test_display_pagination_and_repeat_guard(self):
         client = Mock()
         page = [{"ma_kh": f"K{i}", "ten_ct": "T"} for i in range(2)]
@@ -162,7 +169,7 @@ class ComputeTests(unittest.TestCase):
                                   displays=displays)
         extra = {row["ma"]: row["extra"] for row in results[0].rows}
         self.assertEqual(extra["KHHO112323"]["Đủ điều kiện trả thưởng"], "Có")
-        self.assertEqual(extra["K2"]["Đủ điều kiện trả thưởng"], "Không")
+        self.assertEqual(extra["K2"]["Đủ điều kiện trả thưởng"], "Cần kiểm tra trưng bày")
         self.assertEqual(extra["K2"]["Kết quả trưng bày"], "Không đạt")
         diag = calc.diagnostics(results)[0]
         self.assertEqual((diag["registered"], diag["reached"], diag["display_passed"], diag["eligible"]),
@@ -178,7 +185,7 @@ class ComputeTests(unittest.TestCase):
         results, _ = calc.compute([program], calc.sold_lines(bill([{"so_luong": 80}]), OCT1, OCT31), {})
         row = next(r for r in results[0].rows if r["ma"] == "KHHO112323")
         self.assertEqual(row["extra"]["Kết quả trưng bày"], "Chưa có dữ liệu")
-        self.assertEqual(row["extra"]["Đủ điều kiện trả thưởng"], "Không")
+        self.assertEqual(row["extra"]["Đủ điều kiện trả thưởng"], "Cần kiểm tra trưng bày")
         self.assertTrue(row["objTraThuong"])
 
 

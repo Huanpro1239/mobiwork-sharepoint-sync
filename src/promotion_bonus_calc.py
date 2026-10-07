@@ -46,6 +46,7 @@ AMOUNT = "amount"
 QUANTITY = "quantity"
 SUPPORTED_TYPES = {"MUTI_SP_ST_SP", "MUTI_SP_SL_SP", "SP_SL_SP"}
 DISPLAY_PASS = "Đạt"
+REVIEW_DISPLAY = "Cần kiểm tra trưng bày"
 
 
 # --------------------------------------------------------------------------- rules
@@ -240,7 +241,9 @@ def display_summary(records: list[dict[str, Any]], programs: list[dict[str, Any]
         grading = record.get("cham_diem") if isinstance(record.get("cham_diem"), dict) else {}
         keys.update(grading.keys())
         values.update(str(v).strip() for v in grading.values() if isinstance(v, str) and v.strip())
+    fields = collections.Counter(k for r in records for k in r)
     return {"records": len(records), "programs_in_data": len(names),
+            "record_fields": sorted(fields)[:30],
             "required_programs": len(wanted), "matched_programs": len(wanted & set(names)),
             "matched_records": sum(n for name, n in names.items() if name in wanted),
             "top_names": [f"{name[:45]}={n}" for name, n in names.most_common(6)],
@@ -250,7 +253,12 @@ def display_summary(records: list[dict[str, Any]], programs: list[dict[str, Any]
 
 
 def display_passes(records: Iterable[dict[str, Any]]) -> dict[tuple[str, str], str]:
-    """(customer code, normalised display programme name) -> best grading result seen."""
+    """(customer code, normalised display programme name) -> grading status text.
+
+    "Đạt" only when a grading value literally says so; otherwise the raw grading
+    state is reported, never interpreted.
+    """
+    rank = {DISPLAY_PASS: 3}
     best: dict[tuple[str, str], str] = {}
     for record in records:
         code = str(record.get("ma_kh") or "").strip()
@@ -259,8 +267,18 @@ def display_passes(records: Iterable[dict[str, Any]]) -> dict[tuple[str, str], s
             continue
         grading = record.get("cham_diem") if isinstance(record.get("cham_diem"), dict) else {}
         values = {str(v).strip() for v in grading.values() if isinstance(v, str) and v.strip()}
-        result = DISPLAY_PASS if DISPLAY_PASS in values else (sorted(values)[0] if values else "")
-        if best.get((code, program)) != DISPLAY_PASS:
+        state = record.get("tt_cham_diem")
+        if DISPLAY_PASS in values:
+            result = DISPLAY_PASS
+        elif values:
+            result = sorted(values)[0]
+        elif state not in (None, ""):
+            result = f"Đã ghi nhận (trạng thái {state})"
+        else:
+            result = "Đã ghi nhận, chưa chấm"
+        current = best.get((code, program))
+        if current is None or rank.get(result, 1 if result.startswith("Đã ghi nhận (") else 0) > \
+                rank.get(current, 1 if current.startswith("Đã ghi nhận (") else 0):
             best[(code, program)] = result
     return best
 
@@ -309,8 +327,12 @@ def compute(
             display = ""
             if rule.display_program:
                 display = (displays or {}).get((code, norm(rule.display_program)), "Chưa có dữ liệu")
-            eligible = multiplier > 0 and (not rule.display_program
-                                           or display in {rule.display_result or DISPLAY_PASS, DISPLAY_PASS})
+            if multiplier == 0:
+                eligible = "Không"
+            elif not rule.display_program or display in {rule.display_result or DISPLAY_PASS, DISPLAY_PASS}:
+                eligible = "Có"
+            else:
+                eligible = REVIEW_DISPLAY
             rows.append({
                 "_idCT": rule.program_id, "type": "", "ma": code or customer_id,
                 "ten": meta.get("Tên Khách hàng", ""), "sdt": meta.get("Số ĐT", ""),
@@ -324,7 +346,7 @@ def compute(
                 "extra": {"Tỉnh": meta.get("Tỉnh", ""),
                           "Trưng bày yêu cầu": rule.display_program,
                           "Kết quả trưng bày": display,
-                          "Đủ điều kiện trả thưởng": "Có" if eligible else "Không",
+                          "Đủ điều kiện trả thưởng": eligible,
                           "Bội số": multiplier if rule.multiple else ""},
             })
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
@@ -383,5 +405,6 @@ def diagnostics(results: list[ui.ProgramResult]) -> list[dict[str, Any]]:
             "display_required": bool(extra and extra[0].get("Trưng bày yêu cầu")),
             "display_passed": sum(1 for e in extra if e.get("Kết quả trưng bày") == DISPLAY_PASS),
             "eligible": sum(1 for e in extra if e.get("Đủ điều kiện trả thưởng") == "Có"),
+            "review_display": sum(1 for e in extra if e.get("Đủ điều kiện trả thưởng") == REVIEW_DISPLAY),
         })
     return out
