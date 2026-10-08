@@ -40,7 +40,7 @@ SHEETS: dict[str, dict[str, Any]] = {
     "KhachHang": {"key": ["Mã Khách hàng"], "info": ["Tên Khách hàng"], "values": ["Tỉnh", "Loại KH"],
                   "target": "customer_overrides"},
 }
-TAIL = ["Còn thiếu", "Hiện có", "Gợi ý", "Số dòng", "Nguồn"]
+TAIL = ["Còn thiếu", "Nguyên nhân", "Hiện có", "Gợi ý", "Số dòng", "Nguồn"]
 DMS_SHEET = "SuaTrenDMS"
 DMS_COLUMNS = ["Mã Đơn hàng", "Dòng nguồn", "Trường", "Lý do", "Mã SP nguồn", "ĐVT nguồn", "Số dòng", "Nguồn"]
 
@@ -137,6 +137,41 @@ def _known(values: dict[str, Any], fields: list[str]) -> str:
     return "; ".join(f"{f}: {text(values.get(f))}" for f in fields if text(values.get(f)))
 
 
+def npp_cause(code: str, cfg: dict[str, Any]) -> str:
+    """Why Tên NPP / SS of a warehouse unit could not be derived from the department tree."""
+    if code not in cfg.get("npp_units", {}):
+        return "Mã NPP (kho xuất) không có trên cây phòng ban DMS hiện tại (đơn vị đã xóa/đổi mã)"
+    province = code.split("-")[1] if code.count("-") == 2 else ""
+    candidates = [c for c in cfg.get("supervisor_candidates", {}).get(province, "").split("; ") if c]
+    if not candidates:
+        return (f"NPP chưa gán nhân viên chức vụ 'Giám sát kinh doanh' và tỉnh {province} "
+                "không có giám sát nào trên DMS")
+    return (f"NPP chưa gán giám sát; tỉnh {province} có {len(candidates)} giám sát "
+            "nên không tự chọn được")
+
+
+def customer_cause(code: str, field: str, cfg: dict[str, Any]) -> str:
+    matches = [m for m in cfg.get("customer_catalogue", {}).values() if m.get("customer_code") == code]
+    if not matches:
+        return "Khách không còn trong danh mục khách hàng DMS (đã xóa hoặc đổi mã/ID)"
+    source = {"Tỉnh": "tinh_thanh_moi", "Loại KH": "loai_kh"}.get(field, field)
+    return f"Danh mục khách hàng DMS để trống {field} ({source})"
+
+
+def product_cause(sku: str, field: str, cfg: dict[str, Any]) -> str:
+    if field == "Package":
+        return ("DMS không có trường Package; danh mục Package (Danh Muc San Pham.xlsx) chưa có SP này"
+                if sku not in cfg.get("products", {}) or "Brand" in cfg["products"][sku]
+                else "Danh mục sản phẩm cấu hình thiếu Package")
+    return "Danh mục sản phẩm DMS để trống nhãn hiệu (nhan_hieu)"
+
+
+def unit_cause(sku: str, unit: str) -> str:
+    if not unit:
+        return "Dòng đơn hàng trên DMS không ghi ĐVT"
+    return f"SP chưa khai quy cách {unit} → Thùng/Két/Bình (dvt_chan/dvt_le/hsqd) trên danh mục DMS"
+
+
 def todo_rows(issues: pd.DataFrame | None, cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """One CanBoSung issue -> one fill-in row (not yet aggregated)."""
     rows: list[dict[str, Any]] = []
@@ -148,6 +183,7 @@ def todo_rows(issues: pd.DataFrame | None, cfg: dict[str, Any]) -> list[dict[str
         if reason.startswith(UNIT_GAP):
             rows.append({"_sheet": "QuyDoi", "Mã sản phẩm": sku, "ĐVT nguồn": unit,
                          "Tên Sản phẩm": text(rec.get("Tên SP nguồn")), "Còn thiếu": ["Quy đổi"],
+                         "Nguyên nhân": unit_cause(sku, unit),
                          "Gợi ý": "" if unit else "Đơn hàng thiếu ĐVT: nên sửa đơn trên DMS; "
                                                   "điền ở đây sẽ áp dụng cho dòng không ĐVT của SP này"})
         elif field in SALES_FIELDS:
@@ -157,21 +193,25 @@ def todo_rows(issues: pd.DataFrame | None, cfg: dict[str, Any]) -> list[dict[str
                          **cfg.get("npp_overrides", {}).get(code, {})}
                 hint = cfg.get("supervisor_candidates", {}).get(code.split("-")[1], "") if "-" in code else ""
                 rows.append({"_sheet": "NPP", "DB Code": code, "Còn thiếu": [field],
+                             "Nguyên nhân": npp_cause(code, cfg),
                              "Hiện có": _known(known, ["Tên NPP", "SS Code", "SS Name", "Vùng"]),
                              "Gợi ý": f"Giám sát cùng tỉnh: {hint}" if hint and field.startswith("SS") else ""})
             else:
                 employee = text(rec.get("Mã NV"))
                 rows.append({"_sheet": "NhanVien", "Mã NV": employee,
                              "Tên Nhân viên": text(rec.get("Tên Nhân viên")), "Còn thiếu": [field],
+                             "Nguyên nhân": "Đơn không có kho xuất và nhân viên không thuộc NPP nào "
+                                            "trên cây phòng ban hiện tại",
                              "Hiện có": _known(cfg.get("employees", {}).get(employee, {}), list(SALES_FIELDS)),
                              "Gợi ý": "Đơn không có kho xuất"})
         elif field in ("Brand", "Package"):
             rows.append({"_sheet": "SanPham", "Mã sản phẩm": sku, "Tên Sản phẩm": text(rec.get("Tên SP nguồn")),
-                         "Còn thiếu": [field],
+                         "Còn thiếu": [field], "Nguyên nhân": product_cause(sku, field, cfg),
                          "Hiện có": _known(cfg.get("products", {}).get(sku, {}), ["Brand", "Package"])})
         elif field in ("Tỉnh", "Loại KH"):
             rows.append({"_sheet": "KhachHang", "Mã Khách hàng": text(rec.get("Mã Khách hàng")),
-                         "Tên Khách hàng": text(rec.get("Tên Khách hàng")), "Còn thiếu": [field]})
+                         "Tên Khách hàng": text(rec.get("Tên Khách hàng")), "Còn thiếu": [field],
+                         "Nguyên nhân": customer_cause(text(rec.get("Mã Khách hàng")), field, cfg)})
         else:
             rows.append({"_sheet": DMS_SHEET, "Mã Đơn hàng": text(rec.get("Mã Đơn hàng")),
                          "Dòng nguồn": text(rec.get("Dòng nguồn")), "Trường": field, "Lý do": reason,
@@ -244,7 +284,13 @@ def summary(frames: dict[str, pd.DataFrame]) -> dict[str, Any]:
             for value in frame["Còn thiếu"]:
                 for field in str(value).split(", "):
                     missing[field] = missing.get(field, 0) + 1
-            result[sheet] = {"keys": len(frame), "lines": int(frame["Số dòng"].sum()), "missing": missing}
+            causes = frame["Nguyên nhân"].astype(str).value_counts()
+            result[sheet] = {"keys": len(frame), "lines": int(frame["Số dòng"].sum()), "missing": missing,
+                             "causes": {k[:90]: int(v) for k, v in causes.items()}}
+            if sheet in {"NPP", "SanPham", "QuyDoi"}:
+                key = SHEETS[sheet]["key"][0]
+                result[sheet]["items"] = [f"{r[key]}|{r['Số dòng']}|{str(r['Nguyên nhân'])[:60]}"
+                                          for r in frame.head(10).to_dict("records")]
         else:
             reasons = (frame["Trường"].astype(str) + ": " + frame["Lý do"].astype(str)).value_counts()
             result[sheet] = {"rows": len(frame), "reasons": {k: int(v) for k, v in reasons.head(5).items()}}
