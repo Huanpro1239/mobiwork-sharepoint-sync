@@ -253,6 +253,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         if not programs[order]:
             continue
         gift = is_gift(row)
+        money = gift and text(row.get("_money_reward")).casefold() in {"true", "1"}
         if gift:
             row = dict(row)
             for field in ("ma_sp", "ten_sp", "so_luong", "ma_dvt", "ten_dvt"):
@@ -329,13 +330,15 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
                 if label in {"Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"}:
                     item[label] = value
         for label in ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"]:
+            if money and label in {"Brand", "Package"}:
+                continue  # cash / voucher reward: no product master data
             if not text(item[label]):
                 issue(label, "Thiếu mapping danh mục")
         quantity_field = "Số lượng Khuyến mãi" if gift else "Số lượng SELL-OUT"
         try:
             quantity = number(row.get("so_luong"))
             conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}")
-            if unit.casefold() in {"thùng", "két", "bình"} or (unit.casefold() == "cái" and not conversion):
+            if money or unit.casefold() in {"thùng", "két", "bình"} or (unit.casefold() == "cái" and not conversion):
                 # Items counted per piece (vật phẩm) stay in CÁI, as the template header states.
                 converted = quantity
             else:

@@ -538,3 +538,70 @@ class HistoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def summer_program(tier="A", minimum=11_520_000, maximum=23_040_000, customers=(C1,)):
+    """246/248 shape: buy amount over 01/04–30/09, reward = cash (khuyen_mai)."""
+    start = int(pd.Timestamp("2026-04-01", tz="Asia/Ho_Chi_Minh").timestamp() * 1000)
+    end = int(pd.Timestamp("2026-09-30 23:59:59", tz="Asia/Ho_Chi_Minh").timestamp() * 1000)
+    return {"_id": tier * 24, "name": f"248/TB/GT/04/2026_CHƯƠNG TRÌNH ĐẢNH THẠNH MÙA HÈ - LOẠI {tier}(Miền Bắc)",
+            "ptype": {"value": "MUTI_SP_ST_TIEN", "label": "Mua nhiều sản phẩm - đạt số tiền - tặng tiền"},
+            "products": [{"san_pham_mua": [{"ma_san_pham": "230100008", "ten_san_pham": "Đảnh Thạnh RGB",
+                                            "don_vi_tinh": unit("Két")}],
+                          "yeu_cau": {"amountMin": minimum, "amountMax": maximum},
+                          "khuyen_mai": "550000", "chon_tat_ca_sp": {"chon_tat_ca_sp": False}}],
+            "customer": list(customers), "settings": {"BoiSo": False}, "soSuat": 25,
+            "startDate": start, "endDate": end, "ctype": {"label": "Tất cả"}}
+
+
+class CumulativeMoneyProgramTests(unittest.TestCase):
+    def test_cash_reward_rule_and_tier_code(self):
+        rule = calc.parse_rule(summer_program())
+        self.assertEqual((rule.kind, rule.minimum, rule.maximum), (calc.AMOUNT, 11_520_000, 23_040_000))
+        self.assertEqual(rule.rewards, (("TIEN", "Tiền thưởng", "đồng", 550_000.0),))
+        self.assertEqual(calc.bonus_code(rule.name), "248/TB/GT/04/2026 - Loại A")
+
+    def _frames(self, first, last, months):
+        def detail(month, dry_run, manifest):
+            key = f"{month:%Y-%m}"
+            if key not in months:
+                raise ValueError("Bill monthly master missing")
+            return months[key]
+        bonus._BILL_CACHE.clear()
+        cfg = bonus.PromotionBonusConfig(**{**json.loads(Path("config/promotion_bonus.json").read_text(
+            encoding="utf-8")), "cumulative_programs": ("248/TB/GT/04/2026",)})
+        with patch.dict(os.environ, {"PROMOTION_BONUS_STTT": "0"}), \
+                patch.object(bonus, "fetch_programs", return_value=[summer_program()]), \
+                patch.object(bonus, "_bill_detail", side_effect=detail):
+            audit = {}
+            frames = bonus._calc_month_frames(Mock(), cfg, first, last, True, {}, "test", audit,
+                                             verbose=False, detail_config={})
+        bonus._BILL_CACHE.clear()
+        return frames, audit
+
+    def test_accumulates_from_programme_start_and_pays_only_at_the_end(self):
+        def month(day, amount):
+            return bill([{"ma_sp": "230100008", "ten_dvt": "Két", "ma_dvt": "Két", "so_luong": 10,
+                          "thanh_tien": amount, "gia_truoc_vat": amount / 10, "ngay_giao_hang": day,
+                          "ngay_dat": day[:10] + " 08:00:00", "ma_phieu": f"DH{day[5:7]}"}])
+        months = {"2026-07": month("2026-07-10T03:00:00.000Z", 6_000_000),
+                  "2026-08": month("2026-08-10T03:00:00.000Z", 3_000_000),
+                  "2026-09": month("2026-09-10T03:00:00.000Z", 3_000_000)}
+        frames, audit = self._frames(date(2026, 8, 1), date(2026, 8, 31), months)
+        self.assertEqual(audit["cumulative_missing_months"], ["2026-04", "2026-05", "2026-06"])
+        self.assertEqual(audit["eligible_rows"], 0)  # 9,000,000 so far, and the programme is still running
+        frames, audit = self._frames(date(2026, 9, 1), date(2026, 9, 30), months)
+        self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 1))  # 12,000,000 lũy kế
+        gift = frames["BaoCao"][frames["BaoCao"]["Mã Đơn hàng"] == "TRẢ THƯỞNG"].iloc[0]
+        self.assertEqual((gift["Sản phẩm Tặng"], gift["Số lượng Khuyến mãi"]), ("TIEN", 550_000))
+        self.assertEqual(gift["Mã CTKM"], "248/TB/GT/04/2026 - Loại A")
+        issues = frames["CanBoSung"]
+        gift_issues = issues[issues["Mã Đơn hàng"] == "TRẢ THƯỞNG"]["Trường"].tolist()
+        self.assertFalse({"Brand", "Package", "Số lượng Khuyến mãi"} & set(gift_issues))
+
+    def test_provisional_marks_reached_rows_before_the_end(self):
+        months = {"2026-08": bill([{"ma_sp": "230100008", "ten_dvt": "Két", "ma_dvt": "Két", "so_luong": 10,
+                                    "thanh_tien": 12_000_000, "ngay_giao_hang": "2026-08-10T03:00:00.000Z"}])}
+        frames, audit = self._frames(date(2026, 8, 1), date(2026, 8, 31), months)
+        self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 0))
+        self.assertFalse((frames["BaoCao"]["Mã Đơn hàng"] == "TRẢ THƯỞNG").any())

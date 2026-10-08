@@ -5,5 +5,9 @@
   "filename": "BaoCaoTraThuong_Current.xlsx",
   "catalog_url": "https://openapi.mobiwork.vn/OpenAPI/V1/PromotionBonus",
   "report_url": "https://openapi.mobiwork.vn/OpenAPI/V1/PromotionBonusReport",
-  "catalog_page_size": 200
+  "catalog_page_size": 200,
+  "cumulative_programs": [
+    "246/TB/GT/04/2026",
+    "248/TB/GT/04/2026"
+  ]
 }

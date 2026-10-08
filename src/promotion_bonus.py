@@ -6,7 +6,7 @@ import logging
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +33,13 @@ class PromotionBonusConfig:
     catalog_url: str
     report_url: str
     catalog_page_size: int = 200
+    # Code prefixes of programmes that accumulate over their whole period (e.g. "Thời gian
+    # mua và tham gia tích lũy: 01/04 - 30/09") instead of per calendar month.
+    cumulative_programs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if not all(isinstance(code, str) and code.strip() for code in self.cumulative_programs):
+            raise ValueError("cumulative_programs must be non-empty strings")
         if type(self.enabled) is not bool:
             raise TypeError("enabled must be a boolean")
         if type(self.catalog_page_size) is not int:
@@ -58,6 +63,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> PromotionBonusConfig:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise TypeError("config/promotion_bonus.json must contain a JSON object")
+    if "cumulative_programs" in payload:
+        payload = {**payload, "cumulative_programs": tuple(payload["cumulative_programs"])}
     return PromotionBonusConfig(**payload)
 
 
@@ -429,6 +436,49 @@ def _bill_detail(first: Any, dry_run: bool, manifest: dict[str, Any]) -> pd.Data
     return pd.read_excel(BytesIO(content), sheet_name="ChiTietSP", dtype=object)
 
 
+_BILL_CACHE: dict[str, Any] = {}
+
+
+def _cached_bill(first: Any, dry_run: bool) -> pd.DataFrame | None:
+    """Bill master of a month, read once per run; None when the month has no master."""
+    key = f"{first:%Y-%m}"
+    if key not in _BILL_CACHE:
+        try:
+            _BILL_CACHE[key] = _bill_detail(first, dry_run, {})
+        except ValueError:
+            _BILL_CACHE[key] = None
+    return _BILL_CACHE[key]
+
+
+def _program_day(program: dict[str, Any], field: str) -> Any:
+    try:
+        return datetime.fromtimestamp(int(program[field]) / 1000, ui.VN_TZ).date()
+    except (KeyError, TypeError, ValueError, OSError):
+        return None
+
+
+def _is_cumulative(program: dict[str, Any], cfg: PromotionBonusConfig, first: Any) -> bool:
+    start = _program_day(program, "startDate")
+    name = str(program.get("name", "")).strip().casefold()
+    return bool(start and start < first
+                and any(name.startswith(code.strip().casefold()) for code in cfg.cumulative_programs))
+
+
+def _period_lines(start: Any, last: Any, dry_run: bool, missing: set[str]) -> list[dict[str, Any]]:
+    import promotion_bonus_calc as calc
+
+    lines: list[dict[str, Any]] = []
+    cursor = start.replace(day=1)
+    while cursor <= last:
+        detail = _cached_bill(cursor, dry_run)
+        if detail is None:
+            missing.add(f"{cursor:%Y-%m}")
+        else:
+            lines.extend(calc.sold_lines(detail, max(cursor, start), min(_month_end(cursor), last)))
+        cursor = _month_end(cursor) + timedelta(days=1)
+    return lines
+
+
 def _with_bill_identity(customers: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
     """Fill code for buyers missing from the catalogue using the Bill line itself."""
     merged = {key: dict(value) for key, value in customers.items()}
@@ -488,7 +538,26 @@ def _calc_month_frames(
                      "program_count": len(programs)})
     lines = calc.sold_lines(_bill_detail(first, dry_run, manifest), first, last)
     manifest["sold_line_count"] = len(lines)
-    customer_map = _with_bill_identity(customers, lines)
+    # Whole-period accumulation (configured programmes): sales from the programme start.
+    cumulative = [p for p in programs if _is_cumulative(p, cfg, first)]
+    groups: dict[Any, list[dict[str, Any]]] = {}
+    for program in cumulative:
+        groups.setdefault(_program_day(program, "startDate"), []).append(program)
+    missing_months: set[str] = set()
+    period_lines = {start: _period_lines(start, last, dry_run, missing_months) for start in groups}
+    all_lines = lines + [line for group in period_lines.values() for line in group]
+    if cumulative:
+        manifest["cumulative_programs"] = {str(p.get("name"))[:60]: f"{_program_day(p, 'startDate')}"
+                                           for p in cumulative}
+        manifest["cumulative_missing_months"] = sorted(missing_months)
+        if verbose:
+            _github_notice(f"Promotion Bonus cumulative {first:%m/%Y}",
+                           json.dumps({"programs": len(cumulative),
+                                       "from": sorted(str(s) for s in groups),
+                                       "lines": {str(k): len(v) for k, v in period_lines.items()},
+                                       "months_without_orders": sorted(missing_months)},
+                                      ensure_ascii=False))
+    customer_map = _with_bill_identity(customers, all_lines)
     displays: dict[tuple[str, str], str] = {}
     display_note = "Không có chương trình yêu cầu trưng bày"
     if any(isinstance(p.get("cttb"), dict) and p["cttb"].get("ten") for p in programs):
@@ -504,11 +573,20 @@ def _calc_month_frames(
         except Exception as exc:  # display data is informative; never block the report
             display_note = f"Không lấy được DisplayData ({type(exc).__name__})"
             manifest["display_error"] = f"{type(exc).__name__}: {exc}"
-    sales_metadata, conflicts = calc.customer_sales_metadata(lines, detail_config.get("employees", {}),
+    sales_metadata, conflicts = calc.customer_sales_metadata(all_lines, detail_config.get("employees", {}),
                                                               detail_config)
     manifest["customer_assignment_conflicts"] = conflicts
-    results, issues = calc.compute(programs, lines, customer_map, displays=displays,
-                                  sales_metadata=sales_metadata)
+    results, issues = calc.compute([p for p in programs if p not in cumulative], lines, customer_map,
+                                   displays=displays, sales_metadata=sales_metadata)
+    for start, group in groups.items():
+        group_results, group_issues = calc.compute(group, period_lines[start], customer_map,
+                                                   displays=displays, sales_metadata=sales_metadata)
+        for program, result in zip(group, group_results, strict=True):
+            end = _program_day(program, "endDate")
+            if end and end > last:
+                calc.provisional([result], end)
+        results.extend(group_results)
+        issues.extend(group_issues)
     counts = ui.snapshot_counts(results)
     diag = calc.diagnostics(results)
     manifest.update(counts)
@@ -540,6 +618,12 @@ def _calc_month_frames(
         ("Khách hàng", customer_note + ". Danh sách khách đăng ký là danh sách hiện tại của chương trình"),
         ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
     ]
+    if cumulative:
+        notes.append(("Tích lũy nhiều tháng",
+                      f"{len(cumulative)} chương trình tính lũy kế từ ngày bắt đầu CT đến hết kỳ báo cáo "
+                      "(cấu hình cumulative_programs). Trước tháng kết thúc CT: 'Tạm tính', chưa trả thưởng. "
+                      + (f"Tháng chưa có dữ liệu đơn hàng: {', '.join(sorted(missing_months))}"
+                         if missing_months else "")))
     notes.append(("Sheet BaoCao", "Theo mẫu Báo cáo chi tiết CTKM theo KH: mỗi dòng hàng được tính vào chương "
                                   "trình (quy đổi KÉT/THÙNG/BÌNH); khách đủ điều kiện có thêm dòng 'TRẢ THƯỞNG' ghi quà. "
                                   "Thực hiện ở Tong_hop tính theo đơn vị khai trong chương trình"))
