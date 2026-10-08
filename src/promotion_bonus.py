@@ -587,6 +587,14 @@ def _calc_month_frames(
                 calc.provisional([result], end)
         results.extend(group_results)
         issues.extend(group_issues)
+        ends = {_program_day(p, "endDate") for p in group}
+        if verbose or any(end and first <= end <= last for end in ends):
+            summary = []
+            for item in calc.diagnostics(group_results):
+                region = item["name"].rsplit("(", 1)[-1].rstrip(")") if "(" in item["name"] else ""
+                summary.append(f"{calc.bonus_code(item['name'])} ({region})|đăng ký {item['registered']}|"
+                               f"có doanh số {item['with_sales']}|đạt {item['reached']}|trả {item['eligible']}")
+            _github_notice(f"Promotion Bonus lũy kế từ {start:%d/%m/%Y} đến {last:%d/%m/%Y}", " ; ".join(summary))
     counts = ui.snapshot_counts(results)
     diag = calc.diagnostics(results)
     manifest.update(counts)
