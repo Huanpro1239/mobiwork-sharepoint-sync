@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from report_runtime import env_bool as _env_bool
+
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -13,13 +15,6 @@ import run_all_reports as runner
 
 LOG = logging.getLogger("mobiwork_history_reconcile")
 DEFAULT_START_MONTH = bootstrap_history.DEFAULT_START_MONTH
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def previous_month_label() -> str:

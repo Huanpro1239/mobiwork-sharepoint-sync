@@ -96,7 +96,7 @@ def bill_total(client: Any, first: date, last: date) -> Any:
 
 def run() -> None:
     from mobiwork import MobiWorkClient
-    from promotion_bonus import fetch_programs, load_config
+    from promotion_catalogue import fetch_programs, load_config
 
     codes = [c.strip().casefold() for c in os.environ.get("PROMOTION_PROBE_CODES", "").split(",") if c.strip()]
     if not codes:

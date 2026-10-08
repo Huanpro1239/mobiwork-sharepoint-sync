@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from report_runtime import env_bool as _env_bool
+
 import json
 import logging
 import os
@@ -59,13 +61,6 @@ def publish_target_months(
             result.get("filename", ""),
         )
     return exports
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def report_sync_left_masters_unchanged(

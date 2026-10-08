@@ -1,6 +1,6 @@
 # MobiWork DMS → SharePoint
 
-Production data pipeline bằng Python để nạp 4 báo cáo lịch sử từ MobiWork DMS Open API (viếng thăm, mở mới khách hàng, đơn đặt hàng, đơn bán hàng) vào thư viện SharePoint `MobiWorkDMS`, kèm workbook **Data chấm ảnh** hằng tháng và snapshot **Báo cáo trả thưởng** hiện hành.
+Production data pipeline bằng Python để nạp 4 báo cáo lịch sử từ MobiWork DMS Open API (viếng thăm, mở mới khách hàng, đơn đặt hàng, đơn bán hàng) vào thư viện SharePoint `MobiWorkDMS`, kèm **Data chấm ảnh**, **Báo cáo trả thưởng** và **Chi tiết CTKM theo khách hàng**. Lệnh `src/pipeline.py` điều phối toàn bộ các bộ xuất hiện có theo thứ tự và dùng chung danh mục trong mỗi lượt chạy.
 
 ```text
 MobiWork Open API
@@ -29,7 +29,7 @@ MobiWork Open API
             └─ Data_don_hang: chi tiết đơn bán hàng
 ```
 
-Dự án chỉ tạo **nguồn dữ liệu chuẩn**. Nó không tải/copy file ảnh lên SharePoint (Data chấm ảnh dùng link ảnh gốc của MobiWork), không chấm điểm ảnh và không tạo KPI nghiệp vụ.
+Data chấm ảnh dùng link ảnh gốc của MobiWork. Phần trả thưởng tính điều kiện doanh số từ đơn bán và đọc kết quả trưng bày từ DMS; các điều kiện chưa đủ chứng cứ được giữ ở trạng thái cần kiểm tra.
 
 ## Bootstrap production trước khi chạy lịch
 
@@ -86,12 +86,17 @@ Cấu hình đích lưu tại `config/promotion_bonus.json`:
 ```text
 06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
 ├─ BaoCao: chi tiết theo mẫu, chỉ khách đủ điều kiện có dòng TRẢ THƯỞNG
+├─ Thuong_theo_don: thưởng phân bổ theo đơn/chương trình của khách đủ điều kiện
 ├─ Tong_hop: chỉ tiêu và thưởng dự kiến theo khách/chương trình
 ├─ Ket_qua: sản phẩm thưởng của khách đủ điều kiện
 ├─ Kiem_tra: nguồn, kỳ và trạng thái chương trình
 ├─ CanBoSung: chỉ tạo khi thiếu mapping hoặc lỗi nguồn/quy đổi
-└─ Can_xem: chỉ tạo khi có quy tắc chưa hỗ trợ
+└─ Can_xem: quy tắc, kỳ tích lũy, trưng bày hoặc số suất cần kiểm tra
 ```
+
+`BaoCao` trả thưởng giữ 26 cột A–Z của mẫu và thêm hai cột phân bổ thưởng theo đơn.
+`BaoCao` CTKM giữ đúng 26 cột. Phần phân bổ theo đơn dùng chức năng đã tích hợp trên
+main; giá trị quà hiện vật không có giá bán nguồn được để trống.
 
 Tài liệu API chính thức: [Danh sách chương trình trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonus/findPromotionBonus) và [Báo cáo trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonusReport/findPromotionBonusReport). Chi tiết tham số và mapping nằm trong [data contract](docs/DATA_CONTRACT.md#promotion-bonus-snapshot-contract).
 
@@ -182,17 +187,36 @@ Các writer production dùng chung concurrency lock và `cancel-in-progress: fal
 
 ```powershell
 python -m pip install -r requirements.txt
-python src\run_all_reports.py
-python src\run_data_cham_anh.py
+python src\pipeline.py --check
+python src\pipeline.py --scope all_reports
 ```
 
-Sao chép `.env.example` thành `.env` và điền thông tin MobiWork/SharePoint trước khi chạy. Không commit `.env`, token, dữ liệu khách hàng, ảnh hoặc file export.
+Lệnh chạy chung gọi lần lượt: 4 báo cáo nguồn → Data chấm ảnh → Trả thưởng → Chi tiết CTKM.
+Các lệnh cũ vẫn dùng được riêng để sửa lỗi/vận hành, nhưng workflow hằng ngày chỉ gọi pipeline một lần.
+Danh mục khách hàng, sản phẩm, nhân viên và mapping bổ sung được dùng chung khi cấu hình đầu vào giống nhau;
+mỗi lượt chạy tải mới và chỉ giữ bản đọc thành công trong bộ nhớ. Xem [kiến trúc](docs/ARCHITECTURE.md).
+
+Xuất lại cả trả thưởng và CTKM của tháng đã có Bill master:
+
+```powershell
+$env:PROMOTION_BONUS_MONTHS = "2026-09"
+python src\pipeline.py --scope promotion_history
+```
+
+`DRY_RUN=true` không ghi SharePoint. Chạy lịch sử vẫn đọc Bill master trên SharePoint;
+chạy toàn bộ ở chế độ này dùng master cục bộ vừa xuất cho các bước phụ thuộc.
+
+Dùng `.env.example` làm danh sách biến và thiết lập thông tin MobiWork/SharePoint
+trong môi trường của phiên shell trước khi chạy. Các lệnh Python không tự nạp file
+`.env`; GitHub Actions lấy cấu hình từ secrets/variables. Không commit `.env`, token,
+dữ liệu khách hàng, ảnh hoặc file export.
 
 ## Kiểm tra trước khi merge
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m compileall -q src tests
+python src\pipeline.py --check
 ruff check .
 coverage run -m unittest discover -s tests -v
 coverage report
@@ -204,7 +228,7 @@ coverage report
 - Data contract: [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md)
 - Security: [`SECURITY.md`](SECURITY.md)
 
-Báo cáo chi tiết CTKM theo KH được build riêng bởi `src/promotion_detail.py` từ
+Báo cáo chi tiết CTKM theo KH do `src/promotion_detail.py` xử lý trong pipeline chung, từ
 chi tiết Bill, theo 26 cột mẫu. W là tiền trước VAT; Z là hàng tặng thực tế. Một
 đơn có nhiều CTKM được ghi chung một ô ở dòng bán, giữ mỗi dòng bán đúng một lần;
 hàng tặng là dòng riêng để không nhân đôi số liệu. Xem quy tắc mapping, ĐVT và gate

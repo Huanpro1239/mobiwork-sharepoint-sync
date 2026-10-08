@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from report_runtime import env_bool as _env_bool
+
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -22,13 +24,6 @@ from sharepoint_semantic import SemanticSharePointClient
 
 
 LOG = logging.getLogger("mobiwork_sync")
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def incremental_target_dates(sync_scope: str, lookback_days: int) -> list[date]:

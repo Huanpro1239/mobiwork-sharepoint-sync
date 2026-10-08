@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-import promotion_bonus_ui as ui
+import promotion_models as ui
 
 LOG = logging.getLogger("mobiwork_promotion_bonus_calc")
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")

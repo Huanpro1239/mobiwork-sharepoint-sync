@@ -7,7 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from mobiwork import MobiWorkClient
-from promotion_bonus import _api_total, _expect_object_list
+from api_contract import api_total as _api_total, expect_object_list as _expect_object_list
 
 FIELDS = {"Tỉnh": "tinh_thanh_moi", "Loại KH": "loai_kh", "Route": "code_router",
           "Tên Khách hàng": "tenkh", "Địa chỉ": "dia_chi", "Số ĐT": "sdt",

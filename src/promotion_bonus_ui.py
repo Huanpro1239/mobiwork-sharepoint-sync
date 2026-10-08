@@ -24,13 +24,14 @@ import math
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
+from promotion_models import EMPTY, ENVELOPE, FINAL, ProgramResult, text
 
 LOG = logging.getLogger("mobiwork_promotion_bonus_ui")
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -44,10 +45,6 @@ STTT_LABELS = {
     "-1": "Tổng tiền - chiết khấu SP - CK đơn hàng",
     "2": "Tổng tiền có VAT (Đơn giá * Số lượng + VAT)",
 }
-
-FINAL = "final"
-EMPTY = "empty"
-ENVELOPE = "envelope"
 
 
 class WebAuthError(RuntimeError):
@@ -177,24 +174,6 @@ def classify(payload: Any) -> str:
     if any(envelopes):
         raise ValueError("Promotion Bonus UI result mixes envelopes and customer rows")
     return FINAL
-
-
-@dataclass
-class ProgramResult:
-    program: dict[str, Any]
-    status: str
-    attempts: int
-    rows: list[dict[str, Any]] = field(default_factory=list)
-    targets: list[dict[str, Any]] = field(default_factory=list)
-    rewards: list[dict[str, Any]] = field(default_factory=list)
-
-    @property
-    def program_id(self) -> str:
-        return str(self.program.get("_id", ""))
-
-    @property
-    def program_name(self) -> str:
-        return str(self.program.get("name", "")).strip()
 
 
 def fetch_program(
@@ -387,19 +366,6 @@ def reward_cells(row: dict[str, Any], rewards: list[dict[str, Any]]) -> list[tup
 
 
 # --------------------------------------------------------------------------- workbook
-
-
-def text(value: Any) -> str:
-    if value is None or value is pd.NA or (isinstance(value, float) and math.isnan(value)):
-        return ""
-    if isinstance(value, dict):
-        for key in ("viewData", "name", "ten", "label", "value"):
-            if value.get(key) not in (None, ""):
-                return text(value[key])
-        return ""
-    if isinstance(value, (list, tuple)):
-        return ", ".join(part for part in (text(v) for v in value) if part)
-    return str(value).strip()
 
 
 def _fmt_qty(value: float) -> str:

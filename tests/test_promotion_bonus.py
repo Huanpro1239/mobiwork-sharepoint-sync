@@ -309,7 +309,7 @@ class PromotionBonusSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'test.xlsx'
             path.write_bytes(b'previous workbook')
-            with patch('promotion_bonus._format_sheet', side_effect=RuntimeError('format failed')), \
+            with patch('excel_export._format_sheet', side_effect=RuntimeError('format failed')), \
                  self.assertRaises(RuntimeError):
                 write_workbook(build_frames(dict(programs=[], data=[], targets=[], rewards=[])),
                                'test.xlsx', Path(tmp))

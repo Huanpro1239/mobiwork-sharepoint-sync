@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+if __package__:
+    from .report_runtime import env_bool as _env_bool
+else:
+    from report_runtime import env_bool as _env_bool
+
 import json
 import logging
 import os
@@ -12,13 +17,6 @@ from typing import Any
 DEFAULT_CONFIG_PATH = Path("config/employee_regions.json")
 _PREFIX_RE = re.compile(r"^([A-Za-z]+)")
 LOG = logging.getLogger("mobiwork_sync")
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def employee_prefix(ma_nv: Any) -> str | None:

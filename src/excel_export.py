@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+import json
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -253,3 +256,62 @@ def _format_sheet(writer: pd.ExcelWriter, sheet_name: str) -> None:
             if value is not None:
                 max_length = max(max_length, len(str(value)))
         worksheet.column_dimensions[get_column_letter(column)].width = min(max(max_length + 2, 10), 40)
+
+
+def _excel_safe(value: Any) -> Any:
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return value
+
+
+def records_frame(records: list[dict[str, Any]], label: str) -> pd.DataFrame:
+    def flatten(record: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in record.items():
+            column = f"{prefix}_{key}" if prefix else str(key)
+            cells = flatten(value, column) if isinstance(value, dict) and value else {column: value}
+            if result.keys() & cells.keys():
+                raise ValueError(f"{label}: nested column collision")
+            result.update(cells)
+        return result
+
+    frame = pd.DataFrame([flatten(row) for row in records], dtype=object)
+    if not frame.empty:
+        for column in frame.columns:
+            if frame[column].map(lambda value: isinstance(value, (dict, list, tuple, set))).any():
+                frame[column] = frame[column].map(_excel_safe)
+    if len(frame.columns) > 16_384:
+        raise ValueError(f"{label}: exceeds Excel column limit")
+    for column in frame.columns:
+        if len(str(column)) > 32_767:
+            raise ValueError(f"{label}: column name exceeds Excel cell limit")
+        for value in frame[column]:
+            if isinstance(value, str) and len(value) > 32_767:
+                raise ValueError(f"{label}: value exceeds Excel cell limit")
+    _validate_excel_size(frame, label)
+    return frame
+
+
+def write_workbook(
+    frames: dict[str, pd.DataFrame],
+    filename: str,
+    output_dir: Path = Path("output"),
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / filename
+    with tempfile.NamedTemporaryFile(dir=output_dir, suffix=".xlsx", delete=False) as handle:
+        staged = Path(handle.name)
+    try:
+        with pd.ExcelWriter(staged, engine="openpyxl") as writer:
+            for sheet_name, frame in frames.items():
+                frame.to_excel(writer, sheet_name=sheet_name, index=False)
+                # Source strings are data, including values beginning with '='.
+                for row in writer.sheets[sheet_name].iter_rows():
+                    for cell in row:
+                        if cell.data_type == "f":
+                            cell.data_type = "s"
+                _format_sheet(writer, sheet_name)
+        staged.replace(path)
+    finally:
+        staged.unlink(missing_ok=True)
+    return path
