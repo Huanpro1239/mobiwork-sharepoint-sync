@@ -336,8 +336,9 @@ def compute(
                 if line["sku"] in rule.units and not line["unit"]:
                     raise ValueError("Qualifying Bill sale line is missing its unit")
                 if line["unit"] in rule.units.get(line["sku"], ()):
-                    actual += line["amount"] if rule.kind == AMOUNT else line["quantity"]
-                    counted.append(line.get("raw"))
+                    contribution = line["amount"] if rule.kind == AMOUNT else line["quantity"]
+                    actual += contribution
+                    counted.append((line.get("raw"), contribution))
             meta = customers.get(customer_id, {})
             sales_meta = (sales_metadata or {}).get(customer_id, {})
             code = meta.get("customer_code") or code_of.get(customer_id, "")
@@ -372,7 +373,8 @@ def compute(
                                                       for sku, name, unit, qty in rule.rewards)
                           if multiplier else "",
                           "Bội số": multiplier if rule.multiple else ""},
-                "_lines": [line for line in counted if line is not None],
+                "_lines": [line for line, _ in counted if line is not None],
+                "_weights": [weight for line, weight in counted if line is not None],
                 "_rewards": [(sku, name, unit, qty * multiplier) for sku, name, unit, qty in rule.rewards]
                 if eligible == "Có" else [],
                 "_eligible": eligible,
@@ -406,13 +408,69 @@ def bonus_code(name: str) -> str:
 
 
 GIFT_ORDER = "TRẢ THƯỞNG"
+BONUS_TEXT, BONUS_VALUE = "_bonus_text", "_bonus_value"
 
 
-def detail_source(results: list[ui.ProgramResult], label: str) -> list[tuple[str, pd.DataFrame]]:
+def allocate(weights: list[float], total: float, digits: int) -> list[float]:
+    """Split ``total`` over lines in proportion to their contribution to the target.
+
+    Rounded to ``digits``; the rounding remainder goes to the largest contributor so the
+    allocations add up exactly to ``total``. Equal split when contributions do not add up
+    to a positive number.
+    """
+    if not weights:
+        return []
+    base = sum(weights)
+    shares = [w / base for w in weights] if base > 0 else [1 / len(weights)] * len(weights)
+    parts = [round(total * share, digits) for share in shares]
+    biggest = max(range(len(weights)), key=lambda i: shares[i])
+    parts[biggest] = round(total - sum(p for i, p in enumerate(parts) if i != biggest), digits)
+    return parts
+
+
+def average_prices(lines: list[dict[str, Any]]) -> dict[tuple[str, str], float]:
+    """Average selling price (thành tiền / số lượng) per (SKU, unit) over sold lines."""
+    totals: dict[tuple[str, str], list[float]] = collections.defaultdict(lambda: [0.0, 0.0])
+    for line in lines:
+        if line["quantity"] > 0 and line["amount"] > 0:
+            item = totals[(line["sku"], line["unit"])]
+            item[0] += line["amount"]
+            item[1] += line["quantity"]
+    return {key: amount / qty for key, (amount, qty) in totals.items() if qty > 0}
+
+
+def _per_order_rewards(row: dict[str, Any], prices: dict[tuple[str, str], float]
+                       ) -> tuple[list[str], list[float | None]]:
+    """Reward allocated to each counted sale line: gift text and value in đồng."""
+    weights = row.get("_weights") or [1.0] * len(row.get("_lines") or [])
+    count = len(row.get("_lines") or [])
+    texts: list[list[str]] = [[] for _ in range(count)]
+    values: list[float | None] = [0.0] * count
+    for sku, name, unit, qty in row.get("_rewards") or []:
+        if sku == MONEY_SKU:
+            value_total: float | None = qty
+        else:
+            for index, part in enumerate(allocate(weights, qty, 4)):
+                texts[index].append(f"{name or sku} ({unit}): {part:g}")
+            price = prices.get((sku, unit))
+            value_total = qty * price if price else None
+        if value_total is None:
+            values = [None] * count  # gift without a selling price: value unknown, never guessed
+            continue
+        for index, part in enumerate(allocate(weights, value_total, 0)):
+            if values[index] is not None:
+                values[index] += part
+    return ["; ".join(t) or None for t in texts], values
+
+
+def detail_source(results: list[ui.ProgramResult], label: str,
+                  prices: dict[tuple[str, str], float] | None = None) -> list[tuple[str, pd.DataFrame]]:
     """Bill-shaped rows per programme for the DMS CTKM template.
 
     Each counted sale line is repeated under its programme code; an eligible customer
-    gets one synthetic gift line per reward product (order id ``TRẢ THƯỞNG``).
+    gets one synthetic gift line per reward product (order id ``TRẢ THƯỞNG``). The paid
+    reward is also allocated to the counted sale lines (``_bonus_text``/``_bonus_value``)
+    in proportion to each line's contribution to the target.
     """
     out = []
     for result in results:
@@ -420,14 +478,18 @@ def detail_source(results: list[ui.ProgramResult], label: str) -> list[tuple[str
         rows: list[dict[str, Any]] = []
         for row in result.rows:
             lines = row.get("_lines") or []
-            for line in lines:
+            texts, values = (_per_order_rewards(row, prices or {}) if row.get("_rewards")
+                             else ([None] * len(lines), [None] * len(lines)))
+            for line, bonus_text, bonus_value in zip(lines, texts, values, strict=True):
                 rows.append({**line, "ctkm": code, "promotion": None, "ctkmFull_id": None,
-                             "ctkmFull_ten_khuyen_mai": None, "is_km": False, "loai_hang": "Bán hàng"})
+                             "ctkmFull_ten_khuyen_mai": None, "is_km": False, "loai_hang": "Bán hàng",
+                             BONUS_TEXT: bonus_text, BONUS_VALUE: bonus_value})
             if not lines or not row.get("_rewards"):
                 continue
             base = dict(lines[-1])
             for index, (sku, name, unit, qty) in enumerate(row["_rewards"], start=1):
-                rows.append({**base, "ma_phieu": GIFT_ORDER, "stt": f"{row['ma']}-{index}",
+                rows.append({**base, BONUS_TEXT: None, BONUS_VALUE: None,
+                             "ma_phieu": GIFT_ORDER, "stt": f"{row['ma']}-{index}",
                              "_money_reward": sku == MONEY_SKU,
                              "ctkm": code, "promotion": None, "ctkmFull_id": None,
                              "ctkmFull_ten_khuyen_mai": None, "is_km": True, "loai_hang": "Khuyến mãi",

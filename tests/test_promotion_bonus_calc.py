@@ -375,8 +375,8 @@ class TemplateTests(unittest.TestCase):
         results, _ = calc.compute([qty_program()], calc.sold_lines(detail, OCT1, OCT31), {})
         with patch("promotion_detail.enrich_product_config", side_effect=RuntimeError("offline")):
             report, issues = bonus._template_report(Mock(), {}, results, OCT1)
-        from promotion_detail import COLUMNS
-        self.assertEqual(list(report.columns), COLUMNS)
+        from promotion_detail import BONUS_COLUMNS, COLUMNS
+        self.assertEqual(list(report.columns), COLUMNS + list(BONUS_COLUMNS))
         sale, gift = report.iloc[0], report.iloc[1]
         self.assertEqual(sale["Mã CTKM"], "581/TB/GT/10/2026")
         self.assertEqual(sale["Mã Khách hàng"], "KHHO112323")
@@ -384,6 +384,55 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(gift["Mã Đơn hàng"], calc.GIFT_ORDER)
         self.assertEqual(gift["Sản phẩm Tặng"], "230100110")
         self.assertAlmostEqual(gift["Số lượng Khuyến mãi"], 0.5)  # 12 bottles = 0.5 case
+
+    def test_allocation_adds_up_exactly(self):
+        parts = calc.allocate([1, 1, 1], 100, 0)
+        self.assertEqual(sum(parts), 100)
+        self.assertEqual(calc.allocate([30, 10], 12, 4), [9.0, 3.0])
+        self.assertEqual(calc.allocate([0, 0], 10, 0), [5, 5])
+        self.assertEqual(calc.allocate([], 10, 0), [])
+
+    def test_reward_is_allocated_to_each_order(self):
+        detail = bill([{"so_luong": 48, "thanh_tien": 240_000, "ma_phieu": "DH1"},
+                       {"so_luong": 24, "thanh_tien": 120_000, "ma_phieu": "DH2"},
+                       {"so_luong": 24, "thanh_tien": 120_000, "ma_phieu": "DH2"}])
+        lines = calc.sold_lines(detail, OCT1, OCT31)
+        results, _ = calc.compute([qty_program()], lines, {})
+        prices = calc.average_prices(lines)
+        self.assertEqual(prices[("230100110", "Chai")], 5000)
+        with patch("promotion_detail.enrich_product_config", side_effect=RuntimeError("offline")):
+            report, _ = bonus._template_report(Mock(), {}, results, OCT1, prices=prices)
+        sales = report[report["Mã Đơn hàng"] != calc.GIFT_ORDER]
+        self.assertEqual(list(sales["Tiền thưởng phân bổ (đ)"]), [30_000, 15_000, 15_000])  # 12 chai × 5.000
+        self.assertEqual(sales.iloc[0]["Thưởng phân bổ theo đơn"], "Vikoda 500ml (Chai): 6")
+        gift = report[report["Mã Đơn hàng"] == calc.GIFT_ORDER].iloc[0]
+        self.assertTrue(pd.isna(gift["Tiền thưởng phân bổ (đ)"]))  # no double counting
+        orders = bonus.reward_by_order(report)
+        self.assertEqual(list(orders["Mã Đơn hàng"]), ["DH1", "DH2"])
+        self.assertEqual(list(orders["Tiền thưởng phân bổ (đ)"]), [30_000, 30_000])
+        self.assertEqual(list(orders["Số dòng hàng"]), [1, 2])
+
+    def test_money_programme_and_unpriced_gift(self):
+        program = amount_program(minimum=300_000, maximum=0)
+        program["ptype"] = {"value": calc.MONEY_TYPE}
+        program["products"][0]["khuyen_mai"] = "550000"
+        program["products"][0]["san_pham_mua"][0]["ma_san_pham"] = "230100110"
+        detail = bill([{"so_luong": 50, "thanh_tien": 200_000, "ma_phieu": "DH1"},
+                       {"so_luong": 50, "thanh_tien": 150_000, "ma_phieu": "DH2"}])
+        results, _ = calc.compute([program], calc.sold_lines(detail, OCT1, OCT31), {})
+        sources = calc.detail_source(results, "10/2026", {})
+        frame = sources[0][1]
+        sales = frame[frame["ma_phieu"] != calc.GIFT_ORDER]
+        self.assertEqual(list(sales[calc.BONUS_VALUE]), [314_286, 235_714])
+        results, _ = calc.compute([qty_program()], calc.sold_lines(bill([{"so_luong": 72}]), OCT1, OCT31), {})
+        frame = calc.detail_source(results, "10/2026", {})[0][1]
+        self.assertIsNone(frame.iloc[0][calc.BONUS_VALUE])  # no selling price → no guessed value
+        self.assertEqual(frame.iloc[0][calc.BONUS_TEXT], "Vikoda 500ml (Chai): 12")
+
+    def test_unpaid_customer_gets_no_allocation(self):
+        results, _ = calc.compute([qty_program(minimum=500)], calc.sold_lines(bill([{"so_luong": 72}]), OCT1, OCT31), {})
+        frame = calc.detail_source(results, "10/2026", {})
+        self.assertTrue(all(f.empty or f[calc.BONUS_VALUE].isna().all() for _, f in frame))
 
     def test_template_keeps_full_level_code(self):
         program = qty_program()
