@@ -10,6 +10,7 @@ import pandas as pd
 
 import promotion_bonus as bonus
 import promotion_bonus_calc as calc
+from promotion_bonus_ui import target_cells
 from promotion_reward_report import invoice_promotions, program_coverage, reward_ledger
 from test_promotion_bonus_calc import C1, OCT1, OCT31, amount_program, bill, qty_program
 
@@ -23,6 +24,47 @@ def cash_program():
 
 
 class RewardCoverageTests(unittest.TestCase):
+    def test_same_pool_tiers_choose_one_reward_at_each_boundary(self):
+        program = qty_program(minimum=16, maximum=30, units=("Thùng",), customers=(C1,), multiple=True)
+        program["products"][0]["san_pham_khuyen_mai"][0][0]["so_luong"] = 1
+        second = copy.deepcopy(program["products"][0])
+        second["yeu_cau"] = {"qualityMin": 30, "qualityMax": 0}
+        second["san_pham_khuyen_mai"][0][0]["so_luong"] = 2
+        program["products"].append(second)
+        rule = calc.parse_rule(program)
+        self.assertEqual(len(rule.tiers), 2)
+        for qty, expected in [(15, 0), (16, 1), (29, 1), (30, 2), (59, 2), (60, 4)]:
+            with self.subTest(qty=qty):
+                source = bill([{"so_luong": qty, "ten_dvt": "Thùng", "ma_dvt": "Thùng"}])
+                results, issues = calc.compute([program], calc.sold_lines(source, OCT1, OCT31), {})
+                self.assertEqual(issues, [])
+                self.assertEqual(len(results[0].rows), 1)
+                ledger = reward_ledger(results, OCT1)
+                self.assertEqual(len(ledger), 1)
+                self.assertEqual(ledger["Số lượng quà đủ điều kiện"].sum(), expected)
+                self.assertEqual(results[0].rows[0]["objThucHien"][calc.TARGET_ID], qty)
+                if expected:
+                    self.assertEqual(target_cells(results[0].rows[0], results[0].targets)[0]["Tỷ lệ (%)"], 100)
+
+    def test_tiers_with_different_pools_or_overlapping_ranges_are_not_guessed(self):
+        for different_pool in (True, False):
+            program = qty_program(minimum=16, maximum=30)
+            second = copy.deepcopy(program["products"][0])
+            if different_pool:
+                second["san_pham_mua"][0]["ma_san_pham"] = "OTHER"
+                second["yeu_cau"] = {"qualityMin": 30, "qualityMax": 0}
+            program["products"].append(second)
+            with self.subTest(different_pool=different_pool), self.assertRaises(ValueError):
+                calc.parse_rule(program)
+
+    def test_disconnected_tier_ranges_are_kept_unsupported(self):
+        program = qty_program(minimum=16, maximum=30)
+        second = copy.deepcopy(program["products"][0])
+        second["yeu_cau"] = {"qualityMin": 40, "qualityMax": 0}
+        program["products"].append(second)
+        with self.assertRaisesRegex(ValueError, "gaps"):
+            calc.parse_rule(program)
+
     def test_cash_is_never_a_physical_quantity_and_allocation_reconciles(self):
         source = bill([{"so_luong": 72, "thanh_tien": 400_000}])
         results, _ = calc.compute([cash_program()], calc.sold_lines(source, OCT1, OCT31), {})
