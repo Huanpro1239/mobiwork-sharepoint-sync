@@ -86,12 +86,17 @@ Cấu hình đích lưu tại `config/promotion_bonus.json`:
 ```text
 06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
 ├─ BaoCao: chi tiết theo mẫu, chỉ khách đủ điều kiện có dòng TRẢ THƯỞNG
+├─ Thuong_theo_don: thưởng phân bổ theo đơn/chương trình của khách đủ điều kiện
 ├─ Tong_hop: chỉ tiêu và thưởng dự kiến theo khách/chương trình
 ├─ Ket_qua: sản phẩm thưởng của khách đủ điều kiện
 ├─ Kiem_tra: nguồn, kỳ và trạng thái chương trình
 ├─ CanBoSung: chỉ tạo khi thiếu mapping hoặc lỗi nguồn/quy đổi
 └─ Can_xem: quy tắc, kỳ tích lũy, trưng bày hoặc số suất cần kiểm tra
 ```
+
+`BaoCao` trả thưởng giữ 26 cột A–Z của mẫu và thêm hai cột phân bổ thưởng theo đơn.
+`BaoCao` CTKM giữ đúng 26 cột. Phần phân bổ theo đơn dùng chức năng đã tích hợp trên
+main; giá trị quà hiện vật không có giá bán nguồn được để trống.
 
 Tài liệu API chính thức: [Danh sách chương trình trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonus/findPromotionBonus) và [Báo cáo trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonusReport/findPromotionBonusReport). Chi tiết tham số và mapping nằm trong [data contract](docs/DATA_CONTRACT.md#promotion-bonus-snapshot-contract).
 
