@@ -201,6 +201,16 @@ gồm khách đủ điều kiện, kể cả kết quả trưng bày khi chươn
 Khu vực khách lấy từ metadata hoặc vùng duy nhất của nhân viên trên đơn bán;
 `Vùng áp dụng CT` được ghi riêng. Nhiều vùng/NPP thì để trống, không chọn tùy ý.
 
+Chương trình "Mua nhiều sản phẩm - đạt số tiền - tặng tiền" (`MUTI_SP_ST_TIEN`, vd 246/248 Đảnh
+Thạnh mùa hè): quà là tiền/voucher trong `khuyen_mai` (đồng); dòng TRẢ THƯỞNG ghi `TIEN` / Tiền
+thưởng, số lượng = số tiền. Mã CTKM giữ hậu tố `- Loại A/B/C/D`.
+
+Chương trình tích lũy cả kỳ (không theo tháng) khai trong `config/promotion_bonus.json`
+`cumulative_programs` (tiền tố mã, vd `"246/TB/GT/04/2026"`). Báo cáo tháng tính lũy kế từ ngày bắt
+đầu CT đến hết tháng báo cáo; trước tháng kết thúc ghi "Tạm tính – CT kết thúc dd/mm/yyyy", chưa có
+dòng TRẢ THƯỞNG. Tháng không có file đơn hàng được ghi trong Kiem_tra (DMS không có đơn trước 06/2026).
+Chương trình Q4 "... THEO THÁNG" vẫn tính theo từng tháng.
+
 `CanBoSung.Mức độ` phân biệt `Thiếu thông tin mô tả`, `Thiếu quy đổi đơn vị` và `Chặn xuất bản`.
 Thiếu quy cách giữ số lượng quy đổi trống và báo `unit_gaps`, theo cùng chính sách CTKM.
 Lỗi identity, số tiền/số lượng hoặc hệ số quy đổi không hợp lệ chặn upload; dùng dry-run để xem chi tiết.

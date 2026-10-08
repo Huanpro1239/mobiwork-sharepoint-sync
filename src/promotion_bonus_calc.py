@@ -45,7 +45,9 @@ VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 TARGET_ID = "chi_tieu"
 AMOUNT = "amount"
 QUANTITY = "quantity"
-SUPPORTED_TYPES = {"MUTI_SP_ST_SP", "MUTI_SP_SL_SP", "SP_SL_SP"}
+SUPPORTED_TYPES = {"MUTI_SP_ST_SP", "MUTI_SP_SL_SP", "SP_SL_SP", "MUTI_SP_ST_TIEN"}
+MONEY_TYPE = "MUTI_SP_ST_TIEN"  # "Mua nhiều sản phẩm - đạt số tiền - tặng tiền"
+MONEY_SKU, MONEY_NAME, MONEY_UNIT = "TIEN", "Tiền thưởng", "đồng"
 DISPLAY_PASS = "Đạt"
 REVIEW_DISPLAY = "Cần kiểm tra trưng bày"
 
@@ -149,6 +151,9 @@ def parse_rule(program: dict[str, Any]) -> Rule:
          _unit(g.get("don_vi_tinh")), _number(g.get("so_luong"), f"{name} reward"))
         for g in gifts if isinstance(g, dict)
     )
+    if ptype == MONEY_TYPE:
+        # The reward is a cash amount / voucher value stored in ``khuyen_mai`` (e.g. "550000").
+        rewards = ((MONEY_SKU, MONEY_NAME, MONEY_UNIT, _number(rule.get("khuyen_mai"), f"{name} khuyen_mai")),)
     display = program.get("cttb") if isinstance(program.get("cttb"), dict) else {}
     result = display.get("ket_qua") if isinstance(display.get("ket_qua"), dict) else {}
     return Rule(
@@ -382,7 +387,10 @@ def bonus_code(name: str) -> str:
     if not match:
         return (name or "").strip()
     level = re.search(r"M[ỨỨứU]C\s*(\d+)", name, flags=re.IGNORECASE)
-    return f"{match.group(1)} - Mức {level.group(1)}" if level else match.group(1)
+    if level:
+        return f"{match.group(1)} - Mức {level.group(1)}"
+    tier = re.search(r"LO[ẠA]I\s*([A-Z])\b", name, flags=re.IGNORECASE)
+    return f"{match.group(1)} - Loại {tier.group(1).upper()}" if tier else match.group(1)
 
 
 GIFT_ORDER = "TRẢ THƯỞNG"
@@ -408,6 +416,7 @@ def detail_source(results: list[ui.ProgramResult], label: str) -> list[tuple[str
             base = dict(lines[-1])
             for index, (sku, name, unit, qty) in enumerate(row["_rewards"], start=1):
                 rows.append({**base, "ma_phieu": GIFT_ORDER, "stt": f"{row['ma']}-{index}",
+                             "_money_reward": sku == MONEY_SKU,
                              "ctkm": code, "promotion": None, "ctkmFull_id": None,
                              "ctkmFull_ten_khuyen_mai": None, "is_km": True, "loai_hang": "Khuyến mãi",
                              "ma_sp": sku, "ten_sp": name,
@@ -475,6 +484,18 @@ def fetch_display_records(client: Any, first: date, last: date,
         if len(rows) < page_size:
             return records
     raise ValueError("DisplayData pagination safety limit exceeded")
+
+
+def provisional(results: list[ui.ProgramResult], end: date) -> None:
+    """Accumulation not finished yet: keep progress, hold the reward until ``end``."""
+    label = f"Tạm tính – CT kết thúc {end:%d/%m/%Y}"
+    for result in results:
+        for row in result.rows:
+            if row.get("_eligible") == "Có":
+                row["_eligible"] = label
+                row["extra"]["Đủ điều kiện trả thưởng"] = label
+                row["objTraThuong"] = {}
+                row["_rewards"] = []
 
 
 def diagnostics(results: list[ui.ProgramResult]) -> list[dict[str, Any]]:
