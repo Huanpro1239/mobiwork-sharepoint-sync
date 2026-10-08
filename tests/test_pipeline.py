@@ -206,6 +206,34 @@ class CatalogueContextTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_shared_writer_preserves_base_template_and_new_order_reward_columns(self):
+        from datetime import date
+
+        import pandas as pd
+        from openpyxl import load_workbook
+
+        from promotion_workbook import write_detail_workbook
+
+        columns = pipeline.promotion_detail.COLUMNS + list(pipeline.promotion_detail.BONUS_COLUMNS)
+        row = dict.fromkeys(columns)
+        row.update({"Mã Đơn hàng": "ORDER1", "THÀNH TIỀN": 120000, "Số lượng Khuyến mãi": 0,
+                    "Thưởng phân bổ theo đơn": "Quà: 6", "Tiền thưởng phân bổ (đ)": 30000})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_detail_workbook({"BaoCao": pd.DataFrame([row], columns=columns)},
+                                         "report.xlsx", date(2026, 9, 1), Path(tmp))
+            workbook = load_workbook(path)
+            try:
+                sheet = workbook["BaoCao"]
+                self.assertEqual(sheet["W5"].value, 120000)
+                self.assertEqual(sheet["Z5"].value, 0)
+                self.assertEqual(sheet["AA5"].value, "Quà: 6")
+                self.assertEqual(sheet["AB5"].value, 30000)
+                self.assertEqual(sheet["AB5"].number_format, "#,##0")
+                self.assertEqual(sheet.auto_filter.ref, "A4:AB5")
+                self.assertIn("$AB$5", str(sheet.print_area))
+            finally:
+                workbook.close()
+
     def test_atomic_manifest_keeps_previous_file_on_serialization_or_replace_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "manifest.json"
