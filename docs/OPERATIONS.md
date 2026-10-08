@@ -554,6 +554,9 @@ Cấu hình `allow_blank_fields` chỉ chấp nhận trường mô tả, không 
 
 Các bổ sung có nguồn cụ thể:
 
+- Người dùng xác nhận tính **theo tháng, không cộng dồn** cho 18 mã CT hiện còn
+  thiếu cách tính: 010/011/013 (Q4), 012, 558–563, 570–572, 575, 581, 584, 588,
+  589. `program_overrides` khai rõ từng mã; không suy cách tính cho CT mới khác.
 - ĐVT `Chai` của dòng `BH_095582026|1|230100017` do người dùng xác nhận; chỉ áp dụng
   khi đúng đơn, dòng, SKU và ĐVT gốc còn trống. `DonViTinh` ghi nguồn xác nhận.
 - Hai dòng quà cùng đơn có thể phục hồi ĐVT từ `promotion.product.don_vi_tinh` trên

@@ -18,6 +18,26 @@
     }
   },
   "program_codes": {},
+  "program_overrides": {
+    "010/TB/GT/01/2026_Q4": {"Cách tính": "Theo tháng"},
+    "011/TB/GT/01/2026_Q4": {"Cách tính": "Theo tháng"},
+    "012/TB/GT/01/2026": {"Cách tính": "Theo tháng"},
+    "013/TB/GT/01/2026_Q4": {"Cách tính": "Theo tháng"},
+    "558/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "559/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "560/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "561/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "562/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "563/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "570/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "571/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "572/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "575/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "581/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "584/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "588/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "589/TB/GT/10/2026": {"Cách tính": "Theo tháng"}
+  },
   "employees": {},
   "customers": {},
   "products": {
