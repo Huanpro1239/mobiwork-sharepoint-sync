@@ -63,6 +63,10 @@ def shape(program: dict[str, Any]) -> dict[str, Any]:
         "deleted": program.get("isDeleted"), "archived": program.get("isArchived"),
         "customers": len(program.get("customer") or []), "product_rules": len(products),
         "rule_keys": sorted(rule)[:20], "yeu_cau": rule.get("yeu_cau"),
+        "khuyen_mai": json.dumps(rule.get("khuyen_mai"), ensure_ascii=False, default=str)[:600],
+        "buy_keys": sorted(buy[0]) if buy and isinstance(buy[0], dict) else [],
+        "buy_sample": json.dumps(buy[0], ensure_ascii=False, default=str)[:300] if buy else "",
+        "gpromotion": json.dumps(program.get("gpromotion"), ensure_ascii=False, default=str)[:300],
         "buy": [f"{b.get('ma_san_pham')}|{label(b.get('don_vi_tinh'))}" for b in buy][:12],
         "gifts": [f"{g.get('ma_san_pham')}|{g.get('ten_san_pham')}|{label(g.get('don_vi_tinh'))}|{g.get('so_luong')}"
                   for g in gifts if isinstance(g, dict)][:6],
@@ -103,7 +107,7 @@ def run() -> None:
     matches = [p for p in catalogue if any(c in str(p.get("name", "")).casefold() for c in codes)]
     notice("Probe catalogue", {"catalogue": len(catalogue), "matches": len(matches),
                                "names": [str(p.get("name"))[:80] for p in matches]})
-    for program in matches[:6]:
+    for program in matches[:int(os.environ.get('PROMOTION_PROBE_LIMIT', '2'))]:
         notice(f"Probe {str(program.get('name'))[:40]}", shape(program))
     if not matches:
         return
