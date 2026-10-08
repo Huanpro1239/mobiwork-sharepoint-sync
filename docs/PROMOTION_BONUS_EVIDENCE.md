@@ -183,6 +183,15 @@ Output: `06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx` plus `06_BaoCaoTraThuo
 
 `PROMOTION_BONUS_MONTHS` (workflow input `bonus_months`, or `report_scope=promotion_history` which uses `all_existing`) recomputes past months from each month's Bill monthly master and the programme catalogue filtered to that month. Each month is written only to `06_BaoCaoTraThuong/YYYY/MM/BaoCaoTraThuong_YYYY-MM.xlsx`; `BaoCaoTraThuong_Current.xlsx` is never overwritten by a backfill, and run state goes to `_sync_state/promotion_bonus_history.json`. A month whose inputs are missing is skipped and reported, not fatal. Caveat: OpenAPI exposes the programme's current registered-customer list, not its history, so customers removed from a programme after a month closed are not shown for that month.
 
+## Confirmed historical calculation periods (2026-10-08)
+
+On 2026-10-08, the user explicitly confirmed that historical programmes
+`013/TB/GT/01/2026`, `387/TB/GT/07/2026` and `391/TB/GT/07/2026` are calculated
+separately each month. Their declarations are stored in `program_overrides` in
+`config/promotion_detail.json`, independently of the Q4 declarations. This removes
+the undecided-period hold for those programmes; display and other eligibility
+conditions still apply. The configured cumulative summer cash programmes are unchanged.
+
 ## Template layout (2026-10-07)
 
 Workbooks open on sheet `BaoCao` in the user's "Báo cáo chi tiết CTKM theo KH" layout (config/promotion_detail_layout.json, title "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG - THÁNG MM/YYYY"). Rows are the Bill lines counted for each programme (Mã CTKM = programme code incl. level, e.g. `008/TB/GT/01/2026_Q4 - Mức 2`), rendered through promotion_detail.build_report so Vùng/Tỉnh/SS/NPP/Brand/Package and KÉT/THÙNG/BÌNH conversions match the CTKM report. Only eligible customers receive a `TRẢ THƯỞNG` line per reward. Unconfirmed display results, missing period inputs and undecided period methods retain proposed rewards but hold confirmation. Missing mappings go to `CanBoSung`.
