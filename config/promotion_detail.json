@@ -19,6 +19,9 @@
   },
   "program_codes": {},
   "program_overrides": {
+    "013/TB/GT/01/2026": {"Cách tính": "Theo tháng"},
+    "387/TB/GT/07/2026": {"Cách tính": "Theo tháng"},
+    "391/TB/GT/07/2026": {"Cách tính": "Theo tháng"},
     "010/TB/GT/01/2026_Q4": {"Cách tính": "Theo tháng"},
     "011/TB/GT/01/2026_Q4": {"Cách tính": "Theo tháng"},
     "012/TB/GT/01/2026": {"Cách tính": "Theo tháng"},

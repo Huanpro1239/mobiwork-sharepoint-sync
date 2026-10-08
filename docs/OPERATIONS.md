@@ -220,7 +220,8 @@ Chương trình Q4 "... THEO THÁNG" vẫn tính theo từng tháng.
   cả tháng trước (đơn giao muộn, sửa lùi ngày, rebuild master ngày 2, CT tích lũy kết thúc tháng trước).
 - Chương trình mới trên DMS tự vào báo cáo. Cần người dùng xác nhận trong sheet `ChuongTrinh`:
   - CT kéo dài nhiều tháng mà tên không có "THEO THÁNG": điền `Cách tính` = "Tích lũy cả kỳ" hoặc
-    "Theo tháng" vào `BoSung_Mapping.xlsx` (khóa = `Mã CT` dạng `246/TB/GT/04/2026`). Chưa khai = theo tháng.
+    "Theo tháng" vào `BoSung_Mapping.xlsx` (khóa = `Mã CT` dạng `246/TB/GT/04/2026`). Chưa khai thì giữ
+    phần thưởng dự kiến, chưa xác nhận trả thưởng.
   - CT "Không tính được" (loại quy tắc chưa hỗ trợ) và "Vượt số suất" (đủ điều kiện > `soSuat`).
 - Annotation `Chương trình cần xem MM/YYYY` báo số CT cần xử lý ở mỗi lần chạy.
 - File `BoSung_Mapping.xlsx` cũ được tự thêm sheet mới (giữ nguyên dữ liệu đã điền).
