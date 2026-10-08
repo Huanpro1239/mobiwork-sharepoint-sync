@@ -37,6 +37,8 @@ COLUMNS = ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Rout
            "Địa chỉ", "Số ĐT", "Loại KH", "Ngày Đơn hàng", "Mã Đơn hàng", "Brand",
            "Package", "Mã sản phẩm", "Tên Sản phẩm", "Số lượng SELL-OUT", "THÀNH TIỀN",
            "Sản phẩm Tặng", "Tên Sản phẩm Tặng", "Số lượng Khuyến mãi"]
+# Trả thưởng report only: the paid reward allocated to each counted order line.
+BONUS_COLUMNS = {"Thưởng phân bổ theo đơn": "_bonus_text", "Tiền thưởng phân bổ (đ)": "_bonus_value"}
 LOG = logging.getLogger("promotion_detail")
 # A missing pack conversion leaves that line's quantity blank and is listed in CanBoSung,
 # but no longer blocks publishing the whole month (other source errors still do).
@@ -264,7 +266,10 @@ def enrich_product_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[s
     return cfg
 
 
-def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def build_report(detail: pd.DataFrame, cfg: dict[str, Any],
+                 extra: dict[str, str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``extra`` maps additional report columns to source fields copied as-is."""
+    extra = extra or {}
     rows = detail.to_dict("records")
     programs: dict[str, set[str]] = {}
     seen: set[tuple[str, str]] = set()
@@ -305,7 +310,10 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
                     row[field] = row.get(f"{field}_km")
         sku = text(row.get("ma_sp"))
         unit, _ = source_unit(row, gift, cfg)
-        item = dict.fromkeys(COLUMNS, None)
+        item = dict.fromkeys(COLUMNS + list(extra), None)
+        for label, source in extra.items():
+            value = row.get(source)
+            item[label] = None if value is None or (isinstance(value, float) and pd.isna(value)) else value
         if not gift:
             item["Số lượng Khuyến mãi"] = 0
         key = {"Mã Đơn hàng": order, "Dòng nguồn": text(row["stt"])}
@@ -406,7 +414,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
             except ValueError as exc:
                 issue("THÀNH TIỀN", str(exc))
         output.append(item)
-    report = _frame(output, "BaoCao").reindex(columns=COLUMNS)
+    report = _frame(output, "BaoCao").reindex(columns=COLUMNS + list(extra))
     return report, _frame(issues, "CanBoSung")
 
 

@@ -38,7 +38,13 @@ def write_detail_workbook(frames, filename: str, month: date, output_dir: Path =
             sheet["Y3"] = "(Đơn vị: KÉT/THÙNG/BÌNH; vật phẩm tặng: CÁI)"
             for merged in layout["merged"]:
                 sheet.merge_cells(merged)
-            for column, (label, width) in enumerate(zip(layout["headers"], layout["widths"], strict=True), 1):
+            headers, widths = list(layout["headers"]), list(layout["widths"])
+            for column in range(len(headers) + 1, sheet.max_column + 1):  # report-specific extra columns
+                headers.append(str(sheet.cell(4, column).value or ""))
+                widths.append(22.0)
+            last_column = get_column_letter(len(headers))
+            money_columns = {i for i, label in enumerate(headers, 1) if label.endswith("(đ)")}
+            for column, (label, width) in enumerate(zip(headers, widths, strict=True), 1):
                 cell = sheet.cell(4, column, label)
                 cell.font = Font(name="Times New Roman", size=10, bold=True)
                 cell.fill = PatternFill("solid", fgColor="CCFF99")
@@ -55,9 +61,9 @@ def write_detail_workbook(frames, filename: str, month: date, output_dir: Path =
                 lines = 1
                 for cell in row:
                     cell.font = body_font
-                    if cell.column in {10, 12, 13, 21, 25}:
+                    if cell.column in {10, 12, 13, 21, 25} or (cell.column > 26 and cell.column not in money_columns):
                         cell.alignment = wrapped
-                        width = max(layout["widths"][cell.column - 1] - 2, 1)
+                        width = max(widths[cell.column - 1] - 2, 1)
                         lines = max(lines, sum(max(ceil(len(part) / width), 1) for part in str(cell.value or "").split("\n")))
                     if cell.column in {22, 23, 26}:
                         if cell.column == 23:
@@ -65,18 +71,20 @@ def write_detail_workbook(frames, filename: str, month: date, output_dir: Path =
                         else:
                             integer = isinstance(cell.value, (int, float)) and float(cell.value).is_integer()
                             cell.number_format = "#,##0" if integer else "#,##0.######"
+                    if cell.column in money_columns:
+                        cell.number_format = "#,##0"
                     if cell.column == 16:
                         cell.number_format = "dd/mm/yyyy"
                 sheet.row_dimensions[row[0].row].height = min(400, 15 * lines)
             sheet.freeze_panes = "A5"
-            sheet.auto_filter.ref = f"A4:Z{sheet.max_row}"
+            sheet.auto_filter.ref = f"A4:{last_column}{sheet.max_row}"
             sheet.print_title_rows = "1:4"
             sheet.print_options.horizontalCentered = True
             sheet.page_setup.orientation = "landscape"
             sheet.page_setup.fitToWidth = 1
             sheet.page_setup.fitToHeight = 0
             sheet.sheet_properties.pageSetUpPr.fitToPage = True
-            sheet.print_area = f"A1:Z{sheet.max_row}"
+            sheet.print_area = f"A1:{last_column}{sheet.max_row}"
             workbook.save(path)
         finally:
             workbook.close()

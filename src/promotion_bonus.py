@@ -744,10 +744,17 @@ def _calc_month_frames(
     notes.append(("Sheet BaoCao", "Theo mẫu Báo cáo chi tiết CTKM theo KH: mỗi dòng hàng được tính vào chương "
                                   "trình (quy đổi KÉT/THÙNG/BÌNH); khách đủ điều kiện có thêm dòng 'TRẢ THƯỞNG' ghi quà. "
                                   "Thực hiện ở Tong_hop tính theo đơn vị khai trong chương trình"))
+    notes.append(("Tiền thưởng từng đơn",
+                  "Khách đủ điều kiện (Có): quà/tiền của khách được chia cho từng dòng đơn đã tính vào CT theo "
+                  "tỷ lệ đóng góp (doanh số với CT theo tiền, số lượng với CT theo số lượng); tổng các dòng "
+                  "bằng dòng TRẢ THƯỞNG. Tiền thưởng của quà hiện vật = số lượng quà × giá bán bình quân của "
+                  "chính sản phẩm/ĐVT đó trong kỳ; không có giá bán thì để trống. Khách 'Tạm tính' hoặc "
+                  "'Cần kiểm tra trưng bày' chưa phân bổ."))
     summary_frames = ui.build_ui_frames(results, first, last, "",
                                         "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)", notes)
-    report, detail_issues = _template_report(client, customers, results, first, detail_config)
-    frames: dict[str, pd.DataFrame] = {"BaoCao": report}
+    report, detail_issues = _template_report(client, customers, results, first, detail_config,
+                                             calc.average_prices(all_lines))
+    frames: dict[str, pd.DataFrame] = {"BaoCao": report, "Thuong_theo_don": reward_by_order(report)}
     for name in ("Tong_hop", "Ket_qua", "Kiem_tra"):
         frames[name] = summary_frames[name]
     if not detail_issues.empty:
@@ -835,26 +842,58 @@ def _template_report(
     results: list[Any],
     first: Any,
     detail_config: dict[str, Any] | None = None,
+    prices: dict[tuple[str, str], float] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Render counted sale lines and rewards with the CTKM detail template mappings."""
+    """Render counted sale lines and rewards with the CTKM detail template mappings,
+    plus the reward allocated to each order line."""
     import promotion_bonus_calc as calc
-    from promotion_detail import COLUMNS, build_report
+    from promotion_detail import BONUS_COLUMNS, COLUMNS, build_report
 
+    columns = COLUMNS + list(BONUS_COLUMNS)
     cfg = dict(_load_template_config(client) if detail_config is None else detail_config)
     cfg["customer_catalogue"] = customers
-    sources = calc.detail_source(results, f"{first:%m/%Y}")
+    sources = calc.detail_source(results, f"{first:%m/%Y}", prices)
     # Keep full bonus codes (e.g. "008/TB/GT/01/2026_Q4 - Mức 2"); the CTKM normaliser
     # would otherwise shorten them.
     cfg["program_codes"] = {**cfg.get("program_codes", {}), **{code: code for code, _ in sources}}
     reports, issues = [], []
     for code, source in sources:
-        report, issue = build_report(source, cfg)
+        report, issue = build_report(source, cfg, BONUS_COLUMNS)
         reports.append(report)
         if not issue.empty:
             issues.append(issue.assign(**{"Mã CTKM": code}))
-    report = pd.concat(reports, ignore_index=True) if reports else pd.DataFrame(columns=COLUMNS)
-    return report.reindex(columns=COLUMNS), (pd.concat(issues, ignore_index=True) if issues
+    report = pd.concat(reports, ignore_index=True) if reports else pd.DataFrame(columns=columns)
+    return report.reindex(columns=columns), (pd.concat(issues, ignore_index=True) if issues
                                              else pd.DataFrame())
+
+
+ORDER_KEYS = ["Mã CTKM", "Vùng", "Tỉnh", "Tên NPP", "Mã Khách hàng", "Tên Khách hàng",
+              "Ngày Đơn hàng", "Mã Đơn hàng"]
+
+
+def reward_by_order(report: pd.DataFrame) -> pd.DataFrame:
+    """One row per order × programme with the reward allocated to that order."""
+    import promotion_bonus_calc as calc
+    from promotion_detail import BONUS_COLUMNS
+
+    text_col, value_col = list(BONUS_COLUMNS)
+    columns = ORDER_KEYS + ["Số dòng hàng", "THÀNH TIỀN", text_col, value_col]
+    if report.empty or text_col not in report:
+        return pd.DataFrame(columns=columns)
+    paid = report[(report["Mã Đơn hàng"] != calc.GIFT_ORDER)
+                  & (report[text_col].notna() | report[value_col].notna())].copy()
+    if paid.empty:
+        return pd.DataFrame(columns=columns)
+    keys = paid[ORDER_KEYS].astype(object).where(paid[ORDER_KEYS].notna(), "")
+    paid[ORDER_KEYS] = keys
+    rows = []
+    for key, group in paid.groupby(ORDER_KEYS, sort=True, dropna=False):
+        values = pd.to_numeric(group[value_col], errors="coerce")
+        rows.append({**dict(zip(ORDER_KEYS, key, strict=True)), "Số dòng hàng": len(group),
+                     "THÀNH TIỀN": pd.to_numeric(group["THÀNH TIỀN"], errors="coerce").sum(),
+                     text_col: "; ".join(t for t in group[text_col].dropna().astype(str) if t) or None,
+                     value_col: None if values.isna().any() else float(values.sum())})
+    return pd.DataFrame(rows, columns=columns)
 
 
 TEMPLATE_TITLE = "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG"
