@@ -28,6 +28,7 @@ Chúng dùng chung lock ghi SharePoint với workflow thường ngày.
 | `api_contract` | Kiểm tra cấu trúc danh sách và tổng bản ghi API |
 | `promotion_catalogue`, `customer_catalogue`, `sales_structure` | Đọc danh mục, cấu hình và quan hệ nguồn |
 | `promotion_models` | Kiểu dữ liệu trả thưởng và chuyển giá trị nguồn |
+| `promotion_reward_report` | Sổ tiền/quà theo khách, phạm vi chương trình và CTKM thực tế trên đơn |
 | `promotion_bonus_calc` | Tính điều kiện từ đơn bán, chỉ tiêu, trưng bày |
 | `promotion_detail` | Quy tắc dòng bán/quà, trường báo cáo, đơn vị và luồng xuất CTKM |
 | `excel_export`, `promotion_workbook` | Ghi Excel nguyên tử, định dạng và cơ cấu mẫu |

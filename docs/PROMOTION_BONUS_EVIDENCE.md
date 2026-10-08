@@ -185,4 +185,31 @@ Output: `06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx` plus `06_BaoCaoTraThuo
 
 ## Template layout (2026-10-07)
 
-Workbooks now open on sheet `BaoCao` in the user's "Báo cáo chi tiết CTKM theo KH" layout (config/promotion_detail_layout.json, title "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG - THÁNG MM/YYYY"). Rows are the Bill lines counted for each programme (Mã CTKM = programme code incl. level, e.g. `008/TB/GT/01/2026_Q4 - Mức 2`), rendered through promotion_detail.build_report so Vùng/Tỉnh/SS/NPP/Brand/Package and KÉT/THÙNG/BÌNH conversions match the CTKM report. A reached customer gets one `TRẢ THƯỞNG` line per reward product; rewards on display programmes without an Đạt grading are suffixed "(cần kiểm tra trưng bày)". Missing mappings go to `CanBoSung`. Tong_hop / Ket_qua / Kiem_tra remain after BaoCao.
+Workbooks open on sheet `BaoCao` in the user's "Báo cáo chi tiết CTKM theo KH" layout (config/promotion_detail_layout.json, title "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG - THÁNG MM/YYYY"). Rows are the Bill lines counted for each programme (Mã CTKM = programme code incl. level, e.g. `008/TB/GT/01/2026_Q4 - Mức 2`), rendered through promotion_detail.build_report so Vùng/Tỉnh/SS/NPP/Brand/Package and KÉT/THÙNG/BÌNH conversions match the CTKM report. Only eligible customers receive a `TRẢ THƯỞNG` line per reward. Unconfirmed display results, missing period inputs and undecided period methods retain proposed rewards but hold confirmation. Missing mappings go to `CanBoSung`.
+
+## Cash, gifts and invoice promotion coverage (2026-10-08)
+
+`TraThuong` provides one row per registered customer × programme × reward, with
+separate proposed/eligible cash amounts and physical quantities in the original
+unit. Eligibility does not establish actual payment or gift delivery. `BaoCao`
+column Z contains only physical gift quantity; cash reward lines use
+`Tiền mặt trả thưởng (đ)`. Order allocations distinguish actual cash from the
+estimated selling value of gifts. A gift without a source price leaves its value
+unknown without hiding a known cash allocation. Existing AA/AB columns remain.
+
+`KhuyenMaiDonHang` includes actual Bill promotions with the same month-of-order
+filter, 26 template fields and conversion rules as the standalone CTKM report,
+plus source line, unit, quantity and unmodified product discount for reconciliation.
+Each sale is included once with all programme codes of the order; each gift is
+included once with its direct programme. These transactions are not added again
+to calculated rewards. Bonus eligibility still uses delivery dates.
+
+`ChuongTrinh` retains every selected Bonus catalogue level, including unsupported
+rules and programmes without registered customers or sales, followed by programmes
+observed on Bill. Invoice coverage is not a catalogue of unobserved promotions.
+The cached October 8 catalogue has 119 levels, including eight cash levels for
+April–September, none applicable in October. It also contains one archived June
+355 programme with two product rules whose combination is not verified; this stays
+visible as unsupported. Voucher products stay physical rewards; no cash value is
+inferred from a product name. Current registration snapshots and missing historical
+masters remain limitations; a successful workflow is not complete DMS equivalence.

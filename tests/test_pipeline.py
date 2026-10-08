@@ -229,8 +229,8 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(sheet["AA5"].value, "Quà: 6")
                 self.assertEqual(sheet["AB5"].value, 30000)
                 self.assertEqual(sheet["AB5"].number_format, "#,##0")
-                self.assertEqual(sheet.auto_filter.ref, "A4:AB5")
-                self.assertIn("$AB$5", str(sheet.print_area))
+                self.assertEqual(sheet.auto_filter.ref, "A4:AE5")
+                self.assertIn("$AE$5", str(sheet.print_area))
             finally:
                 workbook.close()
 

@@ -655,7 +655,8 @@ class CumulativeMoneyProgramTests(unittest.TestCase):
         frames, audit = self._frames(date(2026, 9, 1), date(2026, 9, 30), months)
         self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 1))
         gift = frames["BaoCao"][frames["BaoCao"]["Mã Đơn hàng"] == "TRẢ THƯỞNG"].iloc[0]
-        self.assertEqual((gift["Sản phẩm Tặng"], gift["Số lượng Khuyến mãi"]), ("TIEN", 550_000))
+        self.assertEqual((gift["Sản phẩm Tặng"], gift["Số lượng Khuyến mãi"]), ("TIEN", 0))
+        self.assertEqual(gift["Tiền mặt trả thưởng (đ)"], 550_000)
         self.assertEqual(gift["Mã CTKM"], "248/TB/GT/04/2026 - Loại A")
         issues = frames["CanBoSung"]
         gift_issues = issues[issues["Mã Đơn hàng"] == "TRẢ THƯỞNG"]["Trường"].tolist()

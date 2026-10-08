@@ -332,9 +332,20 @@ jobs:
               lines.append(f"| {label} | {bonus.get(key, fallback)} |")
           if bonus.get("error"):
               lines.append(f"- Promotion Bonus error: `{bonus['error']}`")
+          def reward_coverage_summary(item):
+              coverage = item.get("reward_coverage", {})
+              return (f"cash levels={coverage.get('cash_program_levels', 0)}; "
+                      f"cash eligible={coverage.get('cash_eligible_vnd', 0):,.0f} VND; "
+                      f"gift reward rows={coverage.get('gift_reward_rows', 0)}; "
+                      f"invoice promotions={coverage.get('invoice_programs', 0)}; "
+                      f"invoice gift rows={coverage.get('invoice_gift_rows', 0)}")
+          if bonus.get("reward_coverage"):
+              lines.append(f"- Reward coverage: {reward_coverage_summary(bonus)}")
           for month, item in bonus.get("months", {}).items():
               lines.append(f"- {month}: {item.get('quality_status', 'failed' if item.get('error') else 'unknown')}; "
                            f"rows={item.get('customer_row_count', 0)}; eligible={item.get('eligible_rows', 0)}")
+              if item.get("reward_coverage"):
+                  lines.append(f"  - {reward_coverage_summary(item)}")
           for failure in bonus.get("publish_failures", []):
               lines.append(f"- Promotion Bonus upload issue: `{failure}`")
 

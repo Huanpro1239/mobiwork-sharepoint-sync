@@ -512,11 +512,46 @@ def _calc_month_frames(
                   "bằng dòng TRẢ THƯỞNG. Tiền thưởng của quà hiện vật = số lượng quà × giá bán bình quân của "
                   "chính sản phẩm/ĐVT đó trong kỳ; không có giá bán thì để trống. Khách 'Tạm tính' hoặc "
                   "'Cần kiểm tra trưng bày' chưa phân bổ."))
+    notes.extend([
+        ("Tiền mặt và quà", "TraThuong: từng khách × CT × khoản thưởng, gồm dự kiến và đủ điều kiện. "
+                            "Đủ điều kiện là kết quả tính, chưa xác nhận đã chi tiền/giao quà. "
+                            "BaoCao: cột Z chỉ là số lượng quà; tiền mặt có cột riêng. "
+                            "Tiền mặt phân bổ và giá trị quà ước tính tách riêng; cột Tiền thưởng phân bổ (đ) "
+                            "giữ tổng hai khoản để tương thích, để trống nếu chưa có giá quà."),
+        ("Khuyến mãi trên đơn", "KhuyenMaiDonHang dùng tháng ngày đơn hàng như báo cáo CTKM; "
+                               "trả thưởng dùng ngày giao hàng. Mỗi dòng bán xuất một lần với tất cả mã CT "
+                               "của đơn, hàng tặng theo CT trực tiếp; không cộng lại vào thưởng tính toán. "
+                               "Chiết khấu SP nguồn giữ giá trị DMS, không coi là tiền mặt trả thưởng."),
+        ("Phạm vi chương trình", "ChuongTrinh gồm toàn bộ mức CT trả thưởng API chọn cho kỳ báo cáo "
+                                 "và CTKM có trên đơn tháng đó. CT không có khách/doanh số hoặc chưa tính được "
+                                 "vẫn hiển thị. Không phải danh mục CTKM chưa phát sinh trên đơn. "
+                                 "Voucher là quà theo mã nguồn; không suy giá tiền từ tên quà."),
+    ])
     summary_frames = ui.build_ui_frames(results, first, last, "",
                                         "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)", notes)
     report, detail_issues = _template_report(client, customers, results, first, detail_config,
                                              calc.average_prices(all_lines))
     frames: dict[str, pd.DataFrame] = {"BaoCao": report, "Thuong_theo_don": reward_by_order(report)}
+    from promotion_reward_report import invoice_promotions, program_coverage, reward_ledger
+
+    invoice_cfg = {**detail_config, "customer_catalogue": customers}
+    invoice_report, invoice_issues, invoice_programs = invoice_promotions(bill_detail, invoice_cfg, first)
+    frames["TraThuong"] = ledger = reward_ledger(results, first)
+    frames["KhuyenMaiDonHang"] = invoice_report
+    frames["ChuongTrinh"] = pd.concat([program_coverage(results, first, issues), invoice_programs],
+                                       ignore_index=True)
+    if not invoice_issues.empty:
+        detail_issues = pd.concat([detail_issues, invoice_issues.assign(Nguồn="KhuyenMaiDonHang")],
+                                  ignore_index=True)
+    manifest["reward_coverage"] = {
+        "bonus_program_levels": len(results), "invoice_programs": len(invoice_programs),
+        "cash_program_levels": int((frames["ChuongTrinh"]["Loại thưởng"] == "Tiền mặt").sum()),
+        "cash_eligible_vnd": float(ledger["Tiền mặt đủ điều kiện (đ)"].sum()),
+        "cash_proposed_vnd": float(ledger["Tiền mặt dự kiến (đ)"].sum()),
+        "gift_reward_rows": int((ledger["Số lượng quà đủ điều kiện"] > 0).sum()),
+        "invoice_rows": len(invoice_report), "invoice_gift_rows": invoice_report.attrs["gift_rows"],
+        "invoice_issues": len(invoice_issues),
+    }
     for name in ("Tong_hop", "Ket_qua", "Kiem_tra"):
         frames[name] = summary_frames[name]
     if not detail_issues.empty:
@@ -639,8 +674,9 @@ def reward_by_order(report: pd.DataFrame) -> pd.DataFrame:
     import promotion_bonus_calc as calc
     from promotion_detail import BONUS_COLUMNS
 
-    text_col, value_col = list(BONUS_COLUMNS)
-    columns = ORDER_KEYS + ["Số dòng hàng", "THÀNH TIỀN", text_col, value_col]
+    text_col, value_col = list(BONUS_COLUMNS)[:2]
+    amounts = [value_col, "Tiền mặt phân bổ (đ)", "Giá trị quà ước tính (đ)"]
+    columns = ORDER_KEYS + ["Số dòng hàng", "THÀNH TIỀN", text_col] + amounts
     if report.empty or text_col not in report:
         return pd.DataFrame(columns=columns)
     paid = report[(report["Mã Đơn hàng"] != calc.GIFT_ORDER)
@@ -651,11 +687,14 @@ def reward_by_order(report: pd.DataFrame) -> pd.DataFrame:
     paid[ORDER_KEYS] = keys
     rows = []
     for key, group in paid.groupby(ORDER_KEYS, sort=True, dropna=False):
-        values = pd.to_numeric(group[value_col], errors="coerce")
+        totals = {}
+        for col in amounts:
+            values = pd.to_numeric(group[col] if col in group else pd.Series([None]), errors="coerce")
+            totals[col] = None if values.isna().any() else float(values.sum())
         rows.append({**dict(zip(ORDER_KEYS, key, strict=True)), "Số dòng hàng": len(group),
                      "THÀNH TIỀN": pd.to_numeric(group["THÀNH TIỀN"], errors="coerce").sum(),
                      text_col: "; ".join(t for t in group[text_col].dropna().astype(str) if t) or None,
-                     value_col: None if values.isna().any() else float(values.sum())})
+                     **totals})
     return pd.DataFrame(rows, columns=columns)
 
 
