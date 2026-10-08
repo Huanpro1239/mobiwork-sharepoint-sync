@@ -872,18 +872,10 @@ def _monthly_target(cfg: PromotionBonusConfig, first: Any) -> tuple[str, str]:
 
 def _history_months(raw: str, dry_run: bool) -> list[Any]:
     """Explicit YYYY-MM list, or every month that has a Bill monthly master."""
-    from datetime import date
-
     if raw.strip().casefold() != "all_existing":
-        months = []
-        for part in raw.split(","):
-            part = part.strip()
-            if part:
-                year, month = part.split("-")
-                months.append(date(int(year), int(month), 1))
-        if not months:
-            raise ValueError("PROMOTION_BONUS_MONTHS must list YYYY-MM months or all_existing")
-        return sorted(set(months))
+        from promotion_months import parse_requested_months
+
+        return parse_requested_months(raw, datetime.now(ui.VN_TZ).date())
     if dry_run:
         raise ValueError("all_existing needs SharePoint access; use explicit months in dry runs")
     from main import load_reports

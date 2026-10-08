@@ -30,7 +30,7 @@ on:
         type: string
         default: ""
       bonus_months:
-        description: "Trả thưởng tháng cũ: YYYY-MM,YYYY-MM hoặc all_existing (chỉ ghi file tháng)"
+        description: "Tháng lịch sử: YYYY-MM,YYYY-MM hoặc all_existing; promotion_history xuất cả trả thưởng và CTKM"
         type: string
         default: ""
       bonus_date_variants:
@@ -237,7 +237,7 @@ jobs:
           PROMOTION_BONUS_SOURCE: "auto"
           BOSUNG_MAPPING: "true"
           PROMOTION_BONUS_PREVIOUS_DAYS: ${{ (github.event_name == 'schedule' || inputs.report_scope == 'all_reports') && '7' || '0' }}
-          PROMOTION_BONUS_MONTHS: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || inputs.bonus_months }}
+          PROMOTION_BONUS_MONTHS: ${{ inputs.report_scope == 'promotion_history' && (inputs.bonus_months || 'all_existing') || inputs.bonus_months }}
           MOBIWORK_WEB_EMAIL: ${{ secrets.MOBIWORK_WEB_EMAIL }}
           MOBIWORK_WEB_TOKENKEY: ${{ secrets.MOBIWORK_WEB_TOKENKEY }}
           MOBIWORK_WEB_ALIAS: ${{ secrets.MOBIWORK_WEB_ALIAS }}
@@ -270,6 +270,7 @@ jobs:
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
           PROMOTION_DETAIL_SCOPE: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || 'touched' }}
+          PROMOTION_DETAIL_MONTHS: ${{ inputs.report_scope == 'promotion_history' && inputs.bonus_months || '' }}
           PROMOTION_DETAIL_PREVIOUS_DAYS: ${{ (github.event_name == 'schedule' || inputs.report_scope == 'all_reports') && '7' || '0' }}
         run: python src/promotion_detail.py
 

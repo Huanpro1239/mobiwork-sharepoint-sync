@@ -523,6 +523,13 @@ PromotionBonus hiện tại thành lịch sử. Dry-run lịch sử chỉ đọc
 tạo file local; không upload. Tháng tương lai bị loại; folder tháng thiếu master
 là lỗi, không tự tạo báo cáo rỗng. Giới hạn 120 tháng.
 
+Để xuất lại riêng một tháng, chọn `report_scope=promotion_history` và nhập
+`bonus_months=2026-09` (hoặc danh sách tháng `YYYY-MM` cách nhau bằng dấu phẩy).
+Cả trả thưởng và chi tiết CTKM chỉ đọc master của các tháng đã chọn và ghi file
+vào thư mục tháng tương ứng; không cập nhật `BaoCaoTraThuong_Current.xlsx`.
+Để trống `bonus_months` giữ chế độ lịch sử toàn bộ. Tháng tương lai hoặc chuỗi
+tháng không hợp lệ bị chặn trước khi đọc/ghi báo cáo.
+
 Ngày `ngay_dat` (fallback `ngay_ban_hang`) xác định tháng báo cáo. Dòng thuộc
 tháng khác được đếm trong `outside_order_month_rows`; ngày lỗi vẫn giữ để gate
 chặn xuất. Manifest ghi source month, số dòng nguồn và SHA-256 workbook nguồn.

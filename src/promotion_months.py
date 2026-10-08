@@ -9,6 +9,23 @@ import pandas as pd
 from data_cham_anh_export import _monthly_master_path
 
 
+def parse_requested_months(raw: str, today: date) -> list[date]:
+    """Validate explicit calendar months before any historical read or write."""
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if not parts:
+        raise ValueError("Requested months must list YYYY-MM months")
+    anchors = set()
+    for part in parts:
+        if not re.fullmatch(r"\d{4}-\d{2}", part):
+            raise ValueError(f"Invalid requested month: {part}; use YYYY-MM")
+        year, month = map(int, part.split("-"))
+        anchor = date(year, month, 1)
+        if anchor > today.replace(day=1):
+            raise ValueError(f"Requested month is in the future: {part}")
+        anchors.add(anchor)
+    return sorted(anchors)
+
+
 def discover_bill_months(sharepoint: Any, drive: str, bill: Any, today: date) -> list[date]:
     """Find canonical monthly masters, including completed years, without probing guessed dates."""
     anchors = []
