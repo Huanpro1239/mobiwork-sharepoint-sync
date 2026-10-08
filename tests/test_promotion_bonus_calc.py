@@ -605,3 +605,35 @@ class CumulativeMoneyProgramTests(unittest.TestCase):
         frames, audit = self._frames(date(2026, 8, 1), date(2026, 8, 31), months)
         self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 0))
         self.assertFalse((frames["BaoCao"]["Mã Đơn hàng"] == "TRẢ THƯỞNG").any())
+
+
+class ProgrammeAutomationTests(unittest.TestCase):
+    def test_calculation_method_resolution(self):
+        cfg = bonus.load_config()
+        summer = summer_program()
+        self.assertEqual(bonus._program_mode(summer, cfg), "cumulative")  # configured prefix
+        monthly_q4 = {**summer, "name": "009/TB/GT/01/2026_Q4_CT TÍCH LŨY EATERY THEO THÁNG - MỨC 4"}
+        self.assertEqual(bonus._program_mode(monthly_q4, cfg), "monthly")
+        unknown = {**summer, "name": "570/TB/GT/10/2026_CHƯƠNG TRÌNH TÍCH LŨY SÂN CHƠI"}
+        self.assertEqual(bonus._program_mode(unknown, cfg), "")
+        declared = {"570/TB/GT/10/2026": {"Cách tính": "Tích lũy cả kỳ"}}
+        self.assertEqual(bonus._program_mode(unknown, cfg, declared), "cumulative")
+        self.assertEqual(bonus._program_mode(summer, cfg, {"248/TB/GT/04/2026": {"Cách tính": "theo thang"}}),
+                         "monthly")
+        rows = bonus._program_todo_rows([unknown], [{"Chương trình": "999/TB/GT/10/2026_X - MỨC 1",
+                                                      "Vấn đề": "unsupported type"}])
+        self.assertEqual([r["Mã CT"] for r in rows], ["570/TB/GT/10/2026", "999/TB/GT/10/2026 - Mức 1"])
+        self.assertEqual(rows[0]["Thời gian"], "01/04/2026 - 30/09/2026")
+
+    def test_over_quota_is_flagged(self):
+        program = qty_program(customers=(C1, C2))
+        program["soSuat"] = "1"
+        detail = bill([{"so_luong": 80}, {"so_luong": 80, "ID_khachhang": C2, "ma_kh": "KH2"}])
+        with patch.dict(os.environ, {"PROMOTION_BONUS_STTT": "0"}), \
+                patch.object(bonus, "fetch_programs", return_value=[program]), \
+                patch.object(bonus, "_bill_detail", return_value=detail):
+            audit = {}
+            frames = bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True, {}, "test", audit,
+                                             verbose=False, detail_config={})
+        self.assertEqual(audit["over_quota"], ["581/TB/GT/10/2026: 2/1"])
+        self.assertTrue(frames["Kiem_tra"].astype(str).apply(lambda c: c.str.contains("Vượt số suất")).any().any())

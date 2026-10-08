@@ -236,6 +236,7 @@ jobs:
           PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
           PROMOTION_BONUS_SOURCE: "auto"
           BOSUNG_MAPPING: "true"
+          PROMOTION_BONUS_PREVIOUS_DAYS: ${{ (github.event_name == 'schedule' || inputs.report_scope == 'all_reports') && '7' || '0' }}
           PROMOTION_BONUS_MONTHS: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || inputs.bonus_months }}
           MOBIWORK_WEB_EMAIL: ${{ secrets.MOBIWORK_WEB_EMAIL }}
           MOBIWORK_WEB_TOKENKEY: ${{ secrets.MOBIWORK_WEB_TOKENKEY }}
@@ -269,6 +270,7 @@ jobs:
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
           PROMOTION_DETAIL_SCOPE: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || 'touched' }}
+          PROMOTION_DETAIL_PREVIOUS_DAYS: ${{ (github.event_name == 'schedule' || inputs.report_scope == 'all_reports') && '7' || '0' }}
         run: python src/promotion_detail.py
 
       - name: Publish run summary

@@ -457,11 +457,54 @@ def _program_day(program: dict[str, Any], field: str) -> Any:
         return None
 
 
-def _is_cumulative(program: dict[str, Any], cfg: PromotionBonusConfig, first: Any) -> bool:
+def _program_mode(program: dict[str, Any], cfg: PromotionBonusConfig,
+                  overrides: dict[str, dict[str, Any]] | None = None) -> str:
+    """'cumulative' | 'monthly' | '' (multi-month programme whose method is not declared).
+
+    Declared in BoSung_Mapping (sheet ChuongTrinh) or ``cumulative_programs``; names saying
+    "THEO THÁNG" and programmes inside one calendar month are monthly.
+    """
+    import bosung_mapping as bosung
+    import promotion_bonus_calc as calc
+
+    name = str(program.get("name", "")).strip()
+    declared = (overrides or {}).get(calc.program_prefix(name), {}).get("Cách tính")
+    if declared and bosung.program_mode(declared):
+        return bosung.program_mode(declared)
+    if any(name.casefold().startswith(code.strip().casefold()) for code in cfg.cumulative_programs):
+        return "cumulative"
+    start, end = _program_day(program, "startDate"), _program_day(program, "endDate")
+    if not start or not end or (start.year, start.month) == (end.year, end.month):
+        return "monthly"
+    return "monthly" if "theo tháng" in name.casefold() else ""
+
+
+def _is_cumulative(program: dict[str, Any], cfg: PromotionBonusConfig, first: Any,
+                   overrides: dict[str, dict[str, Any]] | None = None) -> bool:
     start = _program_day(program, "startDate")
-    name = str(program.get("name", "")).strip().casefold()
-    return bool(start and start < first
-                and any(name.startswith(code.strip().casefold()) for code in cfg.cumulative_programs))
+    return bool(start and start < first and _program_mode(program, cfg, overrides) == "cumulative")
+
+
+def _program_todo_rows(undeclared: list[dict[str, Any]], issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Programmes the business must look at: undeclared multi-month method, or not computable."""
+    import promotion_bonus_calc as calc
+
+    rows: list[dict[str, Any]] = []
+    for program in undeclared:
+        name = str(program.get("name", "")).strip()
+        start, end = _program_day(program, "startDate"), _program_day(program, "endDate")
+        rows.append({"_sheet": "ChuongTrinh", "Mã CT": calc.program_prefix(name), "Tên CT": name,
+                     "Thời gian": f"{start:%d/%m/%Y} - {end:%d/%m/%Y}" if start and end else "",
+                     "Còn thiếu": ["Cách tính"],
+                     "Nguyên nhân": "CT kéo dài nhiều tháng, chưa khai cách tính (đang tính theo từng tháng)",
+                     "Gợi ý": "Theo thông báo CT: tích lũy suốt thời gian CT → 'Tích lũy cả kỳ'; "
+                              "xét từng tháng → 'Theo tháng'"})
+    for issue in issues:
+        name = str(issue.get("Chương trình") or "").strip()
+        rows.append({"_sheet": "ChuongTrinh", "Mã CT": calc.bonus_code(name), "Tên CT": name,
+                     "Còn thiếu": ["Không tính được"], "Nguyên nhân": str(issue.get("Vấn đề", ""))[:250],
+                     "Gợi ý": "Quy tắc CT trên DMS chưa được hỗ trợ: cần bổ sung code tính"})
+    return rows
 
 
 def _period_lines(start: Any, last: Any, dry_run: bool, missing: set[str]) -> list[dict[str, Any]]:
@@ -539,7 +582,9 @@ def _calc_month_frames(
     lines = calc.sold_lines(_bill_detail(first, dry_run, manifest), first, last)
     manifest["sold_line_count"] = len(lines)
     # Whole-period accumulation (configured programmes): sales from the programme start.
-    cumulative = [p for p in programs if _is_cumulative(p, cfg, first)]
+    program_overrides = detail_config.get("program_overrides", {})
+    cumulative = [p for p in programs if _is_cumulative(p, cfg, first, program_overrides)]
+    undeclared = [p for p in programs if not _program_mode(p, cfg, program_overrides)]
     groups: dict[Any, list[dict[str, Any]]] = {}
     for program in cumulative:
         groups.setdefault(_program_day(program, "startDate"), []).append(program)
@@ -595,6 +640,21 @@ def _calc_month_frames(
                 summary.append(f"{calc.bonus_code(item['name'])} ({region})|đăng ký {item['registered']}|"
                                f"có doanh số {item['with_sales']}|đạt {item['reached']}|trả {item['eligible']}")
             _github_notice(f"Promotion Bonus lũy kế từ {start:%d/%m/%Y} đến {last:%d/%m/%Y}", " ; ".join(summary))
+    program_rows = _program_todo_rows(undeclared, issues)
+    over_quota = []
+    for result in results:  # "Số suất quyết toán": more eligible customers than slots
+        try:
+            quota = int(str(result.program.get("soSuat") or "").strip())
+        except ValueError:
+            continue
+        paid = sum(1 for row in result.rows if row.get("_eligible") == "Có")
+        if quota > 0 and paid > quota:
+            over_quota.append(f"{calc.bonus_code(result.program_name)}: {paid}/{quota}")
+            program_rows.append({"_sheet": "ChuongTrinh", "Mã CT": calc.bonus_code(result.program_name),
+                                 "Tên CT": result.program_name, "Còn thiếu": ["Vượt số suất"],
+                                 "Nguyên nhân": f"{paid} khách đủ điều kiện, CT chỉ có {quota} suất",
+                                 "Gợi ý": "Duyệt danh sách trả thưởng theo thứ tự ưu tiên của CT"})
+    manifest["over_quota"] = over_quota
     counts = ui.snapshot_counts(results)
     diag = calc.diagnostics(results)
     manifest.update(counts)
@@ -626,6 +686,8 @@ def _calc_month_frames(
         ("Khách hàng", customer_note + ". Danh sách khách đăng ký là danh sách hiện tại của chương trình"),
         ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
     ]
+    if over_quota:
+        notes.append(("Số suất", "Vượt số suất quyết toán (đủ điều kiện/số suất): " + "; ".join(over_quota)))
     if cumulative:
         notes.append(("Tích lũy nhiều tháng",
                       f"{len(cumulative)} chương trình tính lũy kế từ ngày bắt đầu CT đến hết kỳ báo cáo "
@@ -650,11 +712,19 @@ def _calc_month_frames(
         detail_issues.loc[unit_gaps, "Mức độ"] = "Thiếu quy đổi đơn vị"
         manifest["unit_gaps"] = int(unit_gaps.sum())
         frames["CanBoSung"] = detail_issues
+    manifest["programs_need_method"] = len(undeclared)
+    manifest["programs_not_computed"] = len(issues)
+    if program_rows and (verbose or (first.year, first.month) == (datetime.now(ui.VN_TZ).year,
+                                                                 datetime.now(ui.VN_TZ).month)):
+        _github_notice(f"Chương trình cần xem {first:%m/%Y}",
+                       f"{len({calc.program_prefix(str(p.get('name', ''))) for p in undeclared})} CT nhiều tháng "
+                       f"chưa khai cách tính; {len(issues)} CT không tính được – xem sheet ChuongTrinh "
+                       "trong 08_BoSungDanhMuc/CanBoSung_TongHop.xlsx")
     if _bosung_enabled(detail_config):
         import bosung_mapping as bosung
 
         label = f"TraThuong {first:%Y-%m}"
-        TODO_UPDATES[label] = bosung.aggregate(bosung.todo_rows(detail_issues, detail_config), label)
+        TODO_UPDATES[label] = bosung.aggregate(bosung.todo_rows(detail_issues, detail_config) + program_rows, label)
     if issues:
         frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
     manifest["template_rows"] = len(report)
@@ -840,7 +910,24 @@ def _build_calc_workbook(
     if (first.year, first.month) != (today.year, today.month):
         manifest["storage_mode"] = "monthly_history"
         return monthly, folder, []
-    return _write_bonus(frames, cfg.filename, first), cfg.folder, [(monthly, folder)]
+    extras = [(monthly, folder)]
+    previous_days = int(os.environ.get("PROMOTION_BONUS_PREVIOUS_DAYS", "0") or 0)
+    if previous_days and today.day <= previous_days:
+        # Early in a month, keep refreshing last month's file: late deliveries, back-dated
+        # edits, the monthly order-master rebuild, and programmes that ended last month.
+        previous = (first - timedelta(days=1)).replace(day=1)
+        previous_manifest: dict[str, Any] = {}
+        manifest["previous_month"] = previous_manifest
+        try:
+            previous_frames = _calc_month_frames(client, cfg, previous, _month_end(previous), dry_run,
+                                                 customers, customer_note, previous_manifest,
+                                                 verbose=False, detail_config=detail_config)
+            previous_file, previous_folder = _monthly_target(cfg, previous)
+            extras.append((_write_bonus(previous_frames, previous_file, previous), previous_folder))
+        except Exception as exc:  # never block the current month
+            previous_manifest["error"] = f"{type(exc).__name__}: {exc}"
+            _github_notice(f"Promotion Bonus {previous:%m/%Y} not refreshed", previous_manifest["error"][:300])
+    return _write_bonus(frames, cfg.filename, first), cfg.folder, extras
 
 
 def run() -> dict[str, Any]:

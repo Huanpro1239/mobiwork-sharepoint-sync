@@ -211,6 +211,20 @@ Chương trình tích lũy cả kỳ (không theo tháng) khai trong `config/pro
 dòng TRẢ THƯỞNG. Tháng không có file đơn hàng được ghi trong Kiem_tra (DMS không có đơn trước 06/2026).
 Chương trình Q4 "... THEO THÁNG" vẫn tính theo từng tháng.
 
+### Chạy tự động (không cần thao tác)
+
+- Lịch `mobiwork-sync`: 3 giờ/lần trong giờ làm việc (T2–T7) + 16:00 hằng ngày. Mỗi lần: đồng bộ đơn
+  hàng → báo cáo trả thưởng tháng hiện tại (`BaoCaoTraThuong_Current.xlsx` + file tháng) → báo cáo chi
+  tiết CTKM → cập nhật `08_BoSungDanhMuc/CanBoSung_TongHop.xlsx`.
+- Ngày 1–7 hằng tháng (`PROMOTION_BONUS_PREVIOUS_DAYS` / `PROMOTION_DETAIL_PREVIOUS_DAYS` = 7): tính lại
+  cả tháng trước (đơn giao muộn, sửa lùi ngày, rebuild master ngày 2, CT tích lũy kết thúc tháng trước).
+- Chương trình mới trên DMS tự vào báo cáo. Cần người dùng xác nhận trong sheet `ChuongTrinh`:
+  - CT kéo dài nhiều tháng mà tên không có "THEO THÁNG": điền `Cách tính` = "Tích lũy cả kỳ" hoặc
+    "Theo tháng" vào `BoSung_Mapping.xlsx` (khóa = `Mã CT` dạng `246/TB/GT/04/2026`). Chưa khai = theo tháng.
+  - CT "Không tính được" (loại quy tắc chưa hỗ trợ) và "Vượt số suất" (đủ điều kiện > `soSuat`).
+- Annotation `Chương trình cần xem MM/YYYY` báo số CT cần xử lý ở mỗi lần chạy.
+- File `BoSung_Mapping.xlsx` cũ được tự thêm sheet mới (giữ nguyên dữ liệu đã điền).
+
 `CanBoSung.Mức độ` phân biệt `Thiếu thông tin mô tả`, `Thiếu quy đổi đơn vị` và `Chặn xuất bản`.
 Thiếu quy cách giữ số lượng quy đổi trống và báo `unit_gaps`, theo cùng chính sách CTKM.
 Lỗi identity, số tiền/số lượng hoặc hệ số quy đổi không hợp lệ chặn upload; dùng dry-run để xem chi tiết.
