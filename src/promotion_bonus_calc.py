@@ -440,27 +440,31 @@ def average_prices(lines: list[dict[str, Any]]) -> dict[tuple[str, str], float]:
 
 
 def _per_order_rewards(row: dict[str, Any], prices: dict[tuple[str, str], float]
-                       ) -> tuple[list[str], list[float | None]]:
-    """Reward allocated to each counted sale line: gift text and value in đồng."""
+                       ) -> tuple[list[str | None], list[float | None], list[float], list[float | None]]:
+    """Keep known cash separate from estimated (possibly unpriced) physical gifts."""
     weights = row.get("_weights") or [1.0] * len(row.get("_lines") or [])
     count = len(row.get("_lines") or [])
     texts: list[list[str]] = [[] for _ in range(count)]
-    values: list[float | None] = [0.0] * count
+    cash = [0.0] * count
+    gifts: list[float | None] = [0.0] * count
     for sku, name, unit, qty in row.get("_rewards") or []:
         if sku == MONEY_SKU:
-            value_total: float | None = qty
+            for index, part in enumerate(allocate(weights, qty, 0)):
+                cash[index] += part
+            continue
         else:
             for index, part in enumerate(allocate(weights, qty, 4)):
                 texts[index].append(f"{name or sku} ({unit}): {part:g}")
             price = prices.get((sku, unit))
             value_total = qty * price if price else None
         if value_total is None:
-            values = [None] * count  # gift without a selling price: value unknown, never guessed
+            gifts = [None] * count  # retain cash even when a gift has no selling price
             continue
         for index, part in enumerate(allocate(weights, value_total, 0)):
-            if values[index] is not None:
-                values[index] += part
-    return ["; ".join(t) or None for t in texts], values
+            if gifts[index] is not None:
+                gifts[index] += part
+    values = [None if gift is None else gift + money for gift, money in zip(gifts, cash, strict=True)]
+    return ["; ".join(t) or None for t in texts], values, cash, gifts
 
 
 def detail_source(results: list[ui.ProgramResult], label: str,
@@ -478,17 +482,20 @@ def detail_source(results: list[ui.ProgramResult], label: str,
         rows: list[dict[str, Any]] = []
         for row in result.rows:
             lines = row.get("_lines") or []
-            texts, values = (_per_order_rewards(row, prices or {}) if row.get("_rewards")
-                             else ([None] * len(lines), [None] * len(lines)))
-            for line, bonus_text, bonus_value in zip(lines, texts, values, strict=True):
+            texts, values, cash, gifts = (_per_order_rewards(row, prices or {}) if row.get("_rewards")
+                                         else tuple([None] * len(lines) for _ in range(4)))
+            for line, bonus_text, bonus_value, money, gift in zip(lines, texts, values, cash, gifts, strict=True):
                 rows.append({**line, "ctkm": code, "promotion": None, "ctkmFull_id": None,
                              "ctkmFull_ten_khuyen_mai": None, "is_km": False, "loai_hang": "Bán hàng",
-                             BONUS_TEXT: bonus_text, BONUS_VALUE: bonus_value})
+                             BONUS_TEXT: bonus_text, BONUS_VALUE: bonus_value,
+                             "_cash_alloc": money, "_gift_alloc": gift, "_cash_reward": None})
             if not lines or not row.get("_rewards"):
                 continue
             base = dict(lines[-1])
             for index, (sku, name, unit, qty) in enumerate(row["_rewards"], start=1):
                 rows.append({**base, BONUS_TEXT: None, BONUS_VALUE: None,
+                             "_cash_alloc": None, "_gift_alloc": None,
+                             "_cash_reward": qty if sku == MONEY_SKU else None,
                              "ma_phieu": GIFT_ORDER, "stt": f"{row['ma']}-{index}",
                              "_money_reward": sku == MONEY_SKU,
                              "ctkm": code, "promotion": None, "ctkmFull_id": None,

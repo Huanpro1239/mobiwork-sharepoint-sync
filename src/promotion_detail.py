@@ -42,7 +42,9 @@ COLUMNS = ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Rout
            "Package", "Mã sản phẩm", "Tên Sản phẩm", "Số lượng SELL-OUT", "THÀNH TIỀN",
            "Sản phẩm Tặng", "Tên Sản phẩm Tặng", "Số lượng Khuyến mãi"]
 # Trả thưởng report only: the paid reward allocated to each counted order line.
-BONUS_COLUMNS = {"Thưởng phân bổ theo đơn": "_bonus_text", "Tiền thưởng phân bổ (đ)": "_bonus_value"}
+BONUS_COLUMNS = {"Thưởng phân bổ theo đơn": "_bonus_text", "Tiền thưởng phân bổ (đ)": "_bonus_value",
+                 "Tiền mặt phân bổ (đ)": "_cash_alloc", "Giá trị quà ước tính (đ)": "_gift_alloc",
+                 "Tiền mặt trả thưởng (đ)": "_cash_reward"}
 LOG = logging.getLogger("promotion_detail")
 # A missing pack conversion leaves that line's quantity blank and is listed in CanBoSung,
 # but no longer blocks publishing the whole month (other source errors still do).
@@ -404,7 +406,8 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any],
                 if factor <= 0:
                     raise ValueError("Hệ số quy đổi phải dương")
                 converted = quantity * factor
-            item[quantity_field] = float(converted)
+            # Column Z is physical gift quantity, never a cash amount in đồng.
+            item[quantity_field] = 0.0 if money else float(converted)
         except ValueError as exc:
             issue(quantity_field, str(exc))
         if gift:
