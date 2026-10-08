@@ -147,7 +147,9 @@ class SharePointClient:
         allow_404: bool = False,
         **kwargs: Any,
     ) -> requests.Response:
-        retryable_statuses = {429, 500, 502, 503, 504}
+        # Office may temporarily lock an existing workbook during staged rename.
+        # Retry with the original preconditions; never bypass locks or discard edits.
+        retryable_statuses = {423, 429, 500, 502, 503, 504}
         force_refresh = False
 
         for attempt in range(self.max_retries + 1):

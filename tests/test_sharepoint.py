@@ -53,6 +53,48 @@ class FakeJsonSession:
 
 
 class SharePointClientTests(unittest.TestCase):
+    def test_locked_workbook_retries_same_etag_and_honours_retry_after(self):
+        client = self.make_client()
+        client.max_retries = 2
+        locked = requests.Response()
+        locked.status_code = 423
+        locked.headers["Retry-After"] = "7"
+        unlocked = requests.Response()
+        unlocked.status_code = 200
+        client.session = Mock()
+        client.session.request.side_effect = [locked, unlocked]
+        with patch("src.sharepoint.time.sleep") as sleep:
+            response = client._request("PATCH", "https://graph.microsoft.com/v1.0/test",
+                                       headers={"If-Match": "original-etag"}, json={"name": "backup.xlsx"})
+        self.assertEqual(response.status_code, 200)
+        sleep.assert_called_once_with(7)
+        self.assertEqual(client.session.request.call_count, 2)
+        for call in client.session.request.call_args_list:
+            self.assertEqual(call.kwargs["headers"]["If-Match"], "original-etag")
+            self.assertNotIn("Prefer", call.kwargs["headers"])
+            self.assertEqual(call.kwargs["json"], {"name": "backup.xlsx"})
+
+    def test_persistent_lock_has_bounded_retries(self):
+        client = self.make_client()
+        client.max_retries = 2
+        client.session = FakeSession([423, 423, 423])
+        with patch("src.sharepoint.time.sleep") as sleep, self.assertRaises(requests.HTTPError) as error:
+            client._request("PATCH", "https://graph.microsoft.com/v1.0/test")
+        self.assertEqual(error.exception.response.status_code, 423)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(len(client.session.authorization_headers), 3)
+
+    def test_changed_document_precondition_is_not_bypassed_after_unlock(self):
+        client = self.make_client()
+        client.max_retries = 2
+        client.session = FakeSession([423, 412])
+        with patch("src.sharepoint.time.sleep") as sleep, self.assertRaises(requests.HTTPError) as error:
+            client._request("PATCH", "https://graph.microsoft.com/v1.0/test",
+                            headers={"If-Match": "original-etag"})
+        self.assertEqual(error.exception.response.status_code, 412)
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(len(client.session.authorization_headers), 2)
+
     def make_client(self):
         return SharePointClient(
             "example.sharepoint.com",
