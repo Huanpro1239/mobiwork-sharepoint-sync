@@ -16,6 +16,34 @@ from excel_export import write_workbook
 LAYOUT = Path(__file__).resolve().parents[1] / "config/promotion_detail_layout.json"
 
 
+def _format_reward_views(workbook) -> None:
+    """Keep long DMS names and statuses readable in the supplemental reward views."""
+    for name in ("TraThuong", "KhuyenMaiDonHang", "ChuongTrinh", "Thuong_theo_don"):
+        if name not in workbook:
+            continue
+        sheet = workbook[name]
+        headers = {cell.column: str(cell.value or "") for cell in sheet[1]}
+        sheet.row_dimensions[1].height = 36
+        for cell in sheet[1]:
+            cell.fill = PatternFill("solid", fgColor="CCFF99")
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+        for row in sheet.iter_rows(min_row=2):
+            lines = 1
+            for cell in row:
+                label = headers[cell.column]
+                if isinstance(cell.value, str):
+                    cell.alignment = Alignment(vertical="top", wrap_text=True)
+                    width = max((sheet.column_dimensions[cell.column_letter].width or 10) - 2, 1)
+                    lines = max(lines, sum(max(ceil(len(part) / width), 1) for part in cell.value.split("\n")))
+                if label.endswith("(đ)"):
+                    cell.number_format = "#,##0"
+                elif label.startswith("Số lượng"):
+                    cell.number_format = "#,##0.######"
+                elif label in {"Từ ngày", "Đến ngày", "Ngày Đơn hàng"}:
+                    cell.number_format = "dd/mm/yyyy"
+            sheet.row_dimensions[row[0].row].height = min(400, max(18, 15 * lines))
+
+
 def write_detail_workbook(frames, filename: str, month: date, output_dir: Path = Path("output"),
                           title: str | None = None) -> Path:
     """Production workbook writer: apply the user's sanitized template without customer data."""
@@ -28,6 +56,7 @@ def write_detail_workbook(frames, filename: str, month: date, output_dir: Path =
         path = write_workbook(frames, filename, Path(staging))
         workbook = load_workbook(path)
         try:
+            _format_reward_views(workbook)
             sheet = workbook["BaoCao"]
             sheet.insert_rows(1, 3)
             sheet["A1"] = "Thời gian in:"

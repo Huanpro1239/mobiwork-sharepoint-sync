@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -108,6 +110,31 @@ class RewardCoverageTests(unittest.TestCase):
         self.assertEqual(len(frames["ChuongTrinh"]), 2)
         self.assertEqual(manifest["reward_coverage"]["invoice_programs"], 1)
         self.assertEqual(manifest["reward_coverage"]["cash_program_levels"], 0)
+
+    def test_export_keeps_cash_typed_and_long_program_names_readable(self):
+        from openpyxl import load_workbook
+
+        from promotion_detail import COLUMNS
+        from promotion_workbook import write_detail_workbook
+
+        source = bill([{"so_luong": 72, "thanh_tien": 400_000}])
+        results, _ = calc.compute([cash_program()], calc.sold_lines(source, OCT1, OCT31), {})
+        ledger = reward_ledger(results, OCT1)
+        ledger["Tên CT"] = "Chương trình trả thưởng dành cho khách hàng " * 4
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_detail_workbook({"BaoCao": pd.DataFrame(columns=COLUMNS), "TraThuong": ledger},
+                                         "report.xlsx", OCT1, Path(tmp))
+            book = load_workbook(path)
+            try:
+                sheet = book["TraThuong"]
+                headers = {c.value: c.column for c in sheet[1]}
+                cash = sheet.cell(2, headers["Tiền mặt đủ điều kiện (đ)"])
+                self.assertEqual((cash.value, cash.data_type, cash.number_format), (550_000, "n", "#,##0"))
+                self.assertTrue(sheet.cell(2, headers["Tên CT"]).alignment.wrap_text)
+                self.assertGreater(sheet.row_dimensions[2].height, 30)
+                self.assertEqual(sheet.freeze_panes, "A2")
+            finally:
+                book.close()
 
 
 if __name__ == "__main__":
