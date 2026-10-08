@@ -84,11 +84,9 @@ class DataChamAnhRunnerTests(unittest.TestCase):
         workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "mobiwork-sync.yml"
         workflow = workflow_path.read_text(encoding="utf-8")
 
-        report_command = "python src/run_all_reports.py"
-        combined_command = "python src/run_data_cham_anh.py"
-        self.assertIn(report_command, workflow)
-        self.assertIn(combined_command, workflow)
-        self.assertLess(workflow.index(report_command), workflow.index(combined_command))
+        self.assertIn("run: python src/pipeline.py", workflow)
+        self.assertIn('DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED:', workflow)
+        self.assertNotIn('run: python src/run_data_cham_anh.py', workflow)
 
 
 if __name__ == "__main__":

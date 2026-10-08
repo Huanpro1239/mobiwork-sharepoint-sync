@@ -191,7 +191,7 @@ class EvidenceTests(unittest.TestCase):
             condition = re.search(r'^        if: (.+)$', section, re.MULTILINE)
             steps.append({'name': name, 'if': condition.group(1) if condition else '',
                           'section': section})
-        expected = {'Sync Promotion Bonus current snapshot', 'Validate Microsoft OIDC configuration',
+        expected = {'Run report pipeline', 'Validate Microsoft OIDC configuration',
                     'Azure login with GitHub OIDC', 'Resolve SharePoint document library'}
         excluded = {'Sync all MobiWork reports', 'Build Data cham anh workbook',
                     'Build promotion detail report', 'Audit PromotionBonusReport API'}

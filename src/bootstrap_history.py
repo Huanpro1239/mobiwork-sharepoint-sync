@@ -9,18 +9,12 @@ from typing import Any
 import main as core
 import rebuild_month
 import run_all_reports as runner
+from report_runtime import env_bool as _env_bool
 from bootstrap_gate import BOOTSTRAP_STATE_PATH
 
 
 LOG = logging.getLogger("mobiwork_bootstrap")
 DEFAULT_START_MONTH = "2026-06"
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def _parse_month(value: str, label: str) -> date:

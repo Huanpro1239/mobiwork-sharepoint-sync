@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from report_runtime import env_bool as _env_bool, write_manifest
 from bootstrap_gate import require_bootstrap_ready
 from mobiwork import ReportConfig
 from sharepoint import SharePointClient
@@ -31,13 +32,6 @@ def target_dates(lookback_days: int) -> list[date]:
         raise ValueError("lookback_days must be between 1 and 31")
     today_vn = datetime.now(VN_TZ).date()
     return [today_vn - timedelta(days=offset) for offset in range(1, lookback_days + 1)]
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def _bootstrap_gate_required() -> bool:
@@ -124,14 +118,7 @@ def _record_export(
 
 
 def _write_manifest(manifest: dict[str, Any]) -> Path:
-    output_dir = Path("output")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "sync_manifest.json"
-    path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    return path
+    return write_manifest(Path("output/sync_manifest.json"), manifest)
 
 
 def _upload_manifest(

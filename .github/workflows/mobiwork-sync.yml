@@ -121,16 +121,7 @@ jobs:
           # Unit tests run in CI on every change; production runs only verify
           # that sources compile and the report config is usable.
           python -m compileall -q src
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          payload = json.loads(Path("config/reports.json").read_text(encoding="utf-8"))
-          reports = payload.get("reports")
-          if not isinstance(reports, list) or not any(item.get("enabled") for item in reports):
-              raise SystemExit("No enabled reports in config/reports.json")
-          print(f"Enabled reports: {sum(bool(item.get('enabled')) for item in reports)}")
-          PY
+          python src/pipeline.py --check
 
       - name: Resolve sync target
         shell: bash
@@ -201,34 +192,18 @@ jobs:
         if: ${{ github.event_name == 'schedule' || (inputs.dry_run == false && inputs.report_scope != 'promotion_api_audit') || inputs.report_scope == 'promotion_history' || inputs.report_scope == 'promotion_api_audit' }}
         uses: ./.github/actions/resolve-sharepoint-drive
 
-      - name: Sync all MobiWork reports
-        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' }}
+      - name: Run report pipeline
+        if: ${{ github.event_name == 'schedule' || inputs.report_scope != 'promotion_api_audit' }}
+        id: report_pipeline
         env:
-          PYTHONUNBUFFERED: "1"
-          LOG_LEVEL: "INFO"
-          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-          SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
-          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-        run: python src/run_all_reports.py
-
-      - name: Build Data cham anh workbook
-        if: ${{ github.event_name == 'schedule' || (inputs.dry_run == false && inputs.report_scope == 'all_reports') }}
-        env:
+          REPORT_SCOPE: ${{ github.event_name == 'schedule' && 'all_reports' || inputs.report_scope }}
           PYTHONUNBUFFERED: "1"
           LOG_LEVEL: "INFO"
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
           SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
           LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
           DATA_CHAM_ANH_ROOT_FOLDER: "05_DataChamAnh"
-          # Intraday refreshes skip the full-month rebuild when no monthly master
-          # changed. The 09:00 finalization and manual runs always rebuild.
           DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED: ${{ github.event_name == 'schedule' && env.SYNC_SCOPE == 'today' }}
-        run: python src/run_data_cham_anh.py
-
-      - name: Sync Promotion Bonus current snapshot
-        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' || inputs.report_scope == 'promotion_bonus_only' || inputs.report_scope == 'promotion_history' }}
-        id: promotion_bonus
-        env:
           PROMOTION_BONUS_REQUIRE_DMS_MATCH: ${{ inputs.report_scope == 'promotion_bonus_only' && 'true' || 'false' }}
           PROMOTION_BONUS_FROM_DATE: ${{ inputs.bonus_from_date }}
           PROMOTION_BONUS_TO_DATE: ${{ inputs.bonus_to_date }}
@@ -238,14 +213,14 @@ jobs:
           BOSUNG_MAPPING: "true"
           PROMOTION_BONUS_PREVIOUS_DAYS: ${{ (github.event_name == 'schedule' || inputs.report_scope == 'all_reports') && '7' || '0' }}
           PROMOTION_BONUS_MONTHS: ${{ inputs.report_scope == 'promotion_history' && (inputs.bonus_months || 'all_existing') || inputs.bonus_months }}
+          PROMOTION_DETAIL_SCOPE: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || 'touched' }}
+          PROMOTION_DETAIL_MONTHS: ${{ inputs.report_scope == 'promotion_history' && inputs.bonus_months || '' }}
+          PROMOTION_DETAIL_PREVIOUS_DAYS: ${{ (github.event_name == 'schedule' || inputs.report_scope == 'all_reports') && '7' || '0' }}
           MOBIWORK_WEB_EMAIL: ${{ secrets.MOBIWORK_WEB_EMAIL }}
           MOBIWORK_WEB_TOKENKEY: ${{ secrets.MOBIWORK_WEB_TOKENKEY }}
           MOBIWORK_WEB_ALIAS: ${{ secrets.MOBIWORK_WEB_ALIAS }}
           MOBIWORK_ORG_ID: ${{ secrets.MOBIWORK_ORG_ID }}
-          PYTHONUNBUFFERED: "1"
-          LOG_LEVEL: "INFO"
-          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-        run: python src/promotion_bonus.py
+        run: python src/pipeline.py
 
       - name: Audit PromotionBonusReport API
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.report_scope == 'promotion_api_audit' }}
@@ -262,23 +237,11 @@ jobs:
           python src/promotion_api_audit.py
           python src/sales_structure.py || echo "::warning title=Sales structure::audit failed"
 
-      - name: Build promotion detail report
-        if: ${{ github.event_name == 'schedule' || inputs.report_scope == 'all_reports' || inputs.report_scope == 'promotion_history' }}
-        id: promotion_detail
-        env:
-          SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
-          SYNC_SCOPE: ${{ env.SYNC_SCOPE }}
-          LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '1' }}
-          PROMOTION_DETAIL_SCOPE: ${{ inputs.report_scope == 'promotion_history' && 'all_existing' || 'touched' }}
-          PROMOTION_DETAIL_MONTHS: ${{ inputs.report_scope == 'promotion_history' && inputs.bonus_months || '' }}
-          PROMOTION_DETAIL_PREVIOUS_DAYS: ${{ (github.event_name == 'schedule' || inputs.report_scope == 'all_reports') && '7' || '0' }}
-        run: python src/promotion_detail.py
-
       - name: Publish run summary
         if: ${{ always() }}
         shell: bash
         env:
-          PROMOTION_BONUS_OUTCOME: ${{ steps.promotion_bonus.outcome }}
+          PIPELINE_OUTCOME: ${{ steps.report_pipeline.outcome }}
         run: |
           python - <<'PY'
           import json
@@ -286,6 +249,18 @@ jobs:
           from pathlib import Path
 
           lines = []
+          pipeline_path = Path("output/pipeline_manifest.json")
+          pipeline = json.loads(pipeline_path.read_text(encoding="utf-8")) if pipeline_path.exists() else {}
+          stages = {stage["name"]: stage for stage in pipeline.get("stages", [])}
+          if pipeline:
+              lines.extend(["## Report pipeline", "",
+                            f"- Status: **{pipeline['status']}**; scope: `{pipeline['scope']}`",
+                            f"- Needs business review: **{pipeline.get('needs_review', False)}**",
+                            f"- Catalogue loads: `{pipeline.get('catalogue_loads', {})}`"])
+              for stage in pipeline.get("stages", []):
+                  lines.append(f"- {stage['name']}: {stage['status']} ({stage.get('duration_seconds', 0)}s)")
+                  if stage.get("error"):
+                      lines.append(f"  - Error: `{stage['error']}`")
           sync_path = Path("output/sync_manifest.json")
           if sync_path.exists():
               data = json.loads(sync_path.read_text(encoding="utf-8"))
@@ -353,7 +328,7 @@ jobs:
               ("Template issues", "template_issues"),
               ("Dry run", "dry_run"),
           ]:
-              fallback = os.environ.get("PROMOTION_BONUS_OUTCOME", "not run") if key == "status" else "—"
+              fallback = stages.get("promotion_bonus", {}).get("status", os.environ.get("PIPELINE_OUTCOME", "not run")) if key == "status" else "—"
               lines.append(f"| {label} | {bonus.get(key, fallback)} |")
           if bonus.get("error"):
               lines.append(f"- Promotion Bonus error: `{bonus['error']}`")
@@ -390,6 +365,7 @@ jobs:
         with:
           name: mobiwork-sync-manifests-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            output/pipeline_manifest.json
             output/sync_manifest.json
             output/promotion_bonus_manifest.json
             output/promotion_api_audit.json

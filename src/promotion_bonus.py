@@ -4,15 +4,18 @@ import hashlib
 import json
 import logging
 import os
-import tempfile
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from excel_export import _format_sheet, _validate_excel_size
+from report_runtime import env_bool as _env_bool
+from api_contract import api_total as _api_total, expect_object_list as _expect_object_list, optional_object_list as _optional_object_list
+from excel_export import records_frame as _frame, write_workbook
+from promotion_catalogue import PromotionBonusConfig, fetch_programs, load_config, program_id as _program_id
+from report_context import CatalogueCache, enrich_cached
+from report_runtime import write_manifest
 from mobiwork import MobiWorkClient
 import promotion_bonus_ui as ui
 from sharepoint_semantic import SemanticSharePointClient
@@ -20,178 +23,7 @@ from sharepoint_semantic import SemanticSharePointClient
 
 LOG = logging.getLogger("mobiwork_promotion_bonus")
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG_PATH = ROOT / "config" / "promotion_bonus.json"
 MANIFEST_PATH = Path("output") / "promotion_bonus_manifest.json"
-
-
-@dataclass(frozen=True)
-class PromotionBonusConfig:
-    enabled: bool
-    name: str
-    folder: str
-    filename: str
-    catalog_url: str
-    report_url: str
-    catalog_page_size: int = 200
-    # Code prefixes of programmes that accumulate over their whole period (e.g. "Thời gian
-    # mua và tham gia tích lũy: 01/04 - 30/09") instead of per calendar month.
-    cumulative_programs: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not all(isinstance(code, str) and code.strip() for code in self.cumulative_programs):
-            raise ValueError("cumulative_programs must be non-empty strings")
-        if type(self.enabled) is not bool:
-            raise TypeError("enabled must be a boolean")
-        if type(self.catalog_page_size) is not int:
-            raise TypeError("catalog_page_size must be an integer")
-        for field in ("name", "folder", "filename", "catalog_url", "report_url"):
-            if not isinstance(getattr(self, field), str) or not getattr(self, field).strip():
-                raise ValueError(f"{field} must be a non-empty string")
-        if any(part in {".", ".."} for part in self.folder.replace("\\", "/").split("/")):
-            raise ValueError("folder must not contain traversal segments")
-        if "/" in self.filename or "\\" in self.filename:
-            raise ValueError("filename must be a basename")
-        if self.catalog_page_size < 1 or self.catalog_page_size > 200:
-            raise ValueError("catalog_page_size must be between 1 and 200")
-        if not self.folder.strip():
-            raise ValueError("Promotion Bonus folder must not be empty")
-        if not self.filename.lower().endswith(".xlsx"):
-            raise ValueError("Promotion Bonus filename must be an .xlsx workbook")
-
-
-def load_config(path: Path = DEFAULT_CONFIG_PATH) -> PromotionBonusConfig:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise TypeError("config/promotion_bonus.json must contain a JSON object")
-    if "cumulative_programs" in payload:
-        payload = {**payload, "cumulative_programs": tuple(payload["cumulative_programs"])}
-    return PromotionBonusConfig(**payload)
-
-
-def _expect_object_list(payload: dict[str, Any], key: str, operation: str) -> list[dict[str, Any]]:
-    value = payload.get(key)
-    if value is None:
-        raise ValueError(f"{operation}: response is missing {key!r}")
-    if not isinstance(value, list):
-        raise TypeError(f"{operation}: {key!r} must be an array")
-    invalid = [type(item).__name__ for item in value if not isinstance(item, dict)]
-    if invalid:
-        raise TypeError(
-            f"{operation}: {key!r} contains non-object values: "
-            f"{', '.join(sorted(set(invalid)))}"
-        )
-    return value
-
-
-def _optional_object_list(
-    payload: dict[str, Any],
-    key: str,
-    operation: str,
-) -> list[dict[str, Any]]:
-    if payload.get(key) is None:
-        return []
-    return _expect_object_list(payload, key, operation)
-
-
-def _api_total(payload: dict[str, Any], operation: str) -> int | None:
-    value = payload.get("total")
-    if value in (None, ""):
-        return None
-    if isinstance(value, bool) or not isinstance(value, (int, str)):
-        raise TypeError(f"{operation}: total must be an integer")
-    try:
-        total = int(value)
-    except (TypeError, ValueError) as exc:
-        raise TypeError(f"{operation}: total is not an integer: {value!r}") from exc
-    if total < 0:
-        raise ValueError(f"{operation}: total must not be negative")
-    return total
-
-
-def _program_id(program: dict[str, Any]) -> str:
-    value = program.get("_id")
-    if isinstance(value, bool) or not isinstance(value, (str, int)):
-        return ""
-    return str(value).strip()
-
-
-def fetch_programs(
-    client: MobiWorkClient,
-    cfg: PromotionBonusConfig,
-    *,
-    filters: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
-    """Fetch the complete PromotionBonus catalogue before requesting report snapshots."""
-    records: list[dict[str, Any]] = []
-    expected_total: int | None = None
-    seen_pages: set[str] = set()
-    page = 1
-
-    while True:
-        payload = client.get_json(
-            cfg.catalog_url,
-            {
-                **(filters or {}),
-                "page_size": cfg.catalog_page_size,
-                "page_number": page,
-            },
-            operation_key="promotion_bonus_catalog",
-            request_number=page,
-        )
-        page_total = _api_total(payload, "PromotionBonus catalogue")
-        if expected_total is None:
-            expected_total = page_total
-        elif page_total is not None and page_total != expected_total:
-            raise RuntimeError("PromotionBonus catalogue total changed during pagination")
-
-        page_rows = _expect_object_list(payload, "data", "PromotionBonus catalogue")
-        if page_rows:
-            signature = json.dumps(
-                page_rows,
-                ensure_ascii=False,
-                sort_keys=True,
-                default=str,
-                separators=(",", ":"),
-            )
-            if signature in seen_pages:
-                raise RuntimeError(
-                    f"PromotionBonus catalogue repeated page {page}; refusing incomplete pagination"
-                )
-            seen_pages.add(signature)
-
-        records.extend(page_rows)
-        if expected_total is not None and len(records) >= expected_total:
-            break
-        if not page_rows:
-            break
-
-        page += 1
-        if page > 10_000:
-            raise RuntimeError("PromotionBonus catalogue pagination safety limit exceeded")
-
-    if expected_total is not None and len(records) != expected_total:
-        raise RuntimeError(
-            f"PromotionBonus catalogue API total={expected_total}, fetched={len(records)}"
-        )
-
-    unique: dict[str, dict[str, Any]] = {}
-    for row_number, program in enumerate(records, start=1):
-        program_id = _program_id(program)
-        if not program_id:
-            raise ValueError(
-                f"PromotionBonus catalogue row {row_number} is missing required _id"
-            )
-        previous = unique.get(program_id)
-        if previous is not None and previous != program:
-            raise ValueError(
-                f"PromotionBonus catalogue has conflicting duplicate _id={program_id}"
-            )
-        unique[program_id] = program
-    if expected_total is not None and len(unique) != expected_total:
-        raise RuntimeError(
-            f"PromotionBonus catalogue API total={expected_total}, unique programs={len(unique)}"
-        )
-    return list(unique.values())
 
 
 def _with_program_provenance(
@@ -271,40 +103,6 @@ def fetch_snapshot(
     }
 
 
-def _excel_safe(value: Any) -> Any:
-    if isinstance(value, (dict, list, tuple, set)):
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
-    return value
-
-
-def _frame(records: list[dict[str, Any]], label: str) -> pd.DataFrame:
-    def flatten(record: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in record.items():
-            column = f"{prefix}_{key}" if prefix else str(key)
-            cells = flatten(value, column) if isinstance(value, dict) and value else {column: value}
-            if result.keys() & cells.keys():
-                raise ValueError(f"{label}: nested column collision")
-            result.update(cells)
-        return result
-
-    frame = pd.DataFrame([flatten(row) for row in records], dtype=object)
-    if not frame.empty:
-        for column in frame.columns:
-            if frame[column].map(lambda value: isinstance(value, (dict, list, tuple, set))).any():
-                frame[column] = frame[column].map(_excel_safe)
-    if len(frame.columns) > 16_384:
-        raise ValueError(f"{label}: exceeds Excel column limit")
-    for column in frame.columns:
-        if len(str(column)) > 32_767:
-            raise ValueError(f"{label}: column name exceeds Excel cell limit")
-        for value in frame[column]:
-            if isinstance(value, str) and len(value) > 32_767:
-                raise ValueError(f"{label}: value exceeds Excel cell limit")
-    _validate_excel_size(frame, label)
-    return frame
-
-
 def build_frames(snapshot: dict[str, list[dict[str, Any]]]) -> dict[str, pd.DataFrame]:
     return {
         "ChuongTrinh": _frame(snapshot["programs"], "ChuongTrinh"),
@@ -314,44 +112,8 @@ def build_frames(snapshot: dict[str, list[dict[str, Any]]]) -> dict[str, pd.Data
     }
 
 
-def write_workbook(
-    frames: dict[str, pd.DataFrame],
-    filename: str,
-    output_dir: Path = Path("output"),
-) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / filename
-    with tempfile.NamedTemporaryFile(dir=output_dir, suffix=".xlsx", delete=False) as handle:
-        staged = Path(handle.name)
-    try:
-        with pd.ExcelWriter(staged, engine="openpyxl") as writer:
-            for sheet_name, frame in frames.items():
-                frame.to_excel(writer, sheet_name=sheet_name, index=False)
-                # Source strings are data, including values beginning with '='.
-                for row in writer.sheets[sheet_name].iter_rows():
-                    for cell in row:
-                        if cell.data_type == "f":
-                            cell.data_type = "s"
-                _format_sheet(writer, sheet_name)
-        staged.replace(path)
-    finally:
-        staged.unlink(missing_ok=True)
-    return path
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().casefold() in {"1", "true", "yes", "on"}
-
-
 def _write_manifest(payload: dict[str, Any]) -> None:
-    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST_PATH.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    write_manifest(MANIFEST_PATH, payload)
 
 
 SOURCES = {"auto", "calc", "ui", "openapi"}
@@ -554,12 +316,12 @@ def _github_notice(title: str, message: str) -> None:
 
 
 def _load_customers(client: MobiWorkClient, manifest: dict[str, Any],
-                    detail_config: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
+                    detail_config: dict[str, Any] | None = None,
+                    cache: CatalogueCache | None = None) -> tuple[dict[str, Any], str]:
     from customer_catalogue import enrich_customer_config
 
     try:  # enrich_customer_config already retries live-change races per window
-        catalogue = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900",
-            "customer_address_provinces": (detail_config or {}).get("customer_address_provinces", {})})
+        catalogue = enrich_cached(cache, "customers", client, detail_config or {}, enrich_customer_config)
     except ValueError as exc:
         manifest.setdefault("customer_catalogue_retries", []).append(str(exc))
         LOG.warning("Customer catalogue failed: %s", exc)
@@ -812,7 +574,7 @@ def _bosung_enabled(cfg: dict[str, Any] | None = None) -> bool:
             and (cfg is None or bool(cfg.get("bosung_mapping", False))))
 
 
-def _load_template_config(client: MobiWorkClient) -> dict[str, Any]:
+def _load_template_config(client: MobiWorkClient, cache: CatalogueCache | None = None) -> dict[str, Any]:
     """Enrich once per run; a failed lookup is retried on the next run."""
     from promotion_detail import enrich_product_config
     from promotion_detail import load_config as load_detail_config
@@ -820,19 +582,20 @@ def _load_template_config(client: MobiWorkClient) -> dict[str, Any]:
     cfg = load_detail_config()
     if cfg.get("fetch_product_catalogue", False):
         try:
-            cfg = enrich_product_config(client, cfg)
+            cfg = enrich_cached(cache, "products", client, cfg, enrich_product_config)
         except Exception as exc:
             LOG.warning("Product catalogue unavailable for template: %s", exc)
     if cfg.get("fetch_sales_structure", False):
         from sales_structure import enrich_employee_config
         try:
-            cfg = enrich_employee_config(client, cfg)
+            cfg = enrich_cached(cache, "employees", client, cfg, enrich_employee_config)
         except Exception as exc:
             LOG.warning("Sales structure unavailable for template: %s", exc)
     if _bosung_enabled(cfg):
         import bosung_mapping as bosung
 
-        cfg = bosung.apply_overrides(cfg, bosung.load_overrides())
+        overrides = bosung.load_overrides() if cache is None else cache.get("overrides", bosung.load_overrides)
+        cfg = bosung.apply_overrides(cfg, overrides)
     return cfg
 
 
@@ -941,6 +704,7 @@ def _build_calc_workbook(
     cfg: PromotionBonusConfig,
     manifest: dict[str, Any],
     dry_run: bool,
+    cache: CatalogueCache | None = None,
 ) -> tuple[Path, str, list[tuple[Path, str]]]:
     """Return (primary workbook, its folder, extra uploads).
 
@@ -958,9 +722,9 @@ def _build_calc_workbook(
         )
         if (first.year, first.month) != (last.year, last.month):
             raise ValueError("Computed Promotion Bonus report covers one calendar month at a time")
-    detail_config = _load_template_config(client)
+    detail_config = _load_template_config(client, cache) if cache is not None else _load_template_config(client)
     manifest["allow_blank_fields"] = detail_config.get("allow_blank_fields", [])
-    customers, customer_note = _load_customers(client, manifest, detail_config)
+    customers, customer_note = _load_customers(client, manifest, detail_config, cache)
     customers = {identity: {**metadata, **detail_config.get("customer_overrides", {}).get(
         metadata.get("customer_code", ""), {})} for identity, metadata in customers.items()}
     if history:
@@ -1014,7 +778,7 @@ def _build_calc_workbook(
     return _write_bonus(frames, cfg.filename, first), cfg.folder, extras
 
 
-def run() -> dict[str, Any]:
+def run(cache: CatalogueCache | None = None) -> dict[str, Any]:
     TODO_UPDATES.clear()
     dry_run = _env_bool("DRY_RUN", False)
     started_at = datetime.now(timezone.utc)
@@ -1051,11 +815,11 @@ def run() -> dict[str, Any]:
             return manifest
 
         manifest["phase"] = "source_fetch"
-        client = MobiWorkClient.from_env()
+        client = MobiWorkClient.from_env() if cache is None else cache.client
         extra_uploads: list[tuple[Path, str]] = []
         primary_folder = cfg.folder
         if source == "calc":
-            path, primary_folder, extra_uploads = _build_calc_workbook(client, cfg, manifest, dry_run)
+            path, primary_folder, extra_uploads = _build_calc_workbook(client, cfg, manifest, dry_run, cache)
         elif source == "ui":
             path = _build_ui_workbook(client, cfg, manifest)
         else:

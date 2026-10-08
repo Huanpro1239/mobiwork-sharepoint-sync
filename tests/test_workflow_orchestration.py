@@ -100,7 +100,7 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
         report = self._read("mobiwork-sync.yml")
         rebuild = self._read("mobiwork-rebuild-month.yml")
-        self.assertIn("run: python src/run_data_cham_anh.py", report)
+        self.assertIn("run: python src/pipeline.py", report)
         self.assertIn("run: python src/run_data_cham_anh_backfill.py", rebuild)
     def test_report_sync_runs_on_business_hours_schedule(self):
         report = self._read("mobiwork-sync.yml")
@@ -114,7 +114,7 @@ class WorkflowOrchestrationTests(unittest.TestCase):
     def test_report_sync_refreshes_promotion_bonus_snapshot(self):
         report = self._read("mobiwork-sync.yml")
 
-        self.assertIn("run: python src/promotion_bonus.py", report)
+        self.assertIn("run: python src/pipeline.py", report)
         self.assertIn("output/promotion_bonus_manifest.json", report)
         self.assertIn("group: mobiwork-sharepoint-production", report)
 
@@ -222,7 +222,7 @@ if __name__ == "__main__":
 class PromotionBonusWorkflowTests(unittest.TestCase):
     def test_bonus_failure_and_dry_run_artifacts(self):
         text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
-        bonus = text.split('      - name: Sync Promotion Bonus current snapshot')[1].split('      - name: Publish run summary')[0]
+        bonus = text.split('      - name: Run report pipeline')[1].split('      - name: Publish run summary')[0]
         self.assertNotIn('continue-on-error', bonus)
         self.assertIn("inputs.report_scope == 'all_reports'", bonus)
         shared = text.split('\nenv:\n')[1].split('\njobs:')[0]
@@ -230,8 +230,8 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
         self.assertIn('MOBIWORK_TOKEN:', shared)
         self.assertNotIn('MOBIWORK_TOKEN:', bonus)
         self.assertEqual(text.count('uses: azure/login@'), 1)
-        self.assertLess(text.index('run: python src/run_all_reports.py'), text.index('run: python src/promotion_bonus.py'))
-        self.assertLess(text.index('run: python src/run_data_cham_anh.py'), text.index('run: python src/promotion_bonus.py'))
+        self.assertEqual(text.count('run: python src/pipeline.py\n'), 1)
+        self.assertIn('output/pipeline_manifest.json', text)
         self.assertNotIn('path: output/*.xlsx', text)
         self.assertIn('output/promotion_bonus_manifest.json', text)
 
@@ -259,7 +259,7 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
                 # Replace the pathlib import with the temporary filesystem mapping.
                 script = code.replace('from pathlib import Path', '')
                 with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary),
-                                             'PROMOTION_BONUS_OUTCOME': 'skipped'}):
+                                             'PIPELINE_OUTCOME': 'skipped'}):
                     exec(compile(script, '<workflow summary>', 'exec'),
                          {'Path': lambda value, root=root: original_path(root / value)})
                 content = summary.read_text(encoding='utf-8')
@@ -273,8 +273,8 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
 class PromotionDetailWorkflowTests(unittest.TestCase):
     def test_detail_build_runs_after_sources_and_preserves_snapshot(self):
         text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
-        self.assertLess(text.index('run: python src/run_all_reports.py'), text.index('run: python src/promotion_detail.py'))
-        self.assertLess(text.index('run: python src/promotion_bonus.py'), text.index('run: python src/promotion_detail.py'))
+        self.assertIn('run: python src/pipeline.py', text)
+        self.assertIn('PROMOTION_DETAIL_SCOPE:', text)
         self.assertIn('output/promotion_detail_manifest.json', text)
         self.assertIn('## Promotion detail report', text)
         self.assertNotIn('path: output/*.xlsx', text)

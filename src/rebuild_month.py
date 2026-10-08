@@ -8,6 +8,7 @@ from typing import Any
 
 import main as core
 import run_all_reports as runner
+from report_runtime import env_bool as _env_bool
 from monthly_master import (
     build_month_from_partitions,
     master_filename,
@@ -18,13 +19,6 @@ from monthly_master import (
 
 
 LOG = logging.getLogger("mobiwork_sync")
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def resolve_anchor(target_month: str | None = None) -> date:

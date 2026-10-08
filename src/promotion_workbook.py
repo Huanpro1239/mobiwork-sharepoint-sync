@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from promotion_bonus import write_workbook
+from excel_export import write_workbook
 
 LAYOUT = Path(__file__).resolve().parents[1] / "config/promotion_detail_layout.json"
 

@@ -19,7 +19,11 @@ from data_cham_anh_export import _monthly_master_path
 from customer_catalogue import enrich_customer_config
 from main import load_reports
 from monthly_master import master_filename
-from promotion_bonus import _api_total, _expect_object_list, _frame, fetch_programs, load_config as load_bonus_config
+from api_contract import api_total as _api_total, expect_object_list as _expect_object_list
+from excel_export import records_frame as _frame
+from promotion_catalogue import fetch_programs, load_config as load_bonus_config
+from report_context import CatalogueCache, enrich_cached
+from report_runtime import env_bool, write_manifest
 from promotion_months import discover_bill_months, parse_requested_months, select_order_month
 from promotion_workbook import write_detail_workbook
 from mobiwork import MobiWorkClient
@@ -451,17 +455,17 @@ def unit_trace(detail: pd.DataFrame, report: pd.DataFrame, cfg: dict[str, Any]) 
     return _frame(result, "DonViTinh")
 
 
-def run() -> dict[str, Any]:
-    dry = os.environ.get("DRY_RUN", "false").casefold() == "true"
+def run(cache: CatalogueCache | None = None) -> dict[str, Any]:
+    dry = env_bool("DRY_RUN")
     manifest: dict[str, Any] = {"dataset": "promotion_detail", "dry_run": dry,
                                "status": "running", "results": []}
     manifest_path = Path("output/promotion_detail_manifest.json")
     try:
         cfg = load_config()
-        if os.environ.get("PUBLISH_PROMOTION_DETAIL", "false").casefold() == "true":
+        if env_bool("PUBLISH_PROMOTION_DETAIL"):
             cfg["publish_enabled"] = True
         allow_incomplete = (cfg.get("allow_incomplete_publish", False)
-                            or os.environ.get("ALLOW_INCOMPLETE_DETAIL", "false").casefold() == "true")
+                            or env_bool("ALLOW_INCOMPLETE_DETAIL"))
         manifest["allow_incomplete_publish"] = allow_incomplete
         reports = load_reports(ROOT / "config/reports.json")
         bill = next(r for r in reports if r.key == "bill" and r.enabled)
@@ -493,24 +497,30 @@ def run() -> dict[str, Any]:
             anchors = discover_bill_months(sharepoint, drive, bill,
                                           datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date())
         manifest["source_months"] = [anchor.strftime("%Y-%m") for anchor in anchors]
+        client = None
+        if any(cfg.get(flag, False) for flag in ("fetch_program_catalogue", "fetch_product_catalogue",
+                                               "fetch_customer_catalogue", "fetch_sales_structure")):
+            client = MobiWorkClient.from_env() if cache is None else cache.client
         if cfg.get("fetch_program_catalogue", False):
-            cfg = enrich_program_config(MobiWorkClient.from_env(), cfg)
+            cfg = enrich_program_config(client, cfg)
             manifest["program_catalogue_count"] = cfg["program_catalogue_count"]
         if cfg.get("fetch_product_catalogue", False):
-            cfg = enrich_product_config(MobiWorkClient.from_env(), cfg)
+            cfg = enrich_cached(cache, "products", client, cfg, enrich_product_config)
             manifest["product_catalogue_count"] = cfg["product_catalogue_count"]
         if cfg.get("fetch_customer_catalogue", False):
-            cfg = enrich_customer_config(MobiWorkClient.from_env(), cfg)
+            cfg = enrich_cached(cache, "customers", client, cfg, enrich_customer_config)
             manifest["customer_catalogue"] = cfg["customer_catalogue_audit"]
         if cfg.get("fetch_sales_structure", False):
             try:  # SS / NPP / Vùng from the DMS department tree; explicit mappings win
-                cfg = enrich_employee_config(MobiWorkClient.from_env(), cfg)
+                cfg = enrich_cached(cache, "employees", client, cfg, enrich_employee_config)
                 manifest["sales_structure"] = cfg["sales_structure_audit"]
             except Exception as exc:
                 manifest["sales_structure_error"] = f"{type(exc).__name__}: {exc}"
         use_bosung = cfg.get("bosung_mapping", False)
         if use_bosung and sharepoint is not None:
-            cfg = bosung.apply_overrides(cfg, bosung.load_overrides(sharepoint, drive))
+            overrides = (bosung.load_overrides(sharepoint, drive) if cache is None else
+                         cache.get("overrides", lambda: bosung.load_overrides(sharepoint, drive)))
+            cfg = bosung.apply_overrides(cfg, overrides)
             manifest["bosung_overrides"] = cfg["bosung_override_counts"]
         prepared = []
         todo_updates: dict[str, list[dict[str, Any]]] = {}
@@ -577,8 +587,7 @@ def run() -> dict[str, Any]:
             print(f"::error title=Promotion detail failed::{detail}")
         raise
     finally:
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_manifest(manifest_path, manifest)
 
 
 if __name__ == "__main__":

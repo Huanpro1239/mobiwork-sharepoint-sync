@@ -11,7 +11,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from mobiwork import MobiWorkClient
-from promotion_bonus import fetch_programs, load_config
+from promotion_catalogue import fetch_programs, load_config
 
 TOTAL_PRICE_QUANTITY = "total_price_quantity"
 UI_REPORT_URL = "https://dms.mobiwork.vn:3020/PromotionBonusReport"
