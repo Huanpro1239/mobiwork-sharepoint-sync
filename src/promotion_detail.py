@@ -20,7 +20,7 @@ from customer_catalogue import enrich_customer_config
 from main import load_reports
 from monthly_master import master_filename
 from promotion_bonus import _api_total, _expect_object_list, _frame, fetch_programs, load_config as load_bonus_config
-from promotion_months import discover_bill_months, select_order_month
+from promotion_months import discover_bill_months, parse_requested_months, select_order_month
 from promotion_workbook import write_detail_workbook
 from mobiwork import MobiWorkClient
 from region_mapping import employee_prefix, load_region_map
@@ -462,15 +462,19 @@ def run() -> dict[str, Any]:
         scope = os.environ.get("PROMOTION_DETAIL_SCOPE", "touched")
         if scope not in {"touched", "all_existing"}:
             raise ValueError("PROMOTION_DETAIL_SCOPE must be touched or all_existing")
+        requested = os.environ.get("PROMOTION_DETAIL_MONTHS", "").strip()
+        today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+        if requested and requested.casefold() != "all_existing":
+            anchors = parse_requested_months(requested, today)
+            scope = "explicit_months"
         manifest["scope"] = scope
         sharepoint, drive = None, ""
-        if not dry or scope == "all_existing":
+        if not dry or scope != "touched":
             sharepoint = SemanticSharePointClient.from_env()
             drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
             if not drive:
                 drive = sharepoint.get_drive_id(sharepoint.get_site_id())
         previous_days = int(os.environ.get("PROMOTION_DETAIL_PREVIOUS_DAYS", "0") or 0)
-        today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
         if scope == "touched" and not dry and previous_days and today.day <= previous_days:
             # Early in a month, keep refreshing last month's report (late deliveries,
             # back-dated edits and the monthly rebuild of the order master).

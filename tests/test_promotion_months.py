@@ -14,13 +14,83 @@ from openpyxl import load_workbook
 
 from mobiwork import ReportConfig
 from promotion_detail import build_report, unit_trace
-from promotion_months import discover_bill_months, select_order_month
+from promotion_months import discover_bill_months, parse_requested_months, select_order_month
 from promotion_workbook import write_detail_workbook
 from test_promotion_detail import config, source
 import promotion_detail as module
 
 
 class PromotionMonthTests(unittest.TestCase):
+    def test_explicit_month_validation_and_deduplication(self):
+        today = date(2026, 10, 8)
+        self.assertEqual(parse_requested_months("2026-09, 2026-08,2026-09", today),
+                         [date(2026, 8, 1), date(2026, 9, 1)])
+        for raw in ("", " , ", "2026-13", "2026-9", "2026-09-01", "2026-11"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                parse_requested_months(raw, today)
+
+    def test_explicit_history_reads_and_publishes_only_selected_month(self):
+        for dry in (True, False):
+            with self.subTest(dry=dry), tempfile.TemporaryDirectory() as folder:
+                cfg = config()
+                cfg.update(publish_enabled=True)
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                    pd.DataFrame([source(ngay_dat="2026-09-09")]).to_excel(
+                        writer, sheet_name="ChiTietSP", index=False)
+                sp = Mock()
+                sp.download_file_bytes.return_value = buffer.getvalue()
+                bill = ReportConfig(key="bill", enabled=True, name="DonBanHang", folder="04_DonBanHang")
+                cwd = Path.cwd()
+                try:
+                    os.chdir(folder)
+                    with patch.object(module, "load_config", return_value=cfg), \
+                         patch.object(module, "load_reports", return_value=[bill]), \
+                         patch.object(module, "discover_bill_months") as discover, \
+                         patch.object(module, "write_detail_workbook", return_value=Path("september.xlsx")), \
+                         patch.object(module.SemanticSharePointClient, "from_env", return_value=sp), \
+                         patch.object(module, "datetime") as clock, \
+                         patch.dict(os.environ, {"PROMOTION_DETAIL_SCOPE": "all_existing",
+                             "PROMOTION_DETAIL_MONTHS": "2026-09", "PROMOTION_DETAIL_PREVIOUS_DAYS": "31",
+                             "DRY_RUN": "true" if dry else "false", "SHAREPOINT_DRIVE_ID": "drive"}):
+                        clock.now.return_value.date.return_value = date(2026, 10, 8)
+                        manifest = module.run()
+                    self.assertEqual(manifest["source_months"], ["2026-09"])
+                    self.assertEqual(manifest["scope"], "explicit_months")
+                    self.assertEqual(manifest["results"][0]["source_scope"], "monthly_master")
+                    self.assertEqual(sp.download_file_bytes.call_args.args,
+                                     ("drive", "04_DonBanHang/2026/09/DonBanHang_2026-09.xlsx"))
+                    discover.assert_not_called()
+                    if dry:
+                        sp.upload_file.assert_not_called()
+                    else:
+                        sp.upload_file.assert_called_once()
+                        self.assertEqual(sp.upload_file.call_args.args[2], "07_BaoCaoChiTietCTKM/2026/09")
+                finally:
+                    os.chdir(cwd)
+
+    def test_missing_selected_master_stops_publication(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = config()
+            cfg.update(publish_enabled=True)
+            sp = Mock()
+            sp.download_file_bytes.return_value = None
+            bill = ReportConfig(key="bill", enabled=True, name="DonBanHang", folder="04_DonBanHang")
+            cwd = Path.cwd()
+            try:
+                os.chdir(folder)
+                with patch.object(module, "load_config", return_value=cfg), \
+                     patch.object(module, "load_reports", return_value=[bill]), \
+                     patch.object(module.SemanticSharePointClient, "from_env", return_value=sp), \
+                     patch.dict(os.environ, {"PROMOTION_DETAIL_SCOPE": "all_existing",
+                         "PROMOTION_DETAIL_MONTHS": "2026-09", "DRY_RUN": "false",
+                         "SHAREPOINT_DRIVE_ID": "drive"}), \
+                     self.assertRaisesRegex(ValueError, "monthly master missing"):
+                    module.run()
+                sp.upload_file.assert_not_called()
+            finally:
+                os.chdir(cwd)
+
     def test_history_dry_reads_all_masters_and_production_prepares_before_writes(self):
         for dry in (True, False):
             with self.subTest(dry=dry), tempfile.TemporaryDirectory() as folder:
