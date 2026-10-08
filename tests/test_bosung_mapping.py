@@ -77,6 +77,12 @@ class FillInTests(unittest.TestCase):
         self.assertEqual(npp["Số dòng"], 6)
         self.assertIn("KHA04", npp["Gợi ý"])
         self.assertIn("TU TAI", npp["Hiện có"])
+        self.assertIn("chưa gán giám sát", npp["Nguyên nhân"])
+        self.assertIn("không có trên cây", bosung.npp_cause("B-XXXX-0001", cfg))
+        self.assertEqual(bosung.unit_cause("SP9", ""), "Dòng đơn hàng trên DMS không ghi ĐVT")
+        self.assertIn("không còn trong danh mục", bosung.customer_cause("KH9", "Tỉnh", cfg))
+        self.assertIn("để trống Tỉnh", bosung.customer_cause("KH1", "Tỉnh", {"customer_catalogue": {
+            "ID1": {"customer_code": "KH1", "Tỉnh": ""}}}))
         self.assertEqual(frames["QuyDoi"].iloc[0]["ĐVT nguồn"], "Lốc")
         self.assertEqual(set(frames["SanPham"]["Mã sản phẩm"]), {"SP2"})
         summary = bosung.summary(frames)
