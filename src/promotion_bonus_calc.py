@@ -31,8 +31,9 @@ from __future__ import annotations
 import collections
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
+from itertools import pairwise
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
@@ -71,9 +72,12 @@ class Rule:
     display_program: str
     display_result: str
     region: str = ""
+    tiers: tuple[Rule, ...] = ()
 
     @property
     def plan_text(self) -> str:
+        if self.tiers:
+            return " hoặc ".join(tier.plan_text.strip() for tier in self.tiers)
         def fmt(value: float) -> str:
             return f"{value:,.0f}" if float(value).is_integer() else f"{value:,.2f}"
         text = f" >= {fmt(self.minimum)}"
@@ -113,6 +117,8 @@ def parse_rule(program: dict[str, Any]) -> Rule:
     if ptype not in SUPPORTED_TYPES:
         raise ValueError(f"Programme {name or pid}: unsupported type {ptype!r}")
     products = program.get("products") or []
+    if len(products) > 1:
+        return _tiered_rule(program)
     if len(products) != 1 or not isinstance(products[0], dict):
         raise ValueError(f"Programme {name or pid}: expected exactly one product rule")
     rule = products[0]
@@ -168,11 +174,41 @@ def parse_rule(program: dict[str, Any]) -> Rule:
     )
 
 
+def _tiered_rule(program: dict[str, Any]) -> Rule:
+    """Adjacent, disjoint tiers over the same purchase pool, as observed in CT 355.
+
+    Different purchase pools or overlapping requirements may mean independent or
+    combined conditions. Do not reinterpret those as a single tier schedule.
+    """
+    tiers = sorted((parse_rule({**program, "products": [product]}) for product in program["products"]),
+                   key=lambda r: r.minimum)
+    first = tiers[0]
+    for tier in tiers:
+        if tier.kind != first.kind or tier.units != first.units:
+            raise ValueError(f"Programme {first.name}: multiple rules have different purchase pools")
+        if tier.minimum <= 0 or (tier.maximum and tier.maximum <= tier.minimum):
+            raise ValueError(f"Programme {first.name}: invalid tier interval")
+    for previous, following in pairwise(tiers):
+        if not previous.maximum or previous.maximum > following.minimum:
+            raise ValueError(f"Programme {first.name}: overlapping product rule intervals")
+        if previous.maximum < following.minimum:
+            raise ValueError(f"Programme {first.name}: gaps between product rule intervals are not supported")
+    rewards = {}
+    for tier in tiers:
+        for reward in tier.rewards:
+            rewards.setdefault((reward[0], reward[2]), reward)
+    return replace(first, maximum=tiers[-1].maximum, tiers=tuple(tiers), rewards=tuple(rewards.values()))
+
+
 def reached(actual: float, rule: Rule) -> bool:
+    if rule.tiers:
+        return any(reached(actual, tier) for tier in rule.tiers)
     return actual >= rule.minimum and (rule.maximum == 0 or actual < rule.maximum)
 
 
 def reward_multiplier(actual: float, rule: Rule) -> int:
+    if rule.tiers:
+        return next((reward_multiplier(actual, tier) for tier in rule.tiers if reached(actual, tier)), 0)
     if not reached(actual, rule):
         return 0
     if rule.multiple and rule.minimum > 0:
@@ -342,7 +378,9 @@ def compute(
             meta = customers.get(customer_id, {})
             sales_meta = (sales_metadata or {}).get(customer_id, {})
             code = meta.get("customer_code") or code_of.get(customer_id, "")
-            multiplier = reward_multiplier(actual, rule)
+            matched = next((tier for tier in rule.tiers or (rule,) if reached(actual, tier)), None)
+            multiplier = reward_multiplier(actual, matched) if matched else 0
+            selected_rewards = matched.rewards if matched else ()
             display = ""
             if rule.display_program:
                 display = (displays or {}).get((code, norm(rule.display_program)), "Chưa có dữ liệu")
@@ -353,7 +391,7 @@ def compute(
             else:
                 eligible = REVIEW_DISPLAY
             proposed = {f"{sku}|{unit}": qty * multiplier
-                        for sku, _, unit, qty in rule.rewards} if multiplier else {}
+                        for sku, _, unit, qty in selected_rewards} if multiplier else {}
             rows.append({
                 "_idCT": rule.program_id, "type": "", "ma": code or customer_id,
                 "ten": meta.get("Tên Khách hàng", ""), "sdt": meta.get("Số ĐT", ""),
@@ -370,12 +408,12 @@ def compute(
                           "Kết quả trưng bày": display,
                           "Đủ điều kiện trả thưởng": eligible,
                           "Thưởng dự kiến": "; ".join(f"{name or sku} ({unit}): {qty * multiplier:g}"
-                                                      for sku, name, unit, qty in rule.rewards)
+                                                      for sku, name, unit, qty in selected_rewards)
                           if multiplier else "",
                           "Bội số": multiplier if rule.multiple else ""},
                 "_lines": [line for line, _ in counted if line is not None],
                 "_weights": [weight for line, weight in counted if line is not None],
-                "_rewards": [(sku, name, unit, qty * multiplier) for sku, name, unit, qty in rule.rewards]
+                "_rewards": [(sku, name, unit, qty * multiplier) for sku, name, unit, qty in selected_rewards]
                 if eligible == "Có" else [],
                 "_eligible": eligible,
                 "_review_display": eligible == REVIEW_DISPLAY,

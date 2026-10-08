@@ -209,7 +209,11 @@ rules and programmes without registered customers or sales, followed by programm
 observed on Bill. Invoice coverage is not a catalogue of unobserved promotions.
 The cached October 8 catalogue has 119 levels, including eight cash levels for
 April–September, none applicable in October. It also contains one archived June
-355 programme with two product rules whose combination is not verified; this stays
-visible as unsupported. Voucher products stay physical rewards; no cash value is
+355 programme with two adjacent, disjoint quantity tiers over exactly the same purchase pool.
+The calculator now selects the matching interval and applies that tier's reward
+and the existing BoiSo rule once. Overlapping/gapped intervals or different purchase pools
+remain unsupported, since their combination cannot be inferred safely. This is
+derived from the catalogue structure and existing calculation rules, not a verified
+Paybonus row comparison. Voucher products stay physical rewards; no cash value is
 inferred from a product name. Current registration snapshots and missing historical
 masters remain limitations; a successful workflow is not complete DMS equivalence.
