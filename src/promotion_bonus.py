@@ -482,7 +482,7 @@ def _program_mode(program: dict[str, Any], cfg: PromotionBonusConfig,
 def _is_cumulative(program: dict[str, Any], cfg: PromotionBonusConfig, first: Any,
                    overrides: dict[str, dict[str, Any]] | None = None) -> bool:
     start = _program_day(program, "startDate")
-    return bool(start and start < first and _program_mode(program, cfg, overrides) == "cumulative")
+    return bool(start and _program_mode(program, cfg, overrides) == "cumulative")
 
 
 def _program_todo_rows(undeclared: list[dict[str, Any]], issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -496,7 +496,7 @@ def _program_todo_rows(undeclared: list[dict[str, Any]], issues: list[dict[str, 
         rows.append({"_sheet": "ChuongTrinh", "Mã CT": calc.program_prefix(name), "Tên CT": name,
                      "Thời gian": f"{start:%d/%m/%Y} - {end:%d/%m/%Y}" if start and end else "",
                      "Còn thiếu": ["Cách tính"],
-                     "Nguyên nhân": "CT kéo dài nhiều tháng, chưa khai cách tính (đang tính theo từng tháng)",
+                     "Nguyên nhân": "CT kéo dài nhiều tháng, chưa khai cách tính (chưa xác nhận trả thưởng)",
                      "Gợi ý": "Theo thông báo CT: tích lũy suốt thời gian CT → 'Tích lũy cả kỳ'; "
                               "xét từng tháng → 'Theo tháng'"})
     for issue in issues:
@@ -507,7 +507,8 @@ def _program_todo_rows(undeclared: list[dict[str, Any]], issues: list[dict[str, 
     return rows
 
 
-def _period_lines(start: Any, last: Any, dry_run: bool, missing: set[str]) -> list[dict[str, Any]]:
+def _period_lines(start: Any, last: Any, dry_run: bool, missing: set[str],
+                  unit_config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     import promotion_bonus_calc as calc
 
     lines: list[dict[str, Any]] = []
@@ -517,17 +518,33 @@ def _period_lines(start: Any, last: Any, dry_run: bool, missing: set[str]) -> li
         if detail is None:
             missing.add(f"{cursor:%Y-%m}")
         else:
-            lines.extend(calc.sold_lines(detail, max(cursor, start), min(_month_end(cursor), last)))
+            lines.extend(calc.sold_lines(detail, max(cursor, start), min(_month_end(cursor), last), unit_config))
         cursor = _month_end(cursor) + timedelta(days=1)
     return lines
 
 
 def _with_bill_identity(customers: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
-    """Fill code for buyers missing from the catalogue using the Bill line itself."""
+    """Fill absent identity fields from unambiguous values on the customer's Bills."""
     merged = {key: dict(value) for key, value in customers.items()}
+    candidates: dict[str, dict[str, set[str]]] = {}
+    fields = {"customer_code": "ma_kh", "Tên Khách hàng": "ten_kh",
+              "Địa chỉ": "dia_chi", "Số ĐT": "sdt"}
     for line in lines:
-        if line["customer"] and line["code"]:
-            merged.setdefault(line["customer"], {}).setdefault("customer_code", line["code"])
+        identity = line["customer"]
+        if not identity:
+            continue
+        metadata = candidates.setdefault(identity, {})
+        for target, source in fields.items():
+            value = ui.text((line.get("raw") or {}).get(source))
+            if target == "customer_code":
+                value = ui.text(line.get("code"))
+            if value:
+                metadata.setdefault(target, set()).add(value)
+    for identity, fields in candidates.items():
+        metadata = merged.setdefault(identity, {})
+        for field, values in fields.items():
+            if not ui.text(metadata.get(field)) and len(values) == 1:
+                metadata[field] = next(iter(values))
     return merged
 
 
@@ -536,11 +553,13 @@ def _github_notice(title: str, message: str) -> None:
         print(f"::notice title={title}::{message}")
 
 
-def _load_customers(client: MobiWorkClient, manifest: dict[str, Any]) -> tuple[dict[str, Any], str]:
+def _load_customers(client: MobiWorkClient, manifest: dict[str, Any],
+                    detail_config: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
     from customer_catalogue import enrich_customer_config
 
     try:  # enrich_customer_config already retries live-change races per window
-        catalogue = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900"})
+        catalogue = enrich_customer_config(client, {"customer_catalogue_start_date": "01/01/1900",
+            "customer_address_provinces": (detail_config or {}).get("customer_address_provinces", {})})
     except ValueError as exc:
         manifest.setdefault("customer_catalogue_retries", []).append(str(exc))
         LOG.warning("Customer catalogue failed: %s", exc)
@@ -549,6 +568,7 @@ def _load_customers(client: MobiWorkClient, manifest: dict[str, Any]) -> tuple[d
                     "khách chưa có đơn hiển thị theo ID")
     customers = catalogue["customer_catalogue"]
     manifest["customer_catalogue_count"] = catalogue["customer_catalogue_audit"]["count"]
+    manifest["customer_catalogue"] = catalogue["customer_catalogue_audit"]
     return customers, f"Danh mục khách hàng OpenAPI ({len(customers)} khách)"
 
 
@@ -572,6 +592,7 @@ def _calc_month_frames(
         raise ValueError("Computed Promotion Bonus supports only sttt=0 (price × quantity)")
     if detail_config is None:
         detail_config = _load_template_config(client)
+    manifest["allow_blank_fields"] = detail_config.get("allow_blank_fields", [])
     filters = {"fromdate": first.strftime("%d/%m/%Y"), "todate": last.strftime("%d/%m/%Y")}
     programs = _select_programs(
         fetch_programs(client, cfg, filters=filters),
@@ -579,7 +600,9 @@ def _calc_month_frames(
     )
     manifest.update({"from_date": first.isoformat(), "to_date": last.isoformat(),
                      "program_count": len(programs)})
-    lines = calc.sold_lines(_bill_detail(first, dry_run, manifest), first, last)
+    bill_detail = _bill_detail(first, dry_run, manifest)
+    _BILL_CACHE[f"{first:%Y-%m}"] = bill_detail
+    lines = calc.sold_lines(bill_detail, first, last, detail_config)
     manifest["sold_line_count"] = len(lines)
     # Whole-period accumulation (configured programmes): sales from the programme start.
     program_overrides = detail_config.get("program_overrides", {})
@@ -589,7 +612,12 @@ def _calc_month_frames(
     for program in cumulative:
         groups.setdefault(_program_day(program, "startDate"), []).append(program)
     missing_months: set[str] = set()
-    period_lines = {start: _period_lines(start, last, dry_run, missing_months) for start in groups}
+    period_lines, missing_by_start = {}, {}
+    for start in groups:
+        missing: set[str] = set()
+        period_lines[start] = _period_lines(start, last, dry_run, missing, detail_config)
+        missing_by_start[start] = missing
+        missing_months.update(missing)
     all_lines = lines + [line for group in period_lines.values() for line in group]
     if cumulative:
         manifest["cumulative_programs"] = {str(p.get("name"))[:60]: f"{_program_day(p, 'startDate')}"
@@ -623,12 +651,17 @@ def _calc_month_frames(
     manifest["customer_assignment_conflicts"] = conflicts
     results, issues = calc.compute([p for p in programs if p not in cumulative], lines, customer_map,
                                    displays=displays, sales_metadata=sales_metadata)
+    for result in results:
+        if result.program in undeclared:
+            calc.hold_rewards([result], "Chưa xác định cách tính theo tháng/cả kỳ")
     for start, group in groups.items():
         group_results, group_issues = calc.compute(group, period_lines[start], customer_map,
                                                    displays=displays, sales_metadata=sales_metadata)
         for program, result in zip(group, group_results, strict=True):
             end = _program_day(program, "endDate")
-            if end and end > last:
+            if missing_by_start[start]:
+                calc.hold_rewards([result], "Thiếu dữ liệu kỳ tích lũy: " + ", ".join(sorted(missing_by_start[start])))
+            elif end and end > last:
                 calc.provisional([result], end)
         results.extend(group_results)
         issues.extend(group_issues)
@@ -641,6 +674,13 @@ def _calc_month_frames(
                                f"có doanh số {item['with_sales']}|đạt {item['reached']}|trả {item['eligible']}")
             _github_notice(f"Promotion Bonus lũy kế từ {start:%d/%m/%Y} đến {last:%d/%m/%Y}", " ; ".join(summary))
     program_rows = _program_todo_rows(undeclared, issues)
+    for start, missing in missing_by_start.items():
+        if missing:
+            program_rows.extend({"_sheet": "ChuongTrinh", "Mã CT": calc.program_prefix(str(p.get("name", ""))),
+                                 "Tên CT": p.get("name", ""), "Còn thiếu": ["Dữ liệu đơn hàng"],
+                                 "Nguyên nhân": "Thiếu tháng đơn hàng: " + ", ".join(sorted(missing)),
+                                 "Gợi ý": "Tải/bổ sung DonBanHang của các tháng thiếu rồi chạy lại báo cáo"}
+                                for p in groups[start])
     over_quota = []
     for result in results:  # "Số suất quyết toán": more eligible customers than slots
         try:
@@ -686,8 +726,15 @@ def _calc_month_frames(
         ("Khách hàng", customer_note + ". Danh sách khách đăng ký là danh sách hiện tại của chương trình"),
         ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
     ]
+    if any(m.get("_province_source") for m in customers.values()):
+        notes.append(("Nguồn tỉnh", "Ưu tiên tinh_thanh_moi; nếu trống dùng tỉnh cũ hoặc địa danh "
+                      "ở cuối địa chỉ DMS khi khớp danh mục. Giữ địa danh nguồn, chưa quy đổi địa giới mới."))
     if over_quota:
         notes.append(("Số suất", "Vượt số suất quyết toán (đủ điều kiện/số suất): " + "; ".join(over_quota)))
+    if undeclared:
+        notes.append(("Cách tính còn thiếu", f"{len(undeclared)} mức CT nhiều tháng chưa khai cách tính. "
+                      "Doanh số theo kỳ báo cáo và thưởng dự kiến vẫn hiển thị; chưa xác nhận trả thưởng. "
+                      "Khai cách tính trong BoSung_Mapping.xlsx, sheet ChuongTrinh."))
     if cumulative:
         notes.append(("Tích lũy nhiều tháng",
                       f"{len(cumulative)} chương trình tính lũy kế từ ngày bắt đầu CT đến hết kỳ báo cáo "
@@ -725,8 +772,10 @@ def _calc_month_frames(
 
         label = f"TraThuong {first:%Y-%m}"
         TODO_UPDATES[label] = bosung.aggregate(bosung.todo_rows(detail_issues, detail_config) + program_rows, label)
-    if issues:
-        frames["Can_xem"] = pd.DataFrame(issues, dtype=object)
+    calculation_issues = list(issues)
+    calculation_issues.extend({"Chương trình": p["Tên CT"], "Vấn đề": p["Nguyên nhân"]} for p in program_rows)
+    if calculation_issues:
+        frames["Can_xem"] = pd.DataFrame(calculation_issues, dtype=object).drop_duplicates()
     manifest["template_rows"] = len(report)
     manifest["template_issues"] = len(detail_issues)
     from promotion_detail import blocking_issue_count
@@ -736,7 +785,7 @@ def _calc_month_frames(
                if not detail_issues.empty and "Trường" in detail_issues else {})
     manifest["missing_fields"] = missing
     manifest["quality_status"] = "needs_review" if (
-        issues or not detail_issues.empty or conflicts or manifest["review_display_rows"]
+        calculation_issues or not detail_issues.empty or conflicts or manifest["review_display_rows"]
         or manifest.get("display_error") or not customers) else "complete_supported_rules"
     manifest["dms_equivalence_verified"] = False
     _github_notice(f"Promotion Bonus template {first:%m/%Y}",
@@ -868,6 +917,7 @@ def _build_calc_workbook(
     Past months (explicit dates, or PROMOTION_BONUS_MONTHS) -> monthly files only, so
     a backfill never overwrites the current snapshot.
     """
+    _BILL_CACHE.clear()
     history = os.environ.get("PROMOTION_BONUS_MONTHS", "").strip()
     today = datetime.now(ui.VN_TZ).date()
     if not history:
@@ -877,8 +927,11 @@ def _build_calc_workbook(
         )
         if (first.year, first.month) != (last.year, last.month):
             raise ValueError("Computed Promotion Bonus report covers one calendar month at a time")
-    customers, customer_note = _load_customers(client, manifest)
     detail_config = _load_template_config(client)
+    manifest["allow_blank_fields"] = detail_config.get("allow_blank_fields", [])
+    customers, customer_note = _load_customers(client, manifest, detail_config)
+    customers = {identity: {**metadata, **detail_config.get("customer_overrides", {}).get(
+        metadata.get("customer_code", ""), {})} for identity, metadata in customers.items()}
     if history:
         manifest["storage_mode"] = "monthly_history"
         outputs: list[tuple[Path, str]] = []
@@ -931,6 +984,7 @@ def _build_calc_workbook(
 
 
 def run() -> dict[str, Any]:
+    TODO_UPDATES.clear()
     dry_run = _env_bool("DRY_RUN", False)
     started_at = datetime.now(timezone.utc)
     manifest: dict[str, Any] = {
@@ -1040,7 +1094,8 @@ def run() -> dict[str, Any]:
             import bosung_mapping as bosung
 
             manifest["bosung"] = bosung.publish(dict(TODO_UPDATES), None if dry_run else sharepoint,
-                                                "" if dry_run else drive_id, dry_run=dry_run)
+                                                "" if dry_run else drive_id, dry_run=dry_run,
+                                                allow_blank_fields=manifest.get("allow_blank_fields", []))
         manifest.update(
             {
                 "status": "success",

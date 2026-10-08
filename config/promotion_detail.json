@@ -6,10 +6,44 @@
   "fetch_sales_structure": true,
   "bosung_mapping": true,
   "customer_catalogue_start_date": "01/01/1900",
+  "allow_blank_fields": ["SS Code", "SS Name"],
+  "customer_address_provinces": {
+    "Lâm Đồng": "Lâm Đồng",
+    "Phú Yên": "Phú Yên"
+  },
+  "line_unit_overrides": {
+    "BH_095582026|1|230100017": {
+      "unit": "Chai",
+      "source": "Người dùng xác nhận ĐVT dòng bán ngày 08/10/2026"
+    }
+  },
   "program_codes": {},
+  "program_overrides": {
+    "010/TB/GT/01/2026_Q4": {"Cách tính": "Theo tháng"},
+    "011/TB/GT/01/2026_Q4": {"Cách tính": "Theo tháng"},
+    "012/TB/GT/01/2026": {"Cách tính": "Theo tháng"},
+    "013/TB/GT/01/2026_Q4": {"Cách tính": "Theo tháng"},
+    "558/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "559/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "560/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "561/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "562/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "563/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "570/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "571/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "572/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "575/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "581/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "584/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "588/TB/GT/10/2026": {"Cách tính": "Theo tháng"},
+    "589/TB/GT/10/2026": {"Cách tính": "Theo tháng"}
+  },
   "employees": {},
   "customers": {},
   "products": {
+    "530200025": {
+      "Package": "Vật phẩm"
+    },
     "230100110": {
       "Brand": "Vikoda",
       "Package": "1 Way"

@@ -545,3 +545,34 @@ trình, hoặc giữ tên DMS khi không có mã theo quy ước. Áp dụng cho
 ctkmFull_id ở cả dòng bán và hàng tặng; không thêm cột kỹ thuật vào BaoCao.
 Mã khách hàng/nhân viên/sản phẩm vẫn là mã nghiệp vụ nguồn, với tên ở cột riêng.
 Không dùng dòng mẫu làm dữ liệu danh mục hoặc tự đặt tên khi ID chưa tra được.
+## Xử lý phần còn thiếu ngày 08/10/2026
+
+SS Code/SS Name được phép trống theo yêu cầu của người dùng; không chặn tính thưởng
+và không còn là mục phải bổ sung trong CanBoSung_TongHop, kể cả ở trạng thái tháng cũ.
+Cấu hình `allow_blank_fields` chỉ chấp nhận trường mô tả, không cho phép bỏ qua lỗi
+đơn hàng, số lượng, giá, ngày hoặc định danh.
+
+Các bổ sung có nguồn cụ thể:
+
+- Người dùng xác nhận tính **theo tháng, không cộng dồn** cho 18 mã CT hiện còn
+  thiếu cách tính: 010/011/013 (Q4), 012, 558–563, 570–572, 575, 581, 584, 588,
+  589. `program_overrides` khai rõ từng mã; không suy cách tính cho CT mới khác.
+- ĐVT `Chai` của dòng `BH_095582026|1|230100017` do người dùng xác nhận; chỉ áp dụng
+  khi đúng đơn, dòng, SKU và ĐVT gốc còn trống. `DonViTinh` ghi nguồn xác nhận.
+- Hai dòng quà cùng đơn có thể phục hồi ĐVT từ `promotion.product.don_vi_tinh` trên
+  chính đơn, khi CTKM ID và SKU khớp và chỉ có một đơn vị. Không suy ĐVT dòng bán
+  từ đơn vị quà hoặc giá, không lấy mặc định theo danh mục hiện tại.
+- Package của `530200025` là `Vật phẩm`, được người dùng xác nhận.
+- Tỉnh ưu tiên `tinh_thanh_moi`, rồi `tinhthanh_pho`; nếu cả hai trống thì khớp
+  chính xác địa danh cuối địa chỉ DMS với `customer_address_provinces`. Các địa danh
+  `Lâm Đồng`/`Phú Yên` được thấy trong địa chỉ của 7 khách còn thiếu. Đây là địa danh
+  nguồn, không phải quy đổi sang địa giới mới hoặc suy từ mã NV/KH. Manifest ghi
+  số lượng theo nguồn fallback; `Kiem_tra` giải thích cách dùng.
+
+Chương trình nhiều tháng chưa xác định cách tính vẫn hiển thị khách, doanh số trong
+kỳ báo cáo và thưởng dự kiến. Chưa xác nhận thưởng cho đến khi khai `Theo tháng`
+hoặc `Tích lũy cả kỳ` trong BoSung_Mapping. `Can_xem` chỉ rõ CT cần xử lý ngay trong
+file trả thưởng; manifest không coi đó là đầy đủ dù không thiếu trường mẫu.
+Chương trình tích lũy được giữ tạm tính cả ở tháng đầu; thiếu một tháng DonBanHang
+thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master tháng có nội dung rỗng
+được coi là không có đơn; không tìm thấy master là thiếu dữ liệu, không phải số 0.

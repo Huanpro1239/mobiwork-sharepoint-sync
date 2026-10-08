@@ -76,7 +76,8 @@ GUIDE = [
     "report_scope=promotion_history để xuất lại.",
     "8. Sheet SuaTrenDMS trong TongHop là lỗi dữ liệu gốc (thiếu ngày, giá...) phải sửa trên DMS.",
     "9. ChuongTrinh: chương trình kéo dài nhiều tháng cần chọn Cách tính = 'Tích lũy cả kỳ' "
-    "(cộng dồn từ ngày bắt đầu CT, trả thưởng ở tháng kết thúc) hoặc 'Theo tháng' (mặc định). "
+    "(cộng dồn từ ngày bắt đầu CT, trả thưởng ở tháng kết thúc) hoặc 'Theo tháng'. "
+    "Khi chưa khai cách tính: chỉ hiển thị doanh số kỳ báo cáo, chưa xác nhận thưởng. "
     "Mã CT là phần đầu tên CT, vd 246/TB/GT/04/2026, áp dụng cho mọi mức/loại.",
     "Thứ tự ưu tiên: file này > cấu hình > kho xuất của đơn > cây phòng ban hiện tại > danh mục DMS.",
 ]
@@ -183,9 +184,7 @@ def customer_cause(code: str, field: str, cfg: dict[str, Any]) -> str:
 
 def product_cause(sku: str, field: str, cfg: dict[str, Any]) -> str:
     if field == "Package":
-        return ("DMS không có trường Package; danh mục Package (Danh Muc San Pham.xlsx) chưa có SP này"
-                if sku not in cfg.get("products", {}) or "Brand" in cfg["products"][sku]
-                else "Danh mục sản phẩm cấu hình thiếu Package")
+        return "Danh mục cấu hình thiếu Package; nganh_hang trên DMS không khai 1 Way/2 Way"
     return "Danh mục sản phẩm DMS để trống nhãn hiệu (nhan_hieu)"
 
 
@@ -281,8 +280,14 @@ def _filled(row: dict[str, Any], overrides: dict[str, dict[str, Any]]) -> bool:
 
 
 def todo_frames(state: dict[str, list[dict[str, Any]]],
-                overrides: dict[str, dict[str, Any]] | None = None) -> dict[str, pd.DataFrame]:
+                overrides: dict[str, dict[str, Any]] | None = None,
+                allow_blank_fields: list[str] | None = None) -> dict[str, pd.DataFrame]:
     rows = aggregate([row for label_rows in state.values() for row in label_rows])
+    allowed = set(allow_blank_fields or [])
+    if allowed:
+        rows = [{**row, "Còn thiếu": [f for f in row.get("Còn thiếu", []) if f not in allowed]}
+                if row["_sheet"] in SHEETS else row for row in rows]
+        rows = [row for row in rows if row["_sheet"] not in SHEETS or row["Còn thiếu"]]
     rows = [row for row in rows if not _filled(row, overrides or {})]
     frames: dict[str, pd.DataFrame] = {}
     for sheet in [*SHEETS, DMS_SHEET]:
@@ -420,7 +425,8 @@ def add_missing_sheets(sharepoint: Any, drive: str, output_dir: Path = Path("out
 
 
 def publish(updates: dict[str, list[dict[str, Any]]], sharepoint: Any = None, drive: str = "",
-            dry_run: bool = False, output_dir: Path = Path("output")) -> dict[str, Any]:
+            dry_run: bool = False, output_dir: Path = Path("output"),
+            allow_blank_fields: list[str] | None = None) -> dict[str, Any]:
     """Merge this run's per-month rows into the shared state and refresh the to-do workbook.
 
     ``updates`` maps a source label (e.g. "CTKM 2026-10") to its aggregated rows; a label
@@ -436,7 +442,8 @@ def publish(updates: dict[str, list[dict[str, Any]]], sharepoint: Any = None, dr
             overrides, _ = parse_overrides(sharepoint.download_file_bytes(drive, f"{FOLDER}/{USER_FILE}"))
         state = {k: v for k, v in state.items() if isinstance(v, list)}
         state.update(updates)
-        frames = todo_frames(state, overrides)
+        frames = todo_frames(state, overrides, allow_blank_fields)
+        result["allow_blank_fields"] = allow_blank_fields or []
         result["todo"] = summary(frames)
         todo = write_book(frames, output_dir / TODO_FILE, GUIDE)
         _notice("notice", "CanBoSung tổng hợp", json.dumps(result["todo"], ensure_ascii=False)

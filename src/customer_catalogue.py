@@ -45,7 +45,7 @@ def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any], attempts
         for attempt in range(1, attempts + 1):
             try:
                 part = _fetch_window(client, window_start.strftime("%d/%m/%Y"),
-                                     window_end.strftime("%d/%m/%Y"))
+                                     window_end.strftime("%d/%m/%Y"), cfg.get("customer_address_provinces", {}))
                 break
             except ValueError as exc:
                 if attempt == attempts or not str(exc).startswith(RETRYABLE):
@@ -69,10 +69,14 @@ def enrich_customer_config(client: MobiWorkClient, cfg: dict[str, Any], attempts
                                           "structured_fields_not_mapped": structured_fields,
                                           "from_date": start, "to_date": end,
                                           "date_type": "cdate", "join_key": "ID=ID_khachhang"}
+    result["customer_catalogue_audit"]["province_fallback_sources"] = {
+        source: sum(m.get("_province_source") == source for m in customers.values())
+        for source in sorted({m["_province_source"] for m in customers.values() if m.get("_province_source")})}
     return result
 
 
-def _fetch_window(client: MobiWorkClient, start: str, end: str) -> dict[str, Any]:
+def _fetch_window(client: MobiWorkClient, start: str, end: str,
+                  address_provinces: dict[str, str] | None = None) -> dict[str, Any]:
     params = {"tu_ngay": start, "den_ngay": end, "kieu_ngay": "cdate", "page_size": 200}
     customers: dict[str, Any] = {}
     seen_pages: set[str] = set()
@@ -109,6 +113,23 @@ def _fetch_window(client: MobiWorkClient, start: str, end: str) -> dict[str, Any
                     metadata[label] = ""
                 else:
                     metadata[label] = value(row, source)
+            # Some customers still have only the legacy province field on DMS.
+            # Retain its provenance: it describes the source address, not an inferred
+            # province from an employee/customer-code prefix.
+            if not metadata["Tỉnh"] and not isinstance(row.get("tinhthanh_pho"), (dict, list, bool)):
+                metadata["Tỉnh"] = value(row, "tinhthanh_pho")
+                if metadata["Tỉnh"]:
+                    metadata["_province_source"] = "tinhthanh_pho"
+            if not metadata["Tỉnh"]:
+                # Exact, configured province suffix in this customer's DMS address.
+                # Preserve the locality written there; do not infer new administrative
+                # boundaries from a legacy address or use a sales/customer-code prefix.
+                suffix = metadata["Địa chỉ"].rsplit(",", 1)[-1].strip().casefold()
+                matches = {label for alias, label in (address_provinces or {}).items()
+                           if alias.strip().casefold() == suffix and label.strip()}
+                if len(matches) == 1:
+                    metadata["Tỉnh"] = next(iter(matches))
+                    metadata["_province_source"] = "dia_chi (địa danh ghi trong địa chỉ DMS)"
             metadata["customer_code"] = value(row, "makh")
             if identity in customers:
                 raise ValueError("Duplicate Customer catalogue ID; refusing ambiguous mapping")

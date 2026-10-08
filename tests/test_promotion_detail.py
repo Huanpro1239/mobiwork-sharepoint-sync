@@ -234,6 +234,60 @@ class PromotionDetailReferenceTests(unittest.TestCase):
         self.assertIn('DB Code', issues['Trường'].tolist())
 
 class ProductCatalogueTests(unittest.TestCase):
+    def test_accepted_blank_ss_keeps_the_sale_quantity(self):
+        cfg = config()
+        cfg['employees']['NV01'].pop('SS Code')
+        cfg['employees']['NV01'].pop('SS Name')
+        cfg['allow_blank_fields'] = ['SS Code', 'SS Name']
+        report, issues = module.build_report(pd.DataFrame([source(so_luong=24)]), cfg)
+        self.assertEqual(report.iloc[0]['Số lượng SELL-OUT'], 24)
+        self.assertTrue(pd.isna(report.iloc[0]['SS Code']))
+        self.assertTrue(issues.empty)
+
+    def test_confirmed_sale_unit_is_scoped_to_exact_order_line_and_sku(self):
+        row = source(ten_dvt='', ma_dvt='', ma_phieu='BH1', stt=1)
+        cfg = {'line_unit_overrides': {'BH1|1|SKU1': {'unit': 'Chai', 'source': 'User confirmation'}}}
+        self.assertEqual(module.source_unit(row, False, cfg), ('Chai', 'User confirmation'))
+        for change in ({'stt': 2}, {'ma_phieu': 'BH2'}, {'ma_sp': 'OTHER'}):
+            self.assertEqual(module.source_unit({**row, **change}, False, cfg), ('', ''))
+        self.assertEqual(module.source_unit({**row, 'ten_dvt': 'Thùng'}, False, cfg), ('Thùng', 'ten_dvt'))
+        cfg['line_unit_overrides']['BH1|1|SKU1'] = {'unit': 'Chai'}
+        with self.assertRaises(ValueError):
+            module.source_unit(row, False, cfg)
+
+    def test_missing_gift_unit_uses_only_its_linked_order_promotion(self):
+        row = source(is_km=True, loai_hang='Khuyến mãi', ten_dvt='', ma_dvt='',
+                     ctkm='Programme', ctkmFull_id='gift-id', so_luong=4,
+                     promotion=[{'id': 'other-id', 'product': [{'ma_san_pham': 'SKU1',
+                         'don_vi_tinh': {'viewData': 'Thùng'}}]},
+                         {'id': 'gift-id', 'product': [{'ma_san_pham': 'SKU1',
+                         'don_vi_tinh': {'viewData': 'Chai'}}]}])
+        cfg = config()
+        cfg['unit_conversions']['SKU1|Chai'] = {'target_unit': 'Thùng', 'factor': str(1/24)}
+        report, issues = module.build_report(pd.DataFrame([row]), cfg)
+        self.assertAlmostEqual(report.iloc[0]['Số lượng Khuyến mãi'], 4/24)
+        self.assertTrue(issues.empty)
+        trace = module.unit_trace(pd.DataFrame([row]), report, cfg)
+        self.assertEqual(trace.iloc[0]['Nguồn ĐVT'], 'promotion.product.don_vi_tinh')
+        self.assertEqual(module.source_unit({**row, 'ten_dvt': 'Thùng'}, True), ('Thùng', 'ten_dvt'))
+        self.assertEqual(module.source_unit(row, False), ('', ''))
+        self.assertEqual(module.source_unit({**row, 'ctkmFull_id': 'unlinked'}, True), ('', ''))
+        row['promotion'][1]['product'].append({'ma_san_pham': 'SKU1',
+                                               'don_vi_tinh': {'viewData': 'Két'}})
+        self.assertEqual(module.source_unit(row, True), ('', ''))
+
+    def test_dms_package_group_fills_known_packaging_only(self):
+        from test_promotion_bonus import FakeMobiWork
+        rows = [{'ma_sp': 'NEW', 'nganh_hang': '1 way'},
+                {'ma_sp': 'SKU1', 'nganh_hang': '2 way'},
+                {'ma_sp': 'GIFT', 'nganh_hang': ''},
+                {'ma_sp': 'UNKNOWN', 'nganh_hang': 'Other'}]
+        cfg = module.enrich_product_config(FakeMobiWork([{'total': 4, 'data': rows}]), config())
+        self.assertEqual(cfg['products']['NEW']['Package'], '1 Way')
+        self.assertEqual(cfg['products']['SKU1']['Package'], '1 way')
+        self.assertNotIn('GIFT', cfg['products'])
+        self.assertNotIn('UNKNOWN', cfg['products'])
+
     def test_catalogue_enriches_units_without_overwriting_reference(self):
         from test_promotion_bonus import FakeMobiWork
         client = FakeMobiWork([{'total': 2, 'data': [
