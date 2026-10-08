@@ -136,6 +136,7 @@ def run(scope: str = "all_reports") -> dict[str, Any]:
                 stage.update(status="skipped", reason="Earlier stage failed")
         raise
     finally:
+        manifest["needs_review"] = any(stage.get("needs_review", False) for stage in manifest["stages"])
         manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
         write_manifest(MANIFEST_PATH, manifest)
 

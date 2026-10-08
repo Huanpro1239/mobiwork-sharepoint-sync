@@ -206,7 +206,10 @@ python src\pipeline.py --scope promotion_history
 `DRY_RUN=true` không ghi SharePoint. Chạy lịch sử vẫn đọc Bill master trên SharePoint;
 chạy toàn bộ ở chế độ này dùng master cục bộ vừa xuất cho các bước phụ thuộc.
 
-Sao chép `.env.example` thành `.env` và điền thông tin MobiWork/SharePoint trước khi chạy. Không commit `.env`, token, dữ liệu khách hàng, ảnh hoặc file export.
+Dùng `.env.example` làm danh sách biến và thiết lập thông tin MobiWork/SharePoint
+trong môi trường của phiên shell trước khi chạy. Các lệnh Python không tự nạp file
+`.env`; GitHub Actions lấy cấu hình từ secrets/variables. Không commit `.env`, token,
+dữ liệu khách hàng, ảnh hoặc file export.
 
 ## Kiểm tra trước khi merge
 
