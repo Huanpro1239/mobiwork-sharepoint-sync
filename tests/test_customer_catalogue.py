@@ -122,3 +122,28 @@ class CustomerCatalogueTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             enrich_customer_config(client, {"customer_catalogue_start_date": "wrong"})
         client.get_json.assert_not_called()
+
+    def test_legacy_province_fills_only_a_missing_current_province(self):
+        rows = [customer(tinh_thanh_moi="", tinhthanh_pho="Hà Nội"),
+                customer(ID="other", tinh_thanh_moi="Khánh Hòa", tinhthanh_pho="Phú Yên")]
+        cfg = enrich_customer_config(self.client([{"total": 2, "data": rows}]), {})
+        legacy = cfg["customer_catalogue"]["customer-id"]
+        self.assertEqual((legacy["Tỉnh"], legacy["_province_source"]), ("Hà Nội", "tinhthanh_pho"))
+        self.assertEqual(cfg["customer_catalogue"]["other"]["Tỉnh"], "Khánh Hòa")
+
+    def test_structured_legacy_province_is_not_used_as_text(self):
+        cfg = enrich_customer_config(self.client([{"total": 1, "data": [
+            customer(tinh_thanh_moi="", tinhthanh_pho=["Hà Nội"])]}]), {})
+        self.assertEqual(cfg["customer_catalogue"]["customer-id"]["Tỉnh"], "")
+
+    def test_province_uses_exact_dms_address_suffix_and_keeps_its_source(self):
+        rows = [customer(tinh_thanh_moi='', dia_chi='Customer address, PHÚ YÊN'),
+                customer(ID='middle', tinh_thanh_moi='', dia_chi='Phú Yên, unknown suffix'),
+                customer(ID='current', tinh_thanh_moi='Đắk Lắk', dia_chi='Customer address, PHÚ YÊN')]
+        cfg = enrich_customer_config(self.client([{'total': 3, 'data': rows}]),
+                                     {'customer_address_provinces': {'Phú Yên': 'Phú Yên'}})
+        self.assertEqual(cfg['customer_catalogue']['customer-id']['Tỉnh'], 'Phú Yên')
+        self.assertIn('dia_chi', cfg['customer_catalogue']['customer-id']['_province_source'])
+        self.assertEqual(cfg['customer_catalogue']['middle']['Tỉnh'], '')
+        self.assertEqual(cfg['customer_catalogue']['current']['Tỉnh'], 'Đắk Lắk')
+        self.assertEqual(sum(cfg['customer_catalogue_audit']['province_fallback_sources'].values()), 1)

@@ -93,6 +93,13 @@ class RuleTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_confirmed_line_unit_is_used_for_the_calculation(self):
+        detail = bill([{"ten_dvt": "", "ma_dvt": "", "so_luong": 80}])
+        cfg = {"line_unit_overrides": {"DH1|1|230100110": {"unit": "Chai", "source": "User confirmation"}}}
+        lines = calc.sold_lines(detail, OCT1, OCT31, cfg)
+        results, _ = calc.compute([qty_program()], lines, {})
+        self.assertEqual(results[0].rows[0]["objThucHien"][calc.TARGET_ID], 80)
+
     def test_invalid_sale_values_are_rejected_instead_of_becoming_zero_or_nan(self):
         for row in ({"so_luong": float("nan")}, {"thanh_tien": float("inf")},
                     {"so_luong": True}, {"ID_khachhang": float("nan")},
@@ -591,7 +598,13 @@ class CumulativeMoneyProgramTests(unittest.TestCase):
         self.assertEqual(audit["cumulative_missing_months"], ["2026-04", "2026-05", "2026-06"])
         self.assertEqual(audit["eligible_rows"], 0)  # 9,000,000 so far, and the programme is still running
         frames, audit = self._frames(date(2026, 9, 1), date(2026, 9, 30), months)
-        self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 1))  # 12,000,000 lũy kế
+        self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 0))
+        self.assertIn("Can_xem", frames)
+        # Missing masters are unknown, not empty months. Explicit empty masters prove
+        # zero sales for April-June and make the whole-period calculation complete.
+        months.update({f"2026-{m:02}": bill([]) for m in (4, 5, 6)})
+        frames, audit = self._frames(date(2026, 9, 1), date(2026, 9, 30), months)
+        self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 1))
         gift = frames["BaoCao"][frames["BaoCao"]["Mã Đơn hàng"] == "TRẢ THƯỞNG"].iloc[0]
         self.assertEqual((gift["Sản phẩm Tặng"], gift["Số lượng Khuyến mãi"]), ("TIEN", 550_000))
         self.assertEqual(gift["Mã CTKM"], "248/TB/GT/04/2026 - Loại A")
@@ -606,8 +619,40 @@ class CumulativeMoneyProgramTests(unittest.TestCase):
         self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 0))
         self.assertFalse((frames["BaoCao"]["Mã Đơn hàng"] == "TRẢ THƯỞNG").any())
 
+    def test_first_month_of_cumulative_programme_is_also_provisional(self):
+        months = {"2026-04": bill([{"ma_sp": "230100008", "ten_dvt": "Két", "ma_dvt": "Két",
+                                    "so_luong": 10, "thanh_tien": 12_000_000,
+                                    "ngay_giao_hang": "2026-04-10T03:00:00.000Z"}])}
+        frames, audit = self._frames(date(2026, 4, 1), date(2026, 4, 30), months)
+        self.assertEqual((audit["reached_rows"], audit["eligible_rows"]), (1, 0))
+        self.assertIn("Tạm tính", frames["Tong_hop"].to_string())
+        self.assertFalse((frames["BaoCao"]["Mã Đơn hàng"] == "TRẢ THƯỞNG").any())
+
 
 class ProgrammeAutomationTests(unittest.TestCase):
+    def test_letter_levels_keep_separate_business_codes(self):
+        self.assertEqual(calc.bonus_code("559/TB/GT/10/2026 – MỨC A - CT TẾT"),
+                         "559/TB/GT/10/2026 - Mức A")
+        self.assertEqual(calc.bonus_code("559/TB/GT/10/2026 – MỨC B - CT TẾT"),
+                         "559/TB/GT/10/2026 - Mức B")
+
+    def test_undeclared_method_keeps_progress_without_approved_rewards(self):
+        program = summer_program()
+        program["name"] = "570/TB/GT/10/2026_CT nhiều tháng"
+        program["startDate"] = int(pd.Timestamp("2026-10-01", tz="Asia/Ho_Chi_Minh").timestamp() * 1000)
+        program["endDate"] = int(pd.Timestamp("2026-12-31", tz="Asia/Ho_Chi_Minh").timestamp() * 1000)
+        detail = bill([{"ma_sp": "230100008", "ten_dvt": "Két", "ma_dvt": "Két",
+                        "so_luong": 10, "thanh_tien": 12_000_000}])
+        with patch.object(bonus, "fetch_programs", return_value=[program]), \
+                patch.object(bonus, "_bill_detail", return_value=detail):
+            audit = {}
+            frames = bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True, {},
+                                             "test", audit, verbose=False, detail_config={})
+        self.assertEqual((audit["reached_rows"], audit["eligible_rows"], audit["programs_need_method"]), (1, 0, 1))
+        self.assertIn("Can_xem", frames)
+        self.assertEqual(audit["quality_status"], "needs_review")
+        self.assertFalse((frames["BaoCao"]["Mã Đơn hàng"] == "TRẢ THƯỞNG").any())
+
     def test_calculation_method_resolution(self):
         cfg = bonus.load_config()
         summer = summer_program()

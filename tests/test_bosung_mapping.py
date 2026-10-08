@@ -144,6 +144,15 @@ if __name__ == "__main__":
 
 
 class ProgrammeSheetTests(unittest.TestCase):
+    def test_accepted_blank_ss_does_not_leave_historical_ss_tasks(self):
+        state = {'CTKM 2026-07': [{'_sheet': 'NPP', 'DB Code': 'B-A-1',
+                                  'Còn thiếu': ['SS Code', 'SS Name'], 'Số dòng': 10},
+                                 {'_sheet': 'NPP', 'DB Code': 'B-A-2',
+                                  'Còn thiếu': ['SS Code', 'Tên NPP'], 'Số dòng': 5}]}
+        frames = bosung.todo_frames(state, allow_blank_fields=['SS Code', 'SS Name'])
+        self.assertEqual(len(frames['NPP']), 1)
+        self.assertEqual(frames['NPP'].iloc[0]['Còn thiếu'], 'Tên NPP')
+        self.assertEqual(state['CTKM 2026-07'][0]['Còn thiếu'], ['SS Code', 'SS Name'])
     def test_programme_method_parsing_and_validation(self):
         self.assertEqual(bosung.program_mode("Tích lũy cả kỳ"), "cumulative")
         self.assertEqual(bosung.program_mode("THEO THÁNG"), "monthly")

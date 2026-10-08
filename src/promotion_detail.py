@@ -89,6 +89,9 @@ def load_config() -> dict[str, Any]:
                  "fetch_sales_structure", "allow_incomplete_publish", "bosung_mapping"):
         if type(cfg.get(flag, False)) is not bool:
             raise ValueError(f"{flag} must be an explicit boolean")
+    allowed = cfg.get("allow_blank_fields", [])
+    if not isinstance(allowed, list) or any(field not in OPTIONAL_MAPPING_FIELDS for field in allowed):
+        raise ValueError("allow_blank_fields can contain only descriptive mapping fields")
     for key in ("employees", "customers", "customer_codes", "products", "unit_conversions", "program_codes"):
         mapping = cfg.get(key, {})
         if not isinstance(mapping, dict):
@@ -168,6 +171,44 @@ def is_gift(row: dict[str, Any]) -> bool:
     return flag in {"true", "1"} or label == "khuyến mãi"
 
 
+def source_unit(row: dict[str, Any], gift: bool, cfg: dict[str, Any] | None = None) -> tuple[str, str]:
+    """Recover a gift's unit from its own promotion snapshot on the same order.
+
+    The product catalogue does not identify the unit used by a historical line.
+    A linked order promotion does: require its exact ID, SKU and a single unit.
+    Sale units and ambiguous gifts remain unresolved.
+    """
+    fields = ("ten_dvt", "ma_dvt", "ten_dvt_km", "ma_dvt_km") if gift else ("ten_dvt", "ma_dvt")
+    for field in fields:
+        if text(row.get(field)):
+            return text(row[field]), field
+    sku = text(row.get("ma_sp")) or (text(row.get("ma_sp_km")) if gift else "")
+    key = "|".join([text(row.get("ma_phieu")), text(row.get("stt")), sku])
+    override = (cfg or {}).get("line_unit_overrides", {}).get(key)
+    if override:
+        if not isinstance(override, dict) or not text(override.get("unit")) or not text(override.get("source")):
+            raise ValueError("Line unit override requires a unit and its evidence source")
+        return text(override["unit"]), text(override["source"])
+    if not gift:
+        return "", ""
+    pid = text(row.get("ctkmFull_id"))
+    if not pid or not sku:
+        return "", ""
+    units = set()
+    for entry in promotion_list(row.get("promotion")):
+        if text(entry.get("id")) != pid:
+            continue
+        for product in entry.get("product") or []:
+            if not isinstance(product, dict) or text(product.get("ma_san_pham")) != sku:
+                continue
+            unit = product.get("don_vi_tinh")
+            if isinstance(unit, dict):
+                value = text(unit.get("viewData")) or text(unit.get("choice_values"))
+                if value:
+                    units.add(value)
+    return (next(iter(units)), "promotion.product.don_vi_tinh") if len(units) == 1 else ("", "")
+
+
 def enrich_product_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
     """Read the documented Product catalogue for brand and packaging-unit conversion."""
     cfg = json.loads(json.dumps(cfg))
@@ -206,6 +247,9 @@ def enrich_product_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[s
         brand = text(row.get("nhan_hieu"))
         if brand:
             cfg.setdefault("products", {}).setdefault(sku, {}).setdefault("Brand", brand)
+        package = {"1 way": "1 Way", "2 way": "2 Way"}.get(text(row.get("nganh_hang")).casefold())
+        if package:
+            cfg.setdefault("products", {}).setdefault(sku, {}).setdefault("Package", package)
         large, small = text(row.get("dvt_chan")), text(row.get("dvt_le"))
         if large.casefold() in {"thùng", "két", "bình"} and small and small != large:
             try:
@@ -260,7 +304,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
                 if not text(row.get(field)):
                     row[field] = row.get(f"{field}_km")
         sku = text(row.get("ma_sp"))
-        unit = text(row.get("ten_dvt")) or text(row.get("ma_dvt"))
+        unit, _ = source_unit(row, gift, cfg)
         item = dict.fromkeys(COLUMNS, None)
         if not gift:
             item["Số lượng Khuyến mãi"] = 0
@@ -332,7 +376,7 @@ def build_report(detail: pd.DataFrame, cfg: dict[str, Any]) -> tuple[pd.DataFram
         for label in ["Vùng", "Tỉnh", "SS Code", "SS Name", "DB Code", "Tên NPP", "Brand", "Package", "Loại KH"]:
             if money and label in {"Brand", "Package"}:
                 continue  # cash / voucher reward: no product master data
-            if not text(item[label]):
+            if not text(item[label]) and label not in cfg.get("allow_blank_fields", []):
                 issue(label, "Thiếu mapping danh mục")
         quantity_field = "Số lượng Khuyến mãi" if gift else "Số lượng SELL-OUT"
         try:
@@ -390,13 +434,11 @@ def unit_trace(detail: pd.DataFrame, report: pd.DataFrame, cfg: dict[str, Any]) 
             continue
         gift = is_gift(row)
         sku = text(row.get("ma_sp")) or (text(row.get("ma_sp_km")) if gift else "")
-        unit = text(row.get("ten_dvt")) or text(row.get("ma_dvt"))
-        if not unit and gift:
-            unit = text(row.get("ten_dvt_km")) or text(row.get("ma_dvt_km"))
+        unit, unit_source = source_unit(row, gift, cfg)
         conversion = cfg.get("unit_conversions", {}).get(f"{sku}|{unit}", {})
         target = unit if unit.casefold() in {"thùng", "két", "bình"} or (gift and unit.casefold() == "cái") else conversion.get("target_unit")
         result.append({"Mã Đơn hàng": text(row.get("ma_phieu")), "Dòng nguồn": text(row.get("stt")),
-                       "Mã sản phẩm": sku, "Hàng tặng": gift, "ĐVT nguồn": unit,
+                       "Mã sản phẩm": sku, "Hàng tặng": gift, "ĐVT nguồn": unit, "Nguồn ĐVT": unit_source,
                        "ĐVT báo cáo": target, "Hệ số": conversion.get("factor", 1 if target == unit else None)})
     return _frame(result, "DonViTinh")
 
@@ -498,7 +540,8 @@ def run() -> dict[str, Any]:
             label = f"CTKM {anchor:%Y-%m}"
             todo_updates[label] = bosung.aggregate(bosung.todo_rows(issues, cfg), label)
         if use_bosung:  # also when the month is blocked: the list says what to fix on DMS
-            manifest["bosung"] = bosung.publish(todo_updates, sharepoint, drive, dry_run=dry)
+            manifest["bosung"] = bosung.publish(todo_updates, sharepoint, drive, dry_run=dry,
+                                                allow_blank_fields=cfg.get("allow_blank_fields", []))
         incomplete = any(result["issues"] for _, _, result in prepared)
         if not dry and cfg.get("publish_enabled", False) and any(result["blocking_issues"] for _, _, result in prepared):
             raise ValueError("CTKM report has invalid source values or identity links. Nothing published.")

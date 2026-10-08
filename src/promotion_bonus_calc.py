@@ -210,8 +210,11 @@ SALE_COLUMNS = ("ID_khachhang", "ma_kh", "ma_sp", "ten_dvt", "ma_dvt", "so_luong
                 "thanh_tien", "ngay_giao_hang", "is_km")
 
 
-def sold_lines(detail: pd.DataFrame, first: date, last: date) -> list[dict[str, Any]]:
+def sold_lines(detail: pd.DataFrame, first: date, last: date,
+               unit_config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Bill ChiTietSP rows that can count toward a programme in the period."""
+    from promotion_detail import source_unit
+
     if detail.empty:
         return []
     missing = [c for c in SALE_COLUMNS if c not in detail.columns]
@@ -225,7 +228,7 @@ def sold_lines(detail: pd.DataFrame, first: date, last: date) -> list[dict[str, 
         if day is None or not first <= day <= last:
             continue
         customer, sku = ui.text(row.get("ID_khachhang")), ui.text(row.get("ma_sp"))
-        unit = ui.text(row.get("ten_dvt")) or ui.text(row.get("ma_dvt"))
+        unit, _ = source_unit(row, False, unit_config)
         if not customer or not sku:
             raise ValueError("Bill sale line is missing customer ID or product code")
         lines.append({"raw": row, "customer": customer,
@@ -373,6 +376,7 @@ def compute(
                 "_rewards": [(sku, name, unit, qty * multiplier) for sku, name, unit, qty in rule.rewards]
                 if eligible == "Có" else [],
                 "_eligible": eligible,
+                "_review_display": eligible == REVIEW_DISPLAY,
             })
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
                                         [target], rewards))
@@ -394,9 +398,9 @@ def bonus_code(name: str) -> str:
     match = re.match(r"^\s*(\d+/TB/GT/\d+/\d{4}(?:_Q[1-4])?)", name or "")
     if not match:
         return (name or "").strip()
-    level = re.search(r"M[ỨỨứU]C\s*(\d+)", name, flags=re.IGNORECASE)
+    level = re.search(r"M[ỨỨứU]C\s*(\d+|[A-Z])\b", name, flags=re.IGNORECASE)
     if level:
-        return f"{match.group(1)} - Mức {level.group(1)}"
+        return f"{match.group(1)} - Mức {level.group(1).upper()}"
     tier = re.search(r"LO[ẠA]I\s*([A-Z])\b", name, flags=re.IGNORECASE)
     return f"{match.group(1)} - Loại {tier.group(1).upper()}" if tier else match.group(1)
 
@@ -506,6 +510,16 @@ def provisional(results: list[ui.ProgramResult], end: date) -> None:
                 row["_rewards"] = []
 
 
+def hold_rewards(results: list[ui.ProgramResult], reason: str) -> None:
+    """Keep customer progress visible while required calculation inputs are missing."""
+    for result in results:
+        for row in result.rows:
+            row["_eligible"] = reason
+            row["extra"]["Đủ điều kiện trả thưởng"] = reason
+            row["objTraThuong"] = {}
+            row["_rewards"] = []
+
+
 def diagnostics(results: list[ui.ProgramResult]) -> list[dict[str, Any]]:
     out = []
     for result in results:
@@ -519,6 +533,7 @@ def diagnostics(results: list[ui.ProgramResult]) -> list[dict[str, Any]]:
             "display_required": bool(extra and extra[0].get("Trưng bày yêu cầu")),
             "display_passed": sum(1 for e in extra if e.get("Kết quả trưng bày") == DISPLAY_PASS),
             "eligible": sum(1 for e in extra if e.get("Đủ điều kiện trả thưởng") == "Có"),
-            "review_display": sum(1 for e in extra if e.get("Đủ điều kiện trả thưởng") == REVIEW_DISPLAY),
+            "review_display": sum(bool(row.get("_review_display", row.get("_eligible") == REVIEW_DISPLAY))
+                                  for row in rows),
         })
     return out

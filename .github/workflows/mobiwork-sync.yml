@@ -346,6 +346,8 @@ jobs:
               ("Source", "source"), ("Customer target rows", "customer_row_count"),
               ("Reached", "reached_rows"), ("Eligible", "eligible_rows"),
               ("Display needs review", "review_display_rows"),
+              ("Program levels needing period method", "programs_need_method"),
+              ("Missing cumulative months", "cumulative_missing_months"),
               ("Quality", "quality_status"), ("Blocking issues", "blocking_issues"),
               ("Template issues", "template_issues"),
               ("Dry run", "dry_run"),
