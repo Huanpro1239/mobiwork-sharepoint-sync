@@ -379,6 +379,14 @@ def compute(
     return results, issues
 
 
+def program_prefix(name: str) -> str:
+    """Business code shared by all levels/tiers of a programme, e.g. "246/TB/GT/04/2026"."""
+    import re
+
+    match = re.match(r"^\s*(\d+/TB/GT/\d+/\d{4}(?:_Q[1-4])?)", name or "")
+    return match.group(1) if match else (name or "").strip()
+
+
 def bonus_code(name: str) -> str:
     """Business code as written in the DMS template, keeping the level (Mức n)."""
     import re

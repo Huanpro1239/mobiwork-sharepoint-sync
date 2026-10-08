@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
@@ -427,6 +427,14 @@ def run() -> dict[str, Any]:
             drive = os.environ.get("SHAREPOINT_DRIVE_ID", "").strip()
             if not drive:
                 drive = sharepoint.get_drive_id(sharepoint.get_site_id())
+        previous_days = int(os.environ.get("PROMOTION_DETAIL_PREVIOUS_DAYS", "0") or 0)
+        today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+        if scope == "touched" and not dry and previous_days and today.day <= previous_days:
+            # Early in a month, keep refreshing last month's report (late deliveries,
+            # back-dated edits and the monthly rebuild of the order master).
+            previous = today.replace(day=1) - timedelta(days=1)
+            if all((a.year, a.month) != (previous.year, previous.month) for a in anchors):
+                anchors = [previous, *anchors]
         if scope == "all_existing":
             anchors = discover_bill_months(sharepoint, drive, bill,
                                           datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date())

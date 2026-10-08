@@ -39,7 +39,23 @@ SHEETS: dict[str, dict[str, Any]] = {
                "values": ["ĐVT báo cáo", PER_PACK], "target": "unit_overrides"},
     "KhachHang": {"key": ["Mã Khách hàng"], "info": ["Tên Khách hàng"], "values": ["Tỉnh", "Loại KH"],
                   "target": "customer_overrides"},
+    "ChuongTrinh": {"key": ["Mã CT"], "info": ["Tên CT", "Thời gian"], "values": ["Cách tính"],
+                    "target": "program_overrides"},
 }
+CUMULATIVE, MONTHLY = "Tích lũy cả kỳ", "Theo tháng"
+
+
+def program_mode(value: Any) -> str:
+    """'Tích lũy cả kỳ' -> cumulative, 'Theo tháng' -> monthly ('' when unrecognised)."""
+    import unicodedata
+
+    plain = unicodedata.normalize("NFD", str(value or "").casefold().replace("đ", "d"))
+    plain = " ".join("".join(c for c in plain if unicodedata.category(c) != "Mn").split())
+    if "tich luy" in plain or "ca ky" in plain:
+        return "cumulative"
+    if "thang" in plain:
+        return "monthly"
+    return ""
 TAIL = ["Còn thiếu", "Nguyên nhân", "Hiện có", "Gợi ý", "Số dòng", "Nguồn"]
 DMS_SHEET = "SuaTrenDMS"
 DMS_COLUMNS = ["Mã Đơn hàng", "Dòng nguồn", "Trường", "Lý do", "Mã SP nguồn", "ĐVT nguồn", "Số dòng", "Nguồn"]
@@ -59,6 +75,9 @@ GUIDE = [
     "7. Lần đồng bộ kế tiếp (tự động) sẽ áp dụng. Tháng cũ: chạy workflow với "
     "report_scope=promotion_history để xuất lại.",
     "8. Sheet SuaTrenDMS trong TongHop là lỗi dữ liệu gốc (thiếu ngày, giá...) phải sửa trên DMS.",
+    "9. ChuongTrinh: chương trình kéo dài nhiều tháng cần chọn Cách tính = 'Tích lũy cả kỳ' "
+    "(cộng dồn từ ngày bắt đầu CT, trả thưởng ở tháng kết thúc) hoặc 'Theo tháng' (mặc định). "
+    "Mã CT là phần đầu tên CT, vd 246/TB/GT/04/2026, áp dụng cho mọi mức/loại.",
     "Thứ tự ưu tiên: file này > cấu hình > kho xuất của đơn > cây phòng ban hiện tại > danh mục DMS.",
 ]
 
@@ -100,6 +119,9 @@ def parse_overrides(content: bytes | None) -> tuple[dict[str, dict[str, Any]], l
             values = {c: text(row.get(c)) for c in spec["values"] if text(row.get(c))}
             if not values:
                 continue
+            if sheet == "ChuongTrinh" and not program_mode(values.get("Cách tính")):
+                problems.append(f"ChuongTrinh dòng {index}: Cách tính phải là '{CUMULATIVE}' hoặc '{MONTHLY}'")
+                continue
             if sheet == "QuyDoi":
                 target = values.get("ĐVT báo cáo", "")
                 try:
@@ -120,7 +142,8 @@ def parse_overrides(content: bytes | None) -> tuple[dict[str, dict[str, Any]], l
 
 def apply_overrides(cfg: dict[str, Any], overrides: dict[str, dict[str, Any]]) -> dict[str, Any]:
     result = copy.deepcopy(cfg)
-    for target in ("npp_overrides", "employee_overrides", "product_overrides", "customer_overrides"):
+    for target in ("npp_overrides", "employee_overrides", "product_overrides", "customer_overrides",
+                   "program_overrides"):
         merged = dict(result.get(target) or {})
         for key, values in (overrides.get(target) or {}).items():
             merged[key] = {**merged.get(key, {}), **values}
@@ -287,7 +310,7 @@ def summary(frames: dict[str, pd.DataFrame]) -> dict[str, Any]:
             causes = frame["Nguyên nhân"].astype(str).value_counts()
             result[sheet] = {"keys": len(frame), "lines": int(frame["Số dòng"].sum()), "missing": missing,
                              "causes": {k[:90]: int(v) for k, v in causes.items()}}
-            if sheet in {"NPP", "SanPham", "QuyDoi"}:
+            if sheet in {"NPP", "SanPham", "QuyDoi", "ChuongTrinh"}:
                 key = SHEETS[sheet]["key"][0]
                 result[sheet]["items"] = [f"{r[key]}|{r['Số dòng']}|{str(r['Nguyên nhân'])[:60]}"
                                           for r in frame.head(10).to_dict("records")]
@@ -362,6 +385,40 @@ def load_overrides(sharepoint: Any = None, drive: str = "") -> dict[str, dict[st
     return overrides
 
 
+def add_missing_sheets(sharepoint: Any, drive: str, output_dir: Path = Path("output")) -> list[str]:
+    """Add sheets introduced after the user file was created; existing sheets are untouched."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
+
+    content = sharepoint.download_file_bytes(drive, f"{FOLDER}/{USER_FILE}")
+    if not content:
+        return []
+    book = load_workbook(BytesIO(content))
+    missing = [sheet for sheet in SHEETS if sheet not in book.sheetnames]
+    if not missing:
+        return []
+    yellow, grey = PatternFill("solid", fgColor="FFF2CC"), PatternFill("solid", fgColor="D9D9D9")
+    for sheet in missing:
+        ws = book.create_sheet(sheet)
+        for index, column in enumerate(columns(sheet), start=1):
+            cell = ws.cell(row=1, column=index, value=column)
+            cell.font = Font(bold=True)
+            cell.fill = yellow if column in SHEETS[sheet]["values"] else grey
+            ws.column_dimensions[cell.column_letter].width = 40 if column in {"Tên CT", "Gợi ý"} else 18
+        ws.freeze_panes = "B2"
+    if "HuongDan" in book.sheetnames:
+        guide = book["HuongDan"]
+        known = {str(c.value) for c in guide["A"]}
+        for line in GUIDE:
+            if line not in known:
+                guide.append([line])
+    path = output_dir / USER_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    book.save(path)
+    sharepoint.upload_file(drive, path, FOLDER)
+    return missing
+
+
 def publish(updates: dict[str, list[dict[str, Any]]], sharepoint: Any = None, drive: str = "",
             dry_run: bool = False, output_dir: Path = Path("output")) -> dict[str, Any]:
     """Merge this run's per-month rows into the shared state and refresh the to-do workbook.
@@ -391,6 +448,11 @@ def publish(updates: dict[str, list[dict[str, Any]]], sharepoint: Any = None, dr
             template = write_book(user_template(frames), output_dir / USER_FILE, GUIDE)
             sharepoint.upload_file(drive, template, FOLDER)
             result["user_file_created"] = True
+        else:
+            try:
+                result["user_sheets_added"] = add_missing_sheets(sharepoint, drive, output_dir)
+            except Exception as exc:  # file open in Excel: retried next run
+                _notice("warning", "BoSung_Mapping sheets not added", f"{type(exc).__name__}: {exc}")
         try:
             sharepoint.upload_file(drive, todo, FOLDER)
             result["todo_published"] = True

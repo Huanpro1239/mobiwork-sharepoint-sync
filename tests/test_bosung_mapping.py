@@ -141,3 +141,27 @@ class FillInTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProgrammeSheetTests(unittest.TestCase):
+    def test_programme_method_parsing_and_validation(self):
+        self.assertEqual(bosung.program_mode("Tích lũy cả kỳ"), "cumulative")
+        self.assertEqual(bosung.program_mode("THEO THÁNG"), "monthly")
+        self.assertEqual(bosung.program_mode("quý"), "")
+        overrides, problems = bosung.parse_overrides(workbook({"ChuongTrinh": [
+            {"Mã CT": "570/TB/GT/10/2026", "Cách tính": "Tích lũy cả kỳ"},
+            {"Mã CT": "571/TB/GT/10/2026", "Cách tính": "quý"}]}))
+        self.assertEqual(list(overrides["program_overrides"]), ["570/TB/GT/10/2026"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("570/TB/GT/10/2026", bosung.apply_overrides({}, overrides)["program_overrides"])
+
+    def test_missing_sheets_are_added_without_touching_user_data(self):
+        sp = Mock()
+        sp.download_file_bytes.return_value = workbook({"NPP": [{"DB Code": "B-A-1", "SS Code": "GS1"}]})
+        with tempfile.TemporaryDirectory() as folder:
+            added = bosung.add_missing_sheets(sp, "drive", Path(folder))
+            book = pd.read_excel(Path(folder) / bosung.USER_FILE, sheet_name=None)
+        self.assertIn("ChuongTrinh", added)
+        self.assertEqual(book["NPP"].iloc[0]["SS Code"], "GS1")
+        self.assertEqual(list(book["ChuongTrinh"].columns)[:2], ["Mã CT", "Tên CT"])
+        sp.upload_file.assert_called_once()
