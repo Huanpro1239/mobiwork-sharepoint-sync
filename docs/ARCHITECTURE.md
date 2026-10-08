@@ -63,6 +63,11 @@ chặn các bước ảnh/trả thưởng/CTKM phía sau. Retry mạng có giớ
 tổng bản ghi, khóa dữ liệu, giới hạn Excel hoặc nội dung publish không khớp đều
 giữ nguyên cơ chế từ chối dữ liệu của bộ xuất nguồn.
 
+Microsoft Graph `423 Locked` được retry có giới hạn, theo `Retry-After` nếu có hoặc
+backoff hiện tại. Việc thay file vẫn giữ `If-Match` và rollback; không ép bỏ khóa.
+Nếu file bị sửa trong lúc chờ thì `412` dừng cập nhật. Khóa kéo dài vẫn báo lỗi xuất
+bản để người dùng đóng file rồi chạy lại, không đổi tên thành một báo cáo trùng.
+
 `status=success` xác nhận lệnh hoàn tất. `needs_review=true` ghi rõ các mục nghiệp vụ
 chưa đủ dữ liệu; không tự xác nhận trả thưởng hoặc xóa `CanBoSung` để làm báo cáo sạch.
 Thiếu SS được để trống theo cấu hình; thiếu quy cách, kỳ tích lũy, phương pháp tính,
