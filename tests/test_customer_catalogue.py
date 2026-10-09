@@ -19,6 +19,16 @@ def customer(**changes):
 
 
 class CustomerCatalogueTests(unittest.TestCase):
+    def test_contact_person_uses_observed_customer_field_and_never_customer_name(self):
+        rows = [customer(nguoi_lien_he="Contact person"),
+                customer(ID="missing", makh="KH02"),
+                customer(ID="structured", makh="KH03", nguoi_lien_he=["ambiguous"])]
+        cfg = enrich_customer_config(self.client([{"total": 3, "data": rows}]), {})
+        self.assertEqual(cfg["customer_catalogue"]["customer-id"]["Tên người liên hệ"], "Contact person")
+        self.assertEqual(cfg["customer_catalogue"]["missing"]["Tên người liên hệ"], "")
+        self.assertEqual(cfg["customer_catalogue"]["structured"]["Tên người liên hệ"], "")
+        self.assertEqual(cfg["customer_catalogue_audit"]["structured_fields_not_mapped"]["nguoi_lien_he"], 1)
+
     def client(self, payloads):
         client = Mock()
         # Second creation-date window (today) is empty unless a test says otherwise.
