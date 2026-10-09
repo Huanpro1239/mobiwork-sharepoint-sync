@@ -526,18 +526,37 @@ def _calc_month_frames(
                                  "và CTKM có trên đơn tháng đó. CT không có khách/doanh số hoặc chưa tính được "
                                  "vẫn hiển thị. Không phải danh mục CTKM chưa phát sinh trên đơn. "
                                  "Voucher là quà theo mã nguồn; không suy giá tiền từ tên quà."),
+        ("Theo dõi tích lũy", "TheoDoiTichLuy theo mẫu khách tham gia: một khách/mức CT là 1 suất "
+                              "theo xác nhận ngày 09/10/2026; ngày đăng ký và người liên hệ thiếu nguồn để trống. "
+                              "TỔNG TÍCH LŨY là tổng từ đầu CT; CÒN LẠI là số âm chưa đạt mục tiêu tối thiểu "
+                              "của kỳ xét thưởng (tháng hoặc cả kỳ). Số suất đạt chỉ phản ánh ngưỡng doanh số, "
+                              "chưa phải số suất đã trả thưởng. Theo tháng: mỗi tháng xét riêng; cả kỳ: "
+                              "số suất tháng là chênh lệch số suất lũy kế, có thể âm khi điều chỉnh hoặc vượt "
+                              "giới hạn trên. Tháng ngoài CT, tương lai hoặc thiếu nguồn để trống; "
+                              "tổng chưa đủ nguồn để trống kèm lý do. Danh sách tham gia là danh sách hiện tại."),
     ])
     summary_frames = ui.build_ui_frames(results, first, last, "",
                                         "Tính từ OpenAPI (PromotionBonus + Đơn bán hàng)", notes)
     report, detail_issues = _template_report(client, customers, results, first, detail_config,
                                              calc.average_prices(all_lines))
-    frames: dict[str, pd.DataFrame] = {"BaoCao": report, "Thuong_theo_don": reward_by_order(report)}
+    from promotion_tracking import tracking_report
+
+    tracking = tracking_report(results, first, last, lambda month: _cached_bill(month, dry_run),
+                               customer_map, detail_config,
+                               {r.program_id: _program_mode(r.program, cfg, program_overrides) for r in results})
+    manifest["tracking_report"] = {"rows": len(tracking), "months": tracking.attrs["months"],
+                                   "missing_months": tracking.attrs["missing_months"],
+                                   "source_warning_rows": int(tracking["Thông tin nguồn"].ne("").sum()),
+                                   "slots_per_customer_level": 1}
+    frames: dict[str, pd.DataFrame] = {"TheoDoiTichLuy": tracking}
     from promotion_reward_report import invoice_promotions, program_coverage, reward_ledger
 
     invoice_cfg = {**detail_config, "customer_catalogue": customers}
     invoice_report, invoice_issues, invoice_programs = invoice_promotions(bill_detail, invoice_cfg, first)
-    frames["TraThuong"] = ledger = reward_ledger(results, first)
     frames["KhuyenMaiDonHang"] = invoice_report
+    frames["TraThuong"] = ledger = reward_ledger(results, first)
+    frames["BaoCao"] = report
+    frames["Thuong_theo_don"] = reward_by_order(report)
     frames["ChuongTrinh"] = pd.concat([program_coverage(results, first, issues), invoice_programs],
                                        ignore_index=True)
     if not invoice_issues.empty:
@@ -590,7 +609,8 @@ def _calc_month_frames(
     manifest["missing_fields"] = missing
     manifest["quality_status"] = "needs_review" if (
         calculation_issues or not detail_issues.empty or conflicts or manifest["review_display_rows"]
-        or manifest.get("display_error") or not customers) else "complete_supported_rules"
+        or manifest.get("display_error") or not customers
+        or manifest["tracking_report"]["source_warning_rows"]) else "complete_supported_rules"
     manifest["dms_equivalence_verified"] = False
     _github_notice(f"Promotion Bonus template {first:%m/%Y}",
                    f"rows={len(report)} issues={len(detail_issues)} missing={missing}")

@@ -85,10 +85,11 @@ Cấu hình đích lưu tại `config/promotion_bonus.json`:
 
 ```text
 06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
-├─ BaoCao: chi tiết theo mẫu, chỉ khách đủ điều kiện có dòng TRẢ THƯỞNG
-├─ Thuong_theo_don: thưởng phân bổ theo đơn/chương trình của khách đủ điều kiện
+├─ TheoDoiTichLuy: mẫu theo dõi KH tham gia, mục tiêu, kết quả và suất đạt từng tháng
+├─ KhuyenMaiDonHang: mẫu chi tiết CTKM với đơn/quà thực tế DMS, giữ 26 cột A–Z
 ├─ TraThuong: từng khách/CT/khoản tiền hoặc quà, gồm dự kiến và đủ điều kiện
-├─ KhuyenMaiDonHang: khuyến mãi thực tế trên đơn DMS, không cộng lại vào thưởng tính toán
+├─ BaoCao: dòng bán tính vào CT và dòng TRẢ THƯỞNG của khách đủ điều kiện
+├─ Thuong_theo_don: thưởng phân bổ theo đơn/chương trình của khách đủ điều kiện
 ├─ ChuongTrinh: toàn bộ mức trả thưởng trong kỳ và CTKM có trên đơn, kể cả CT chưa tính được
 ├─ Tong_hop: chỉ tiêu và thưởng dự kiến theo khách/chương trình
 ├─ Ket_qua: sản phẩm thưởng của khách đủ điều kiện
@@ -96,6 +97,18 @@ Cấu hình đích lưu tại `config/promotion_bonus.json`:
 ├─ CanBoSung: chỉ tạo khi thiếu mapping hoặc lỗi nguồn/quy đổi
 └─ Can_xem: quy tắc, kỳ tích lũy, trưng bày hoặc số suất cần kiểm tra
 ```
+
+Hai sheet đầu là hai góc nhìn theo các mẫu người dùng cung cấp, trong cùng file Current
+và bản lưu từng tháng, được cập nhật bởi pipeline hằng ngày. `TheoDoiTichLuy` lấy toàn bộ
+khách đăng ký ở các mức CT trong kỳ, kể cả chưa mua hàng. Mỗi khách/mức là 1 suất theo
+xác nhận người dùng; ngày đăng ký và người liên hệ thiếu nguồn để trống. Các cột tháng
+theo thời gian áp dụng CT, có năm để không lẫn hai năm. Mục tiêu và đơn vị lấy từ quy tắc
+CT; số suất đạt tính riêng từng tháng hoặc phần tăng/giảm của lũy kế tùy cách tính đã khai.
+Tổng tích lũy thể hiện doanh số/sản lượng từ đầu CT, còn lại là số âm chưa đạt mục tiêu
+tối thiểu của kỳ xét thưởng. Thiếu tháng nguồn/ĐVT thì để trống kỳ bị ảnh hưởng và tổng,
+giữ nguyên kết quả tháng đủ nguồn, ghi lý do ở `Thông tin nguồn`. Tháng tương lai/ngoài CT
+để trống. Số suất đạt chưa phải xác nhận chi thưởng; trạng thái đủ điều kiện lấy từ bộ
+tính hiện có. Danh sách tham gia hiện tại không xác nhận thời điểm tham gia trong quá khứ.
 
 `BaoCao` trả thưởng giữ 26 cột A–Z của mẫu và thêm cột phân bổ thưởng theo đơn,
 tiền mặt phân bổ, giá trị quà ước tính và tiền mặt trả thưởng. Cột Z chỉ chứa số lượng

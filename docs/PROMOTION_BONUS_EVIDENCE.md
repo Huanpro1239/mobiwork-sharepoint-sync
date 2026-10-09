@@ -205,7 +205,38 @@ override, then the confirmed SKU default. Gift units and other SKUs are not infe
 
 ## Template layout (2026-10-07)
 
-Workbooks open on sheet `BaoCao` in the user's "Báo cáo chi tiết CTKM theo KH" layout (config/promotion_detail_layout.json, title "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG - THÁNG MM/YYYY"). Rows are the Bill lines counted for each programme (Mã CTKM = programme code incl. level, e.g. `008/TB/GT/01/2026_Q4 - Mức 2`), rendered through promotion_detail.build_report so Vùng/Tỉnh/SS/NPP/Brand/Package and KÉT/THÙNG/BÌNH conversions match the CTKM report. Only eligible customers receive a `TRẢ THƯỞNG` line per reward. Unconfirmed display results, missing period inputs and undecided period methods retain proposed rewards but hold confirmation. Missing mappings go to `CanBoSung`.
+`BaoCao` uses the user's "Báo cáo chi tiết CTKM theo KH" layout (config/promotion_detail_layout.json, title "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG - THÁNG MM/YYYY"). Rows are the Bill lines counted for each programme (Mã CTKM = programme code incl. level, e.g. `008/TB/GT/01/2026_Q4 - Mức 2`), rendered through promotion_detail.build_report so Vùng/Tỉnh/SS/NPP/Brand/Package and KÉT/THÙNG/BÌNH conversions match the CTKM report. Only eligible customers receive a `TRẢ THƯỞNG` line per reward. Unconfirmed display results, missing period inputs and undecided period methods retain proposed rewards but hold confirmation. Missing mappings go to `CanBoSung`.
+
+## Two template views in one automated report (2026-10-09)
+
+The user supplied the accumulation-customer tracking template and the 26-column CTKM
+template. The Current/monthly bonus workbook now opens on `TheoDoiTichLuy`, followed by
+`KhuyenMaiDonHang` styled with the same detail template. The tracking view keeps the first
+20 fields of the supplied tracking template and expands month/attained-slot columns to
+the selected programmes' date ranges, including years. It includes every registered
+customer for each supported catalogue level, even without sales. The user's explicit
+confirmation on October 9 defines one customer/level as one slot and leaves absent
+registration dates blank. Programme-global `soSuat` is never substituted for a customer's slots.
+
+Progress reads the existing cached Bill masters, sales only, exact rule SKU/unit matching,
+with delivery-date periods. It reuses threshold, upper-bound, tier and BoiSo semantics.
+Monthly programmes award threshold slots independently in each month; cumulative
+programmes show increments of running attainment (including negative adjustments),
+so summing monthly slots does not repeat a cumulative reward. Current eligibility and
+cash/gift quantities remain owned by the existing calculator/ledger. Total accumulation
+is informational across the programme; remaining is a non-positive shortfall for the
+current calculation period, zero at the minimum target. It is not proof that display
+or maximum-threshold conditions passed. The calculation mode, target unit, current
+period actual and eligibility status are explicit beside the template fields.
+
+Future/out-of-programme months are blank. A missing master or qualifying sale unit
+leaves the affected month and aggregate totals unavailable, with a source reason;
+other valid monthly results remain visible. Missing registration/contact fields stay
+blank, not inferred from programme dates or customer names. Historical membership
+and full Paybonus parity remain unverified. The second view keeps actual invoice
+sales/gifts once each and pre-VAT amount in W, physical gift quantity in Z, without
+mixing actual invoices with calculated reward lines. Existing supporting views and
+legacy standalone CTKM exports remain compatible.
 
 ## Cash, gifts and invoice promotion coverage (2026-10-08)
 
