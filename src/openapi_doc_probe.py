@@ -98,11 +98,17 @@ def run() -> None:
         spec_fields(text)
         queue += [u for u in linked_urls(url, text) if u not in seen and "mobiwork" in u]
     joined = "\n".join(corpus)
-    for keyword, width in (("tt_cham_diem", 3500), ("Trạng thái chấm", 800), ("trang_thai", 600)):
+    for keyword, width in (("soSuat", 600), ("gioiHan", 600)):
         parts = windows(joined, keyword, width=width, limit=1)
         notice(f"OpenAPI text {keyword}", " ||| ".join(parts) if parts else "not found")
-    index = joined.find("DisplayData")
-    notice("OpenAPI DisplayData", joined[max(0, index - 200):index + 3500] if index >= 0 else "not found")
+    index = joined.find('"/OpenAPI/V1/DisplayData"')
+    if index < 0:
+        index = joined.find("/DisplayData")
+    end = joined.find('"responses"', index)
+    notice("OpenAPI DisplayData params", joined[index:end] if index >= 0 else "not found")
+    index = joined.find('"/OpenAPI/V1/PromotionBonus"')
+    end = joined.find('"responses"', index)
+    notice("OpenAPI PromotionBonus params", joined[index:end] if index >= 0 else "not found")
 
 
 if __name__ == "__main__":
