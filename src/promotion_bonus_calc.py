@@ -54,6 +54,7 @@ MONEY_SKU, MONEY_NAME, MONEY_UNIT = "TIEN", "Tiền thưởng", "đồng"
 DISPLAY_PASS = "Đạt"
 REVIEW_DISPLAY = "Cần kiểm tra trưng bày"
 UNIT_HOLD = "Chờ xác nhận ĐVT dòng đơn"
+QUOTA_OUT = "Hết suất CT (khách đạt sau)"
 
 
 # --------------------------------------------------------------------------- rules
@@ -425,6 +426,15 @@ def compute(
             matched = next((tier for tier in rule.tiers or (rule,) if reached(actual, tier)), None)
             multiplier = reward_multiplier(actual, matched) if matched else 0
             selected_rewards = matched.rewards if matched else ()
+            reached_at = ""
+            if matched:  # first delivery day the running total met the matched threshold
+                running = 0.0
+                for raw, contribution in sorted(counted, key=lambda item: str(
+                        local_day((item[0] or {}).get("ngay_giao_hang")) or "")):
+                    running += contribution
+                    if running >= matched.minimum:
+                        reached_at = str(local_day((raw or {}).get("ngay_giao_hang")) or "")
+                        break
             display = ""
             if rule.display_program:
                 display = (displays or {}).get((code, norm(rule.display_program)), "Chưa có dữ liệu")
@@ -466,6 +476,8 @@ def compute(
                 "_eligible": eligible,
                 "_review_display": eligible == REVIEW_DISPLAY,
                 "_unit_gaps": unit_gaps,
+                "_reached_at": reached_at,
+                "_slots": multiplier,
             })
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
                                         [target], rewards))
@@ -643,15 +655,21 @@ DISPLAY_URL = "https://openapi.mobiwork.vn/OpenAPI/V1/DisplayData"
 
 
 def fetch_display_records(client: Any, first: date, last: date,
-                          page_size: int = 1000, max_pages: int = 500) -> list[dict[str, Any]]:
-    """All DisplayData gradings in the period (paginated, repeat-page guarded)."""
+                          page_size: int = 1000, max_pages: int = 500,
+                          programme: str | None = None) -> list[dict[str, Any]]:
+    """DisplayData gradings in the period (paginated, repeat-page guarded).
+
+    ``programme`` is the documented ``ten_cttb`` filter (display programme name).
+    """
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
     for page in range(1, max_pages + 1):
+        params = {"tu_ngay": first.strftime("%d/%m/%Y"), "den_ngay": last.strftime("%d/%m/%Y"),
+                  "page_size": page_size, "page_number": page}
+        if programme:
+            params["ten_cttb"] = programme
         payload = client.get_json(
-            DISPLAY_URL,
-            {"tu_ngay": first.strftime("%d/%m/%Y"), "den_ngay": last.strftime("%d/%m/%Y"),
-             "page_size": page_size, "page_number": page},
+            DISPLAY_URL, params,
             operation_key="promotion_bonus_display", request_number=page,
         )
         rows = payload.get("data")
@@ -668,6 +686,36 @@ def fetch_display_records(client: Any, first: date, last: date,
     raise ValueError("DisplayData pagination safety limit exceeded")
 
 
+def fetch_display_for_programs(client: Any, programs: list[dict[str, Any]], first: date, last: date
+                               ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Unfiltered gradings of the period plus, per required display programme, the gradings
+    requested with ``ten_cttb`` over the programme period (gradings made in an earlier month
+    of a multi-month programme still count). A failing programme query never hides others."""
+    records = fetch_display_records(client, first, last)
+    names: dict[str, date] = {}
+    for program in programs:
+        display = program.get("cttb") if isinstance(program.get("cttb"), dict) else {}
+        name = str(display.get("ten") or "").strip()
+        if not name:
+            continue
+        start = first
+        with contextlib.suppress(KeyError, TypeError, ValueError, OSError):
+            start = min(first, datetime.fromtimestamp(int(program["startDate"]) / 1000, VN_TZ).date())
+        names[name] = min(names.get(name, start), start)
+    stats = {"programmes": len(names), "records": 0, "graded": 0, "errors": 0}
+    for name, start in sorted(names.items()):
+        start = max(start, last.replace(year=last.year - 1))
+        try:
+            rows = fetch_display_records(client, start, last, programme=name)
+        except Exception:  # one programme name the API rejects must not hide the others
+            stats["errors"] += 1
+            continue
+        stats["records"] += len(rows)
+        stats["graded"] += sum(1 for row in rows if grading_texts(row))
+        records.extend(rows)
+    return records, stats
+
+
 def provisional(results: list[ui.ProgramResult], end: date) -> None:
     """Accumulation not finished yet: keep progress, hold the reward until ``end``."""
     label = f"Tạm tính – CT kết thúc {end:%d/%m/%Y}"
@@ -678,6 +726,57 @@ def provisional(results: list[ui.ProgramResult], end: date) -> None:
                 row["extra"]["Đủ điều kiện trả thưởng"] = label
                 row["objTraThuong"] = {}
                 row["_rewards"] = []
+
+
+def program_quota(program: dict[str, Any]) -> int:
+    """Total reward slots of a programme ("Số suất"), 0 when unlimited.
+
+    Catalogue evidence: soSuat exceeds the registered customers (327 for 150), a 23-customer
+    programme with soSuat 1 is listed with one customer on DMS, and BoiSo programmes cap the
+    multiples (soSuat 2, one customer) – so it is the programme total, one slot per reward
+    multiple. ``gioiHanCT`` false switches the limit off.
+    """
+    if program.get("gioiHanCT") is False:
+        return 0
+    try:
+        return max(int(str(program.get("soSuat") or "").strip()), 0)
+    except ValueError:
+        return 0
+
+
+def apply_quota(result: ui.ProgramResult, quota: int, used_before: int = 0) -> dict[str, int]:
+    """Give the remaining slots first-come (day the target was reached, then customer code).
+
+    A customer needing more slots than remain (BoiSo) gets the remaining multiples; customers
+    after the last slot keep their progress but are not paid.
+    """
+    remaining = quota - used_before
+    stats = {"quota": quota, "used_before": used_before, "paid": 0, "cut": 0, "reduced": 0}
+    eligible = sorted((row for row in result.rows if row.get("_eligible") == "Có"),
+                      key=lambda row: (row.get("_reached_at") or "9999-99-99", str(row.get("ma"))))
+    for row in eligible:
+        need = max(int(row.get("_slots") or 1), 1)
+        give = min(need, max(remaining, 0))
+        remaining -= give
+        stats["paid"] += give
+        extra = row.setdefault("extra", {})
+        if give == need:
+            continue
+        if give == 0:
+            row["_eligible"] = QUOTA_OUT
+            extra["Đủ điều kiện trả thưởng"] = QUOTA_OUT
+            row["objTraThuong"] = {}
+            row["_rewards"] = []
+            stats["cut"] += 1
+            continue
+        ratio = give / need
+        row["objTraThuong"] = {key: value * ratio for key, value in (row.get("objTraThuong") or {}).items()}
+        row["_rewards"] = [(sku, name, unit, qty * ratio) for sku, name, unit, qty in row.get("_rewards") or []]
+        row["_slots"] = give
+        extra["Bội số"] = give
+        extra["Đủ điều kiện trả thưởng"] = f"Có ({give}/{need} suất – hết suất CT)"
+        stats["reduced"] += 1
+    return stats
 
 
 def hold_rewards(results: list[ui.ProgramResult], reason: str) -> None:

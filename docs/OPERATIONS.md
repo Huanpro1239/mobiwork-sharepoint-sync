@@ -597,3 +597,11 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
 - `BaoCaoTraThuong_Current.xlsx` đang mở trong Excel (423): file tháng vẫn được ghi, run báo warning; Current cập nhật ở lần sau.
 - Kết quả trưng bày (`DisplayData.cham_diem`) được đọc ở mọi dạng (dict, list, chuỗi JSON); annotation DisplayData ghi
   `grading_shape` và `status_by_grading` để đối chiếu `tt_cham_diem`.
+
+## Trưng bày và số suất (09/10/2026)
+- DisplayData được lấy thêm theo từng chương trình trưng bày (`ten_cttb`, tham số trong tài liệu OpenAPI) trên cả
+  thời gian CT; "Đạt" chỉ khi `cham_diem` ghi đúng "Đạt" (tài liệu: `tt_cham_diem = 2` vẫn có bản ghi chưa có kết quả,
+  nên trạng thái này không được hiểu là Đạt). Annotation DisplayData có `by_programme` (số bản ghi, số bản ghi có kết quả).
+- `soSuat` = tổng số suất của CT (mỗi bội số 1 suất), `gioiHanCT = false`/trống = không giới hạn. Suất chia theo ngày
+  khách đạt chỉ tiêu (sớm trước, rồi mã KH); CT theo tháng trừ suất đã trả ở các tháng trước của CT. Khách đạt sau khi
+  hết suất: "Hết suất CT (khách đạt sau)", không trả. Chi tiết theo CT ở manifest `quota` và sheet ChuongTrinh.
