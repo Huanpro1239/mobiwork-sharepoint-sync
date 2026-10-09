@@ -786,18 +786,60 @@ class ProgrammeAutomationTests(unittest.TestCase):
         self.assertEqual([r["Mã CT"] for r in rows], ["570/TB/GT/10/2026", "999/TB/GT/10/2026 - Mức 1"])
         self.assertEqual(rows[0]["Thời gian"], "01/04/2026 - 30/09/2026")
 
-    def test_over_quota_is_flagged(self):
+    def test_quota_goes_to_the_customer_who_reached_first(self):
         program = qty_program(customers=(C1, C2))
         program["soSuat"] = "1"
-        detail = bill([{"so_luong": 80}, {"so_luong": 80, "ID_khachhang": C2, "ma_kh": "KH2"}])
+        detail = bill([{"so_luong": 80, "ngay_giao_hang": "2026-10-20T03:00:00.000Z"},
+                       {"so_luong": 80, "ID_khachhang": C2, "ma_kh": "KH2",
+                        "ngay_giao_hang": "2026-10-05T03:00:00.000Z"}])
         with patch.dict(os.environ, {"PROMOTION_BONUS_STTT": "0"}), \
                 patch.object(bonus, "fetch_programs", return_value=[program]), \
                 patch.object(bonus, "_bill_detail", return_value=detail):
             audit = {}
             frames = bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True, {}, "test", audit,
                                              verbose=False, detail_config={})
-        self.assertEqual(audit["over_quota"], ["581/TB/GT/10/2026: 2/1"])
-        self.assertTrue(frames["Kiem_tra"].astype(str).apply(lambda c: c.str.contains("Vượt số suất")).any().any())
+        self.assertEqual(audit["over_quota"], ["581/TB/GT/10/2026: 1/1, hết suất 1 khách"])
+        self.assertEqual(audit["quota"]["581/TB/GT/10/2026"]["cut"], 1)
+        self.assertTrue(frames["Kiem_tra"].astype(str).apply(lambda c: c.str.contains("Hết suất")).any().any())
+        report = frames.get("BaoCao")
+        if report is not None and "Mã Khách hàng" in report:
+            gifts = report[report["Mã Đơn hàng"] == calc.GIFT_ORDER]
+            self.assertEqual(set(gifts["Mã Khách hàng"]), {"KH2"})  # C2 reached on 05/10, before C1
+
+    def test_monthly_programme_counts_slots_paid_in_earlier_months(self):
+        program = qty_program(customers=(C1, C2))
+        program.update(soSuat="1", name="581/TB/GT/09/2026_CT THEO THÁNG",
+                       startDate=int(pd.Timestamp("2026-09-01", tz="Asia/Ho_Chi_Minh").timestamp() * 1000),
+                       endDate=int(pd.Timestamp("2026-10-31", tz="Asia/Ho_Chi_Minh").timestamp() * 1000))
+        months = {9: bill([{"so_luong": 80, "ngay_giao_hang": "2026-09-10T03:00:00.000Z"}]),
+                  10: bill([{"so_luong": 80, "ID_khachhang": C2, "ma_kh": "KH2",
+                             "ngay_giao_hang": "2026-10-05T03:00:00.000Z"}])}
+        bonus._BILL_CACHE.clear()
+        with patch.dict(os.environ, {"PROMOTION_BONUS_STTT": "0"}), \
+                patch.object(bonus, "fetch_programs", return_value=[program]), \
+                patch.object(bonus, "_bill_detail", side_effect=lambda first, *a: months[first.month]):
+            audit = {}
+            bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True, {}, "test", audit,
+                                     verbose=False, detail_config={})
+        bonus._BILL_CACHE.clear()
+        quota = audit["quota"]["581/TB/GT/09/2026"]
+        self.assertEqual((quota["used_before"], quota["paid"], quota["cut"]), (1, 0, 1))
+
+    def test_quota_rules(self):
+        self.assertEqual(calc.program_quota({"soSuat": "327"}), 327)
+        self.assertEqual(calc.program_quota({"soSuat": ""}), 0)
+        self.assertEqual(calc.program_quota({"soSuat": "1", "gioiHanCT": False}), 0)
+        program = qty_program(customers=(C1, C2), multiple=True)
+        detail = bill([{"so_luong": 216, "ngay_giao_hang": "2026-10-02T03:00:00.000Z"},
+                       {"so_luong": 72, "ID_khachhang": C2, "ma_kh": "KH2",
+                        "ngay_giao_hang": "2026-10-03T03:00:00.000Z"}])
+        results, _ = calc.compute([program], calc.sold_lines(detail, OCT1, OCT31), {})
+        stats = calc.apply_quota(results[0], 4, used_before=2)
+        rows = {r["ma"]: r for r in results[0].rows}
+        first, second = rows["KHHO112323"], rows["KH2"]
+        self.assertEqual((stats["paid"], stats["reduced"], stats["cut"]), (2, 1, 1))
+        self.assertEqual(first["_rewards"][0][3], 24)  # 3 multiples reduced to the 2 slots left
+        self.assertEqual(second["_eligible"], calc.QUOTA_OUT)
 
 
 class DisplayShapeTests(unittest.TestCase):
@@ -815,3 +857,26 @@ class DisplayShapeTests(unittest.TestCase):
         self.assertIn("[].ket_qua:str", summary["grading_keys"])
         self.assertEqual(summary["status_by_grading"]["1|Đạt"], 1)
         self.assertEqual(summary["status_by_grading"]["None|rỗng"], 1)
+
+
+class DisplayByProgrammeTests(unittest.TestCase):
+    def test_gradings_are_requested_per_display_programme_over_its_period(self):
+        calls = []
+
+        def get_json(url, params, **kwargs):
+            calls.append(dict(params))
+            if params.get("ten_cttb") == "CTTB PET":
+                return {"data": [{"ma_kh": "K1", "ten_ct": "CTTB PET", "cham_diem": {"chon_1": "Đạt"}}]}
+            if params.get("ten_cttb"):
+                raise RuntimeError("rejected")
+            return {"data": [{"ma_kh": "K1", "ten_ct": "CTTB PET", "cham_diem": {}}]}
+
+        client = Mock(get_json=get_json)
+        start_ms = int(pd.Timestamp("2026-07-01", tz="Asia/Ho_Chi_Minh").timestamp() * 1000)
+        programs = [{"cttb": {"ten": "CTTB PET"}, "startDate": start_ms},
+                    {"cttb": {"ten": "CTTB LẠ"}}, {"cttb": None}]
+        records, stats = calc.fetch_display_for_programs(client, programs, OCT1, OCT31)
+        self.assertEqual((stats["programmes"], stats["graded"], stats["errors"]), (2, 1, 1))
+        pet = next(c for c in calls if c.get("ten_cttb") == "CTTB PET")
+        self.assertEqual((pet["tu_ngay"], pet["den_ngay"]), ("01/07/2026", "31/10/2026"))
+        self.assertEqual(calc.display_passes(records)[("K1", "cttb pet")], "Đạt")

@@ -402,9 +402,10 @@ def _calc_month_frames(
     display_note = "Không có chương trình yêu cầu trưng bày"
     if any(isinstance(p.get("cttb"), dict) and p["cttb"].get("ten") for p in programs):
         try:
-            records = calc.fetch_display_records(client, first, last)
+            records, by_programme = calc.fetch_display_for_programs(client, programs, first, last)
             displays = calc.display_passes(records)
             summary = calc.display_summary(records, programs)
+            summary["by_programme"] = by_programme
             manifest["display_summary"] = summary
             if verbose:
                 _github_notice("Promotion Bonus DisplayData", json.dumps(summary, ensure_ascii=False)[:3000])
@@ -464,18 +465,40 @@ def _calc_month_frames(
                                  "Gợi ý": "Tải/bổ sung DonBanHang của các tháng thiếu rồi chạy lại báo cáo"}
                                 for p in groups[start])
     over_quota = []
-    for result in results:  # "Số suất quyết toán": more eligible customers than slots
-        try:
-            quota = int(str(result.program.get("soSuat") or "").strip())
-        except ValueError:
+    quota_summary = {}
+    for result in results:  # "Số suất" = programme total, allocated first-come
+        quota = calc.program_quota(result.program)
+        if not quota:
             continue
-        paid = sum(1 for row in result.rows if row.get("_eligible") == "Có")
-        if quota > 0 and paid > quota:
-            over_quota.append(f"{calc.bonus_code(result.program_name)}: {paid}/{quota}")
-            program_rows.append({"_sheet": "ChuongTrinh", "Mã CT": calc.bonus_code(result.program_name),
-                                 "Tên CT": result.program_name, "Còn thiếu": ["Vượt số suất"],
-                                 "Nguyên nhân": f"{paid} khách đủ điều kiện, CT chỉ có {quota} suất",
-                                 "Gợi ý": "Duyệt danh sách trả thưởng theo thứ tự ưu tiên của CT"})
+        program = result.program
+        used, unknown = 0, []
+        start = _program_day(program, "startDate")
+        if start and start < first and program not in cumulative:
+            # Monthly programme: slots paid in earlier months of the programme are used up.
+            cursor = start.replace(day=1)
+            while cursor < first:
+                detail = _cached_bill(cursor, dry_run)
+                if detail is None:
+                    unknown.append(f"{cursor:%Y-%m}")
+                else:
+                    month_lines = calc.sold_lines(detail, max(cursor, start), _month_end(cursor), detail_config)
+                    previous, _ = calc.compute([program], month_lines, customer_map, displays=displays)
+                    used += calc.apply_quota(previous[0], quota, used)["paid"]
+                cursor = _month_end(cursor) + timedelta(days=1)
+        stats = calc.apply_quota(result, quota, used)
+        code = calc.bonus_code(result.program_name)
+        quota_summary[code] = {**stats, "months_without_orders": unknown}
+        if stats["cut"] or stats["reduced"] or unknown:
+            over_quota.append(f"{code}: {stats['used_before'] + stats['paid']}/{quota}, "
+                              f"hết suất {stats['cut']} khách")
+            program_rows.append({"_sheet": "ChuongTrinh", "Mã CT": code, "Tên CT": result.program_name,
+                                 "Còn thiếu": ["Hết số suất"],
+                                 "Nguyên nhân": f"CT có {quota} suất, đã dùng {stats['used_before']} ở tháng "
+                                                f"trước; {stats['cut']} khách đạt sau không còn suất"
+                                                + (f"; thiếu đơn tháng {', '.join(unknown)}" if unknown else ""),
+                                 "Gợi ý": "Suất chia theo ngày đạt chỉ tiêu; muốn trả thêm thì tăng "
+                                          "số suất CT trên DMS"})
+    manifest["quota"] = quota_summary
     manifest["over_quota"] = over_quota
     counts = ui.snapshot_counts(results)
     diag = calc.diagnostics(results)
@@ -511,8 +534,11 @@ def _calc_month_frames(
     if any(m.get("_province_source") for m in customers.values()):
         notes.append(("Nguồn tỉnh", "Ưu tiên tinh_thanh_moi; nếu trống dùng tỉnh cũ hoặc địa danh "
                       "ở cuối địa chỉ DMS khi khớp danh mục. Giữ địa danh nguồn, chưa quy đổi địa giới mới."))
-    if over_quota:
-        notes.append(("Số suất", "Vượt số suất quyết toán (đủ điều kiện/số suất): " + "; ".join(over_quota)))
+    notes.append(("Số suất", "Số suất (soSuat) là tổng suất của cả CT, mỗi bội số = 1 suất, chia theo ngày khách "
+                             "đạt chỉ tiêu (sớm trước); CT theo tháng trừ suất đã trả ở các tháng trước; "
+                             "gioiHanCT = false hoặc để trống là không giới hạn. Khách đạt sau khi hết suất ghi "
+                             f"'{calc.QUOTA_OUT}'." + (" Hết suất (đã dùng/tổng): " + "; ".join(over_quota)
+                                                        if over_quota else "")))
     if undeclared:
         notes.append(("Cách tính còn thiếu", f"{len(undeclared)} mức CT nhiều tháng chưa khai cách tính. "
                       "Doanh số theo kỳ báo cáo và thưởng dự kiến vẫn hiển thị; chưa xác nhận trả thưởng. "
