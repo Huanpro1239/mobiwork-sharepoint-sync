@@ -196,10 +196,12 @@ conditions still apply. The configured cumulative summer cash programmes are unc
 
 On 2026-10-09, the user confirmed that both missing-unit sale lines in
 `BH_104982026` are Chai: line 1, SKU `230100011`, quantity 1,680; line 2,
-SKU `230100017`, quantity 960. The existing `line_unit_overrides` configuration
-stores these exact order/line/SKU keys with the confirmation date. This applies
-to both bonus qualification and invoice-template conversion and does not establish
-a default unit for other orders of either SKU. Source units, when present, retain priority.
+SKU `230100017`, quantity 960. Later the same day, the user explicitly confirmed
+Chai as the default for both SKUs whenever the API leaves a sale's unit blank.
+`sale_unit_defaults` stores that evidence and replaces the three redundant exact-line
+declarations for these SKUs. It applies to both bonus qualification and invoice
+conversion, including new orders. Source units retain priority, followed by an exact-line
+override, then the confirmed SKU default. Gift units and other SKUs are not inferred.
 
 ## Template layout (2026-10-07)
 

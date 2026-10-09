@@ -11,18 +11,15 @@
     "Lâm Đồng": "Lâm Đồng",
     "Phú Yên": "Phú Yên"
   },
-  "line_unit_overrides": {
-    "BH_104982026|1|230100011": {
+  "line_unit_overrides": {},
+  "sale_unit_defaults": {
+    "230100011": {
       "unit": "Chai",
-      "source": "Người dùng xác nhận ĐVT dòng bán ngày 09/10/2026"
+      "source": "Người dùng xác nhận mặc định Chai khi API thiếu ĐVT ngày 09/10/2026"
     },
-    "BH_104982026|2|230100017": {
+    "230100017": {
       "unit": "Chai",
-      "source": "Người dùng xác nhận ĐVT dòng bán ngày 09/10/2026"
-    },
-    "BH_095582026|1|230100017": {
-      "unit": "Chai",
-      "source": "Người dùng xác nhận ĐVT dòng bán ngày 08/10/2026"
+      "source": "Người dùng xác nhận mặc định Chai khi API thiếu ĐVT ngày 09/10/2026"
     }
   },
   "program_codes": {},

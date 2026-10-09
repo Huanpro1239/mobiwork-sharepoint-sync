@@ -231,7 +231,9 @@ Thiếu quy cách giữ số lượng quy đổi trống và báo `unit_gaps`, t
 Lỗi identity, số tiền/số lượng hoặc hệ số quy đổi không hợp lệ chặn upload; dùng dry-run để xem chi tiết.
 Lỗi dòng bán đủ điều kiện nhưng thiếu ĐVT ghi tổng số dòng thiếu và tối đa 25 khóa
 đơn/dòng/SKU, số lượng, mã CT trong manifest lỗi. Không ghi tên, địa chỉ, điện thoại KH;
-không trả kết quả tính một phần. Chỉ thêm `line_unit_overrides` khi có xác nhận ĐVT thực.
+không trả kết quả tính một phần. `line_unit_overrides` cần xác nhận ĐVT đúng dòng;
+`sale_unit_defaults` cần xác nhận mặc định cho SKU khi API trống ĐVT. ĐVT nguồn được
+ưu tiên, sau đó khai báo đúng dòng, rồi mặc định SKU; không dùng mặc định dòng bán cho quà.
 Manifest có `blocking_issues`, `missing_fields`, `quality_status` và số khách cần
 kiểm tra trưng bày. `status=success` là chạy xong, không đồng nghĩa đã đối chiếu DMS.
 
@@ -568,8 +570,9 @@ Các bổ sung có nguồn cụ thể:
 - Người dùng xác nhận tính **theo tháng, không cộng dồn** cho 18 mã CT hiện còn
   thiếu cách tính: 010/011/013 (Q4), 012, 558–563, 570–572, 575, 581, 584, 588,
   589. `program_overrides` khai rõ từng mã; không suy cách tính cho CT mới khác.
-- ĐVT `Chai` của dòng `BH_095582026|1|230100017` do người dùng xác nhận; chỉ áp dụng
-  khi đúng đơn, dòng, SKU và ĐVT gốc còn trống. `DonViTinh` ghi nguồn xác nhận.
+- Ngày 09/10/2026, người dùng xác nhận mặc định `Chai` khi API trống ĐVT cho SKU
+  `230100011` và `230100017`. `sale_unit_defaults` thay ba khai báo dòng trùng của
+  hai SKU này, áp dụng cả đơn mới. `DonViTinh` ghi nguồn xác nhận; ĐVT gốc được ưu tiên.
 - Hai dòng quà cùng đơn có thể phục hồi ĐVT từ `promotion.product.don_vi_tinh` trên
   chính đơn, khi CTKM ID và SKU khớp và chỉ có một đơn vị. Không suy ĐVT dòng bán
   từ đơn vị quà hoặc giá, không lấy mặc định theo danh mục hiện tại.
