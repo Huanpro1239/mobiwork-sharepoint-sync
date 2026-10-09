@@ -29,6 +29,7 @@ same workbook layout.
 from __future__ import annotations
 
 import collections
+import contextlib
 import json
 import logging
 import math
@@ -52,6 +53,7 @@ MONEY_TYPE = "MUTI_SP_ST_TIEN"  # "Mua nhiều sản phẩm - đạt số tiền
 MONEY_SKU, MONEY_NAME, MONEY_UNIT = "TIEN", "Tiền thưởng", "đồng"
 DISPLAY_PASS = "Đạt"
 REVIEW_DISPLAY = "Cần kiểm tra trưng bày"
+UNIT_HOLD = "Chờ xác nhận ĐVT dòng đơn"
 
 
 # --------------------------------------------------------------------------- rules
@@ -280,6 +282,28 @@ def norm(text: Any) -> str:
     return " ".join(str(text or "").split()).casefold()
 
 
+def _grading_leaves(value: Any, path: str = "", depth: int = 0) -> Iterable[tuple[str, Any]]:
+    """(key path, leaf value) pairs of a grading payload of any shape (dict, list, JSON text)."""
+    if depth > 6:
+        return
+    if isinstance(value, str) and value.strip()[:1] in ("[", "{"):
+        with contextlib.suppress(ValueError):
+            value = json.loads(value)
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from _grading_leaves(item, f"{path}.{key}" if path else str(key), depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _grading_leaves(item, f"{path}[]", depth + 1)
+    elif value is not None and not (isinstance(value, str) and not value.strip()):
+        yield path, value
+
+
+def grading_texts(record: dict[str, Any]) -> set[str]:
+    return {str(v).strip() for _, v in _grading_leaves(record.get("cham_diem"))
+            if isinstance(v, str) and v.strip()}
+
+
 def display_summary(records: list[dict[str, Any]], programs: list[dict[str, Any]]) -> dict[str, Any]:
     """PII-free shape of DisplayData to verify the programme/result join."""
     wanted = {norm((p.get("cttb") or {}).get("ten")) for p in programs
@@ -287,10 +311,18 @@ def display_summary(records: list[dict[str, Any]], programs: list[dict[str, Any]
     names = collections.Counter(norm(r.get("ten_ct")) for r in records)
     values = collections.Counter()
     keys = collections.Counter()
+    shapes = collections.Counter()
+    by_status = collections.Counter()
     for record in records:
-        grading = record.get("cham_diem") if isinstance(record.get("cham_diem"), dict) else {}
-        keys.update(grading.keys())
-        values.update(str(v).strip() for v in grading.values() if isinstance(v, str) and v.strip())
+        raw = record.get("cham_diem")
+        shapes[type(raw).__name__ + (f"[{len(raw)}]" if isinstance(raw, (list, dict)) and len(raw) < 4 else "")] += 1
+        leaves = list(_grading_leaves(raw))
+        keys.update(f"{path}:{type(v).__name__}" for path, v in leaves)
+        # Short labels only ("Đạt", "Không đạt", scores); long free text is never logged.
+        values.update(str(v).strip() for _, v in leaves
+                      if isinstance(v, (str, int, float, bool)) and 0 < len(str(v).strip()) <= 20)
+        texts = {str(v).strip() for _, v in leaves if isinstance(v, str)}
+        by_status[f"{record.get('tt_cham_diem')}|{'Đạt' if DISPLAY_PASS in texts else ('có chấm' if leaves else 'rỗng')}"] += 1
     fields = collections.Counter(k for r in records for k in r)
     return {"records": len(records), "programs_in_data": len(names),
             "record_fields": sorted(fields)[:30],
@@ -298,7 +330,8 @@ def display_summary(records: list[dict[str, Any]], programs: list[dict[str, Any]
             "matched_records": sum(n for name, n in names.items() if name in wanted),
             "top_names": [f"{name[:45]}={n}" for name, n in names.most_common(6)],
             "required_names": sorted(name[:45] for name in wanted)[:6],
-            "grading_keys": dict(keys.most_common(6)), "grading_values": dict(values.most_common(8)),
+            "grading_shape": dict(shapes.most_common(6)), "status_by_grading": dict(by_status.most_common(10)),
+            "grading_keys": dict(keys.most_common(10)), "grading_values": dict(values.most_common(12)),
             "status_values": dict(collections.Counter(str(r.get("tt_cham_diem")) for r in records))}
 
 
@@ -315,8 +348,7 @@ def display_passes(records: Iterable[dict[str, Any]]) -> dict[tuple[str, str], s
         program = norm(record.get("ten_ct"))
         if not code or not program:
             continue
-        grading = record.get("cham_diem") if isinstance(record.get("cham_diem"), dict) else {}
-        values = {str(v).strip() for v in grading.values() if isinstance(v, str) and v.strip()}
+        values = grading_texts(record)
         state = record.get("tt_cham_diem")
         if DISPLAY_PASS in values:
             result = DISPLAY_PASS
@@ -370,6 +402,7 @@ def compute(
         for customer_id in sorted(rule.customers):
             actual = 0.0
             counted = []
+            unit_gaps = []
             for line in by_customer.get(customer_id, []):
                 if line["sku"] in rule.units and not line["unit"]:
                     raw = line.get("raw") or {}
@@ -380,6 +413,7 @@ def compute(
                     code = bonus_code(rule.name)
                     if code not in gap["programmes"]:
                         gap["programmes"].append(code)
+                    unit_gaps.append(gap)
                     continue
                 if line["unit"] in rule.units.get(line["sku"], ()):
                     contribution = line["amount"] if rule.kind == AMOUNT else line["quantity"]
@@ -394,7 +428,11 @@ def compute(
             display = ""
             if rule.display_program:
                 display = (displays or {}).get((code, norm(rule.display_program)), "Chưa có dữ liệu")
-            if multiplier == 0:
+            if unit_gaps:
+                # The quantity of a line without unit is unknown: hold this customer only
+                # (no reward, not "Không") until the unit is confirmed; others still publish.
+                eligible = UNIT_HOLD
+            elif multiplier == 0:
                 eligible = "Không"
             elif not rule.display_program or display in {rule.display_result or DISPLAY_PASS, DISPLAY_PASS}:
                 eligible = "Có"
@@ -427,17 +465,25 @@ def compute(
                 if eligible == "Có" else [],
                 "_eligible": eligible,
                 "_review_display": eligible == REVIEW_DISPLAY,
+                "_unit_gaps": unit_gaps,
             })
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
                                         [target], rewards))
-    if missing_units:
-        # Do not return/publish partial calculations. Expose only the source keys
-        # needed to confirm units, never raw customer identity or contact fields.
-        details = {"missing_unit_line_count": len(missing_units),
-                   "lines": list(missing_units.values())[:25]}
-        raise ValueError("Qualifying Bill sale line is missing its unit: "
-                         + json.dumps(details, ensure_ascii=False))
     return results, issues
+
+
+def unit_gap_summary(results: list[ui.ProgramResult]) -> dict[str, Any]:
+    """Qualifying sale lines without unit (source keys only, never customer fields)."""
+    lines: dict[tuple[str, str, str], dict[str, Any]] = {}
+    held = 0
+    for result in results:
+        for row in result.rows:
+            if row.get("_unit_gaps"):
+                held += 1
+            for gap in row.get("_unit_gaps") or []:
+                lines.setdefault((gap["order"], gap["line"], gap["sku"]), gap)
+    return {"missing_unit_line_count": len(lines), "held_customer_rows": held,
+            "lines": list(lines.values())[:25]}
 
 
 def program_prefix(name: str) -> str:
