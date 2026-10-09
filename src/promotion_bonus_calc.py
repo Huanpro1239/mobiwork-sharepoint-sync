@@ -54,7 +54,6 @@ MONEY_SKU, MONEY_NAME, MONEY_UNIT = "TIEN", "Tiền thưởng", "đồng"
 DISPLAY_PASS = "Đạt"
 REVIEW_DISPLAY = "Cần kiểm tra trưng bày"
 UNIT_HOLD = "Chờ xác nhận ĐVT dòng đơn"
-QUOTA_OUT = "Hết suất CT (khách đạt sau)"
 DISPLAY_FAIL = "Không đạt (xác nhận)"  # confirmed in BoSung_Mapping/TrungBay
 DISPLAY_FAILED = "Không đạt trưng bày"
 
@@ -733,12 +732,12 @@ def provisional(results: list[ui.ProgramResult], end: date) -> None:
 
 
 def program_quota(program: dict[str, Any]) -> int:
-    """Total reward slots of a programme ("Số suất"), 0 when unlimited.
+    """Maximum reward slots (multiples) per customer ("Số suất"), 0 when unlimited.
 
-    Catalogue evidence: soSuat exceeds the registered customers (327 for 150), a 23-customer
-    programme with soSuat 1 is listed with one customer on DMS, and BoiSo programmes cap the
-    multiples (soSuat 2, one customer) – so it is the programme total, one slot per reward
-    multiple. ``gioiHanCT`` false switches the limit off.
+    Evidence: DMS reports soSuatCT and time_soSuat per customer row; reading soSuat as a
+    programme total would pay 1 of 22 qualifying customers of a monthly accumulation
+    programme (008 Mức 1, soSuat 1), so it caps a customer's multiples (BoiSo).
+    ``gioiHanCT`` false switches the limit off.
     """
     if program.get("gioiHanCT") is False:
         return 0
@@ -748,37 +747,20 @@ def program_quota(program: dict[str, Any]) -> int:
         return 0
 
 
-def apply_quota(result: ui.ProgramResult, quota: int, used_before: int = 0) -> dict[str, int]:
-    """Give the remaining slots first-come (day the target was reached, then customer code).
-
-    A customer needing more slots than remain (BoiSo) gets the remaining multiples; customers
-    after the last slot keep their progress but are not paid.
-    """
-    remaining = quota - used_before
-    stats = {"quota": quota, "used_before": used_before, "paid": 0, "cut": 0, "reduced": 0}
-    eligible = sorted((row for row in result.rows if row.get("_eligible") == "Có"),
-                      key=lambda row: (row.get("_reached_at") or "9999-99-99", str(row.get("ma"))))
-    for row in eligible:
-        need = max(int(row.get("_slots") or 1), 1)
-        give = min(need, max(remaining, 0))
-        remaining -= give
-        stats["paid"] += give
-        extra = row.setdefault("extra", {})
-        if give == need:
+def apply_quota(result: ui.ProgramResult, quota: int) -> dict[str, int]:
+    """Cap each paid customer's multiples at ``quota``; other customers are unaffected."""
+    stats = {"quota": quota, "reduced": 0}
+    for row in result.rows:
+        need = int(row.get("_slots") or 0)
+        if row.get("_eligible") != "Có" or need <= quota:
             continue
-        if give == 0:
-            row["_eligible"] = QUOTA_OUT
-            extra["Đủ điều kiện trả thưởng"] = QUOTA_OUT
-            row["objTraThuong"] = {}
-            row["_rewards"] = []
-            stats["cut"] += 1
-            continue
-        ratio = give / need
+        ratio = quota / need
         row["objTraThuong"] = {key: value * ratio for key, value in (row.get("objTraThuong") or {}).items()}
         row["_rewards"] = [(sku, name, unit, qty * ratio) for sku, name, unit, qty in row.get("_rewards") or []]
-        row["_slots"] = give
-        extra["Bội số"] = give
-        extra["Đủ điều kiện trả thưởng"] = f"Có ({give}/{need} suất – hết suất CT)"
+        row["_slots"] = quota
+        extra = row.setdefault("extra", {})
+        extra["Bội số"] = quota
+        extra["Giới hạn suất"] = f"{quota}/{need}"
         stats["reduced"] += 1
     return stats
 
