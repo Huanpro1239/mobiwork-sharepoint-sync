@@ -41,7 +41,17 @@ SHEETS: dict[str, dict[str, Any]] = {
                   "target": "customer_overrides"},
     "ChuongTrinh": {"key": ["Mã CT"], "info": ["Tên CT", "Thời gian"], "values": ["Cách tính"],
                     "target": "program_overrides"},
+    # DMS DisplayData carries no grading result (cham_diem is empty), so the display
+    # result of customers who reached the sales target is confirmed here.
+    "TrungBay": {"key": ["Mã Khách hàng", "Chương trình trưng bày"], "info": ["Tên Khách hàng", "Mã CT"],
+                 "values": ["Kết quả"], "target": "display_overrides"},
 }
+DISPLAY_RESULTS = {"đạt": "Đạt", "không đạt": "Không đạt", "khong dat": "Không đạt", "dat": "Đạt"}
+
+
+def display_key(customer: Any, programme: Any) -> str:
+    """Same normalisation as promotion_bonus_calc.norm (case/space-insensitive)."""
+    return f"{text(customer)}|{' '.join(str(programme or '').split()).casefold()}"
 CUMULATIVE, MONTHLY = "Tích lũy cả kỳ", "Theo tháng"
 
 
@@ -79,6 +89,8 @@ GUIDE = [
     "(cộng dồn từ ngày bắt đầu CT, trả thưởng ở tháng kết thúc) hoặc 'Theo tháng'. "
     "Khi chưa khai cách tính: chỉ hiển thị doanh số kỳ báo cáo, chưa xác nhận thưởng. "
     "Mã CT là phần đầu tên CT, vd 246/TB/GT/04/2026, áp dụng cho mọi mức/loại.",
+    "10. TrungBay: khách đã đạt doanh số nhưng DMS chưa trả kết quả chấm trưng bày. Điền Kết quả = "
+    "'Đạt' hoặc 'Không đạt'. 'Đạt' thì được trả thưởng (nếu còn suất), 'Không đạt' thì không trả.",
     "Thứ tự ưu tiên: file này > cấu hình > kho xuất của đơn > cây phòng ban hiện tại > danh mục DMS.",
 ]
 
@@ -123,6 +135,13 @@ def parse_overrides(content: bytes | None) -> tuple[dict[str, dict[str, Any]], l
             if sheet == "ChuongTrinh" and not program_mode(values.get("Cách tính")):
                 problems.append(f"ChuongTrinh dòng {index}: Cách tính phải là '{CUMULATIVE}' hoặc '{MONTHLY}'")
                 continue
+            if sheet == "TrungBay":
+                result = DISPLAY_RESULTS.get(values.get("Kết quả", "").casefold())
+                if not result or not key[1]:
+                    problems.append(f"TrungBay dòng {index}: Kết quả phải là 'Đạt' hoặc 'Không đạt'")
+                    continue
+                overrides[spec["target"]][display_key(key[0], key[1])] = result
+                continue
             if sheet == "QuyDoi":
                 target = values.get("ĐVT báo cáo", "")
                 try:
@@ -149,6 +168,8 @@ def apply_overrides(cfg: dict[str, Any], overrides: dict[str, dict[str, Any]]) -
         for key, values in (overrides.get(target) or {}).items():
             merged[key] = {**merged.get(key, {}), **values}
         result[target] = merged
+    result["display_overrides"] = {**(result.get("display_overrides") or {}),
+                                   **(overrides.get("display_overrides") or {})}
     conversions = dict(result.get("unit_conversions") or {})
     conversions.update(overrides.get("unit_overrides") or {})
     result["unit_conversions"] = conversions
@@ -275,6 +296,8 @@ def _filled(row: dict[str, Any], overrides: dict[str, dict[str, Any]]) -> bool:
     target = overrides.get(SHEETS[sheet]["target"], {})
     if sheet == "QuyDoi":
         return f"{text(row.get('Mã sản phẩm'))}|{text(row.get('ĐVT nguồn'))}" in target
+    if sheet == "TrungBay":
+        return display_key(row.get("Mã Khách hàng"), row.get("Chương trình trưng bày")) in target
     values = target.get(text(row.get(SHEETS[sheet]["key"][0])), {})
     return all(text(values.get(field)) for field in row.get("Còn thiếu") or [])
 
