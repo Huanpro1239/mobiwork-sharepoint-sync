@@ -590,3 +590,10 @@ file trả thưởng; manifest không coi đó là đầy đủ dù không thi�
 Chương trình tích lũy được giữ tạm tính cả ở tháng đầu; thiếu một tháng DonBanHang
 thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master tháng có nội dung rỗng
 được coi là không có đơn; không tìm thấy master là thiếu dữ liệu, không phải số 0.
+
+## Lỗi không còn dừng cả báo cáo trả thưởng
+- Dòng đơn thuộc CT nhưng thiếu ĐVT: chỉ khách × CT liên quan bị tạm giữ ("Chờ xác nhận ĐVT dòng đơn", không trả thưởng);
+  phần còn lại vẫn xuất bản. Danh sách đơn/dòng/SP ở annotation "Dòng đơn thiếu ĐVT" và sheet ChuongTrinh của CanBoSung_TongHop.
+- `BaoCaoTraThuong_Current.xlsx` đang mở trong Excel (423): file tháng vẫn được ghi, run báo warning; Current cập nhật ở lần sau.
+- Kết quả trưng bày (`DisplayData.cham_diem`) được đọc ở mọi dạng (dict, list, chuỗi JSON); annotation DisplayData ghi
+  `grading_shape` và `status_by_grading` để đối chiếu `tt_cham_diem`.

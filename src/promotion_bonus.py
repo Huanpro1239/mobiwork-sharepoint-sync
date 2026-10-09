@@ -310,6 +310,11 @@ def _with_bill_identity(customers: dict[str, Any], lines: list[dict[str, Any]]) 
     return merged
 
 
+def _github_warning(title: str, message: str) -> None:
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning title={title}::{' '.join(message.split())[:3800]}")
+
+
 def _github_notice(title: str, message: str) -> None:
     if os.environ.get("GITHUB_ACTIONS") == "true":
         print(f"::notice title={title}::{message}")
@@ -436,6 +441,21 @@ def _calc_month_frames(
                                f"có doanh số {item['with_sales']}|đạt {item['reached']}|trả {item['eligible']}")
             _github_notice(f"Promotion Bonus lũy kế từ {start:%d/%m/%Y} đến {last:%d/%m/%Y}", " ; ".join(summary))
     program_rows = _program_todo_rows(undeclared, issues)
+    unit_gaps = calc.unit_gap_summary(results)
+    manifest["unit_gap_lines"] = unit_gaps["missing_unit_line_count"]
+    manifest["unit_gap_held_rows"] = unit_gaps["held_customer_rows"]
+    if unit_gaps["missing_unit_line_count"]:
+        _github_warning(f"Dòng đơn thiếu ĐVT {first:%m/%Y}",
+                        f"{unit_gaps['held_customer_rows']} khách × CT tạm giữ, chưa trả thưởng. "
+                        + json.dumps(unit_gaps["lines"], ensure_ascii=False))
+        for gap in unit_gaps["lines"]:
+            for code in gap["programmes"]:
+                program_rows.append({"_sheet": "ChuongTrinh", "Mã CT": code, "Tên CT": code,
+                                     "Còn thiếu": ["ĐVT dòng đơn"],
+                                     "Nguyên nhân": f"Đơn {gap['order']} dòng {gap['line']} SP {gap['sku']} "
+                                                    f"(SL {gap['quantity']:g}) không ghi ĐVT; khách tạm giữ",
+                                     "Gợi ý": "Sửa ĐVT trên đơn DMS, hoặc khai sale_unit_defaults / "
+                                              "line_unit_overrides trong config/promotion_detail.json"})
     for start, missing in missing_by_start.items():
         if missing:
             program_rows.extend({"_sheet": "ChuongTrinh", "Mã CT": calc.program_prefix(str(p.get("name", ""))),
@@ -920,10 +940,14 @@ def run(cache: CatalogueCache | None = None) -> dict[str, Any]:
                 try:
                     result = sharepoint.upload_file(drive_id, target_path, target_folder)
                 except Exception as exc:
-                    # A workbook someone has open in Excel is locked (HTTP 423). The current
-                    # snapshot must publish; archive/history copies are retried next run.
-                    if required:
+                    # A workbook someone has open in Excel is locked (HTTP 423); the copy is
+                    # retried next run. Any other failure of the current snapshot is fatal,
+                    # and a locked current snapshot is fatal unless the monthly copy publishes.
+                    locked = "423" in str(exc) or "locked" in str(exc).casefold()
+                    if required and not locked:
                         raise
+                    if required:
+                        manifest["current_snapshot_locked"] = True
                     failures.append(f"{target_folder}/{target_path.name}: {type(exc).__name__}: {exc}"[:300])
                     if os.environ.get("GITHUB_ACTIONS") == "true":
                         print(f"::warning title=Promotion Bonus file not updated::{failures[-1]}")
@@ -934,6 +958,9 @@ def run(cache: CatalogueCache | None = None) -> dict[str, Any]:
                 manifest["publish_failures"] = failures
             if not manifest.get("published_files"):
                 raise RuntimeError("No Promotion Bonus workbook could be published: " + "; ".join(failures))
+            if manifest.get("current_snapshot_locked") and os.environ.get("GITHUB_ACTIONS") == "true":
+                print("::warning title=BaoCaoTraThuong_Current đang mở::File Current đang được mở trong Excel nên "
+                      "chưa ghi đè; file tháng đã cập nhật. Đóng file để lần chạy sau cập nhật Current.")
             manifest["workbook_published"] = True
             manifest.update(
                 {

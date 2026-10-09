@@ -110,8 +110,11 @@ class InputTests(unittest.TestCase):
     def test_missing_unit_blocks_only_a_qualifying_programme_line(self):
         detail = bill([{"so_luong": 80, "ten_dvt": float("nan"), "ma_dvt": ""}])
         lines = calc.sold_lines(detail, OCT1, OCT31)
-        with self.assertRaisesRegex(ValueError, "missing its unit"):
-            calc.compute([qty_program()], lines, {})
+        results, _ = calc.compute([qty_program()], lines, {})
+        held = results[0].rows[0]
+        self.assertEqual(held["_eligible"], calc.UNIT_HOLD)  # held, never paid nor "Không"
+        self.assertEqual((held["_rewards"], held["objTraThuong"]), ([], {}))
+        self.assertEqual(results[0].rows[1]["_eligible"], "Không")  # other customers still computed
         unrelated = bill([{"ma_sp": "OTHER", "ten_dvt": float("nan"), "ma_dvt": ""}])
         results, _ = calc.compute([qty_program()], calc.sold_lines(unrelated, OCT1, OCT31), {})
         self.assertEqual(results[0].rows[0]["objThucHien"][calc.TARGET_ID], 0)
@@ -136,22 +139,21 @@ class InputTests(unittest.TestCase):
         other = qty_program(pid="2" * 24)
         other["name"] = "588/TB/GT/10/2026_OTHER"
         other["products"][0]["san_pham_mua"][0]["ma_san_pham"] = "OTHER"
-        with self.assertRaisesRegex(ValueError, "missing its unit") as error:
-            calc.compute([qty_program(), qty_program(), other], calc.sold_lines(detail, OCT1, OCT31), {})
-        payload = json.loads(str(error.exception).split(": ", 1)[1])
+        results, _ = calc.compute([qty_program(), qty_program(), other], calc.sold_lines(detail, OCT1, OCT31), {})
+        payload = calc.unit_gap_summary(results)
+        text = json.dumps(payload, ensure_ascii=False)
         self.assertEqual(payload["missing_unit_line_count"], 2)
         self.assertEqual([(r["order"], r["line"], r["sku"], r["quantity"]) for r in payload["lines"]],
                          [("BH1", "1", "230100110", 80), ("BH2", "2", "OTHER", 90)])
         self.assertEqual(len(payload["lines"][0]["programmes"]), 1)
-        self.assertNotIn("UNRELATED", str(error.exception))
+        self.assertNotIn("UNRELATED", text)
         for field in (C1, "Quán A", "Nha Trang", "ten_kh", "sdt", "dia_chi"):
-            self.assertNotIn(field, str(error.exception))
+            self.assertNotIn(field, text)
 
     def test_missing_unit_diagnostics_are_bounded_but_report_the_full_count(self):
         detail = bill([{"ten_dvt": "", "ma_dvt": ""} for _ in range(30)])
-        with self.assertRaises(ValueError) as error:
-            calc.compute([qty_program()], calc.sold_lines(detail, OCT1, OCT31), {})
-        payload = json.loads(str(error.exception).split(": ", 1)[1])
+        results, _ = calc.compute([qty_program()], calc.sold_lines(detail, OCT1, OCT31), {})
+        payload = calc.unit_gap_summary(results)
         self.assertEqual((payload["missing_unit_line_count"], len(payload["lines"])), (30, 25))
 
     def test_delivery_date_is_converted_to_vietnam_day(self):
@@ -547,6 +549,18 @@ class HistoryTests(unittest.TestCase):
         self.assertIn({"fromdate": "01/08/2026", "todate": "31/08/2026"}, filters)
         self.assertEqual(mocks[4].call_count, 1)  # customer catalogue fetched once
 
+    def test_missing_unit_line_publishes_report_and_holds_customer(self):
+        def bill_for(first, dry, manifest):
+            return bill([{"so_luong": 80, "ten_dvt": "", "ma_dvt": "",
+                          "ngay_giao_hang": f"2026-{first.month:02d}-10T03:00:00.000Z"}])
+        env = {"DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "calc", "PROMOTION_BONUS_MONTHS": "2026-09",
+               "GITHUB_ACTIONS": "true"}
+        manifest, _ = self.run_with(env, bill_for)
+        month = manifest["months"]["2026-09"]
+        self.assertNotIn("error", month)
+        self.assertEqual((month["unit_gap_lines"], month["unit_gap_held_rows"]), (1, 1))
+        self.assertTrue(Path("output/BaoCaoTraThuong_2026-09.xlsx").exists())
+
     def test_past_month_dates_do_not_overwrite_current(self):
         env = {"DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "calc",
                "PROMOTION_BONUS_FROM_DATE": "2026-09-01", "PROMOTION_BONUS_TO_DATE": "2026-09-30"}
@@ -588,9 +602,23 @@ class HistoryTests(unittest.TestCase):
                 self.assertRaises(RuntimeError):
             self.run_with(env, lambda *a: bill([]))
 
-    def test_current_snapshot_upload_failure_still_fails(self):
+    def test_locked_current_snapshot_keeps_run_green_when_month_file_publishes(self):
         sharepoint = Mock()
         sharepoint.upload_file.side_effect = [RuntimeError("423 Locked"), {}]
+        today = bonus.datetime.now(bonus.ui.VN_TZ).date()
+        env = {"DRY_RUN": "false", "PROMOTION_BONUS_SOURCE": "calc", "SHAREPOINT_DRIVE_ID": "drive",
+               "PROMOTION_BONUS_FROM_DATE": today.replace(day=1).isoformat(),
+               "PROMOTION_BONUS_TO_DATE": today.isoformat()}
+        with patch.object(bonus.SemanticSharePointClient, "from_env", return_value=sharepoint):
+            manifest, _ = self.run_with(env, lambda *a: bill([]))
+        self.assertTrue(manifest["current_snapshot_locked"])
+        self.assertEqual(manifest["status"], "success")
+        self.assertEqual(len(manifest["published_files"]), 1)
+        self.assertNotIn("Current", manifest["published_files"][0])
+
+    def test_current_snapshot_upload_failure_still_fails(self):
+        sharepoint = Mock()
+        sharepoint.upload_file.side_effect = [RuntimeError("500 Server Error"), {}]
         today = bonus.datetime.now(bonus.ui.VN_TZ).date()
         env = {"DRY_RUN": "false", "PROMOTION_BONUS_SOURCE": "calc", "SHAREPOINT_DRIVE_ID": "drive",
                "PROMOTION_BONUS_FROM_DATE": today.replace(day=1).isoformat(),
@@ -770,3 +798,20 @@ class ProgrammeAutomationTests(unittest.TestCase):
                                              verbose=False, detail_config={})
         self.assertEqual(audit["over_quota"], ["581/TB/GT/10/2026: 2/1"])
         self.assertTrue(frames["Kiem_tra"].astype(str).apply(lambda c: c.str.contains("Vượt số suất")).any().any())
+
+
+class DisplayShapeTests(unittest.TestCase):
+    def test_list_and_json_grading_payloads_are_read(self):
+        records = [
+            {"ma_kh": "K1", "ten_ct": "CTTB", "cham_diem": [{"tieu_chi": "Kệ", "ket_qua": "Đạt"}], "tt_cham_diem": 1},
+            {"ma_kh": "K2", "ten_ct": "CTTB", "cham_diem": '{"ket_qua": "Không đạt"}', "tt_cham_diem": 2},
+            {"ma_kh": "K3", "ten_ct": "CTTB", "cham_diem": None, "tt_cham_diem": None},
+        ]
+        passes = calc.display_passes(records)
+        self.assertEqual(passes[("K1", "cttb")], "Đạt")
+        self.assertEqual(passes[("K2", "cttb")], "Không đạt")
+        self.assertEqual(passes[("K3", "cttb")], "Đã ghi nhận, chưa chấm")
+        summary = calc.display_summary(records, [{"cttb": {"ten": "CTTB"}}])
+        self.assertIn("[].ket_qua:str", summary["grading_keys"])
+        self.assertEqual(summary["status_by_grading"]["1|Đạt"], 1)
+        self.assertEqual(summary["status_by_grading"]["None|rỗng"], 1)
