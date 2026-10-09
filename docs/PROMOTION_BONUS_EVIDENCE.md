@@ -192,6 +192,15 @@ separately each month. Their declarations are stored in `program_overrides` in
 the undecided-period hold for those programmes; display and other eligibility
 conditions still apply. The configured cumulative summer cash programmes are unchanged.
 
+## Confirmed sale units (2026-10-09)
+
+On 2026-10-09, the user confirmed that both missing-unit sale lines in
+`BH_104982026` are Chai: line 1, SKU `230100011`, quantity 1,680; line 2,
+SKU `230100017`, quantity 960. The existing `line_unit_overrides` configuration
+stores these exact order/line/SKU keys with the confirmation date. This applies
+to both bonus qualification and invoice-template conversion and does not establish
+a default unit for other orders of either SKU. Source units, when present, retain priority.
+
 ## Template layout (2026-10-07)
 
 Workbooks open on sheet `BaoCao` in the user's "Báo cáo chi tiết CTKM theo KH" layout (config/promotion_detail_layout.json, title "BÁO CÁO TRẢ THƯỞNG CHI TIẾT THEO KHÁCH HÀNG - THÁNG MM/YYYY"). Rows are the Bill lines counted for each programme (Mã CTKM = programme code incl. level, e.g. `008/TB/GT/01/2026_Q4 - Mức 2`), rendered through promotion_detail.build_report so Vùng/Tỉnh/SS/NPP/Brand/Package and KÉT/THÙNG/BÌNH conversions match the CTKM report. Only eligible customers receive a `TRẢ THƯỞNG` line per reward. Unconfirmed display results, missing period inputs and undecided period methods retain proposed rewards but hold confirmation. Missing mappings go to `CanBoSung`.
