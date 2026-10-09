@@ -27,10 +27,7 @@ def fetch(session: requests.Session, url: str) -> str:
     try:
         response = session.get(url, timeout=30)
     except requests.RequestException as exc:
-        notice("OpenAPI doc fetch", f"{url} -> {type(exc).__name__}")
         return ""
-    kind = response.headers.get("content-type", "")
-    notice("OpenAPI doc fetch", f"{url} -> {response.status_code} {kind[:40]} {len(response.text)} chars")
     return response.text if response.ok else ""
 
 
@@ -50,15 +47,37 @@ def windows(text: str, keyword: str, width: int = 450, limit: int = 4) -> list[s
     return out
 
 
+def described(node, trail="", out=None):
+    """(path, description/enum/example) for every schema property named like a keyword."""
+    out = [] if out is None else out
+    if isinstance(node, dict):
+        for key, value in node.items():
+            here = f"{trail}.{key}"
+            if any(k.casefold() == str(key).casefold() for k in KEYWORDS) and isinstance(value, dict):
+                info = {k: value[k] for k in ("type", "description", "enum", "example", "items") if k in value}
+                out.append(f"{here[-90:]} = {json.dumps(info, ensure_ascii=False)[:500]}")
+            described(value, here, out)
+    elif isinstance(node, list):
+        for index, value in enumerate(node[:200]):
+            described(value, f"{trail}[{index}]", out)
+    return out
+
+
 def spec_fields(text: str) -> None:
     try:
         spec = json.loads(text)
     except ValueError:
         return
     paths = spec.get("paths") or {}
-    for path, methods in paths.items():
-        if "Display" in path or "PromotionBonus" in path:
-            notice(f"OpenAPI path {path[:40]}", json.dumps(methods, ensure_ascii=False)[:3800])
+    display = {p: m for p, m in paths.items() if "display" in p.casefold()}
+    notice("OpenAPI paths", f"{len(paths)} paths; display: {list(display)[:6]}; "
+           f"promotion: {[p for p in paths if 'promotion' in p.casefold()][:8]}")
+    for path, methods in list(display.items())[:2]:
+        notice(f"OpenAPI {path[-30:]}", json.dumps(methods, ensure_ascii=False))
+    found = described(spec)
+    notice("OpenAPI field docs", " ||| ".join(found[:12]) if found else "no keyword properties")
+    for index in range(12, min(len(found), 36), 12):
+        notice(f"OpenAPI field docs {index}", " ||| ".join(found[index:index + 12]))
 
 
 def run() -> None:
@@ -79,9 +98,9 @@ def run() -> None:
         spec_fields(text)
         queue += [u for u in linked_urls(url, text) if u not in seen and "mobiwork" in u]
     joined = "\n".join(corpus)
-    for keyword in KEYWORDS:
-        parts = windows(joined, keyword)
-        notice(f"OpenAPI doc {keyword}", " ||| ".join(parts) if parts else "not found")
+    for keyword in ("tt_cham_diem", "soSuat"):
+        parts = windows(joined, keyword, limit=3)
+        notice(f"OpenAPI text {keyword}", " ||| ".join(parts) if parts else "not found")
 
 
 if __name__ == "__main__":
