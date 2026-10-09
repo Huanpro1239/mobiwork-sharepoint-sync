@@ -116,6 +116,33 @@ class InputTests(unittest.TestCase):
         results, _ = calc.compute([qty_program()], calc.sold_lines(unrelated, OCT1, OCT31), {})
         self.assertEqual(results[0].rows[0]["objThucHien"][calc.TARGET_ID], 0)
 
+    def test_missing_unit_diagnostics_include_all_qualifying_keys_without_customer_fields(self):
+        detail = bill([
+            {"ma_phieu": "BH1", "ten_dvt": "", "ma_dvt": "", "so_luong": 80},
+            {"ma_phieu": "BH2", "ma_sp": "OTHER", "ten_dvt": "", "ma_dvt": "", "so_luong": 90},
+            {"ma_phieu": "UNRELATED", "ma_sp": "UNLISTED", "ten_dvt": "", "ma_dvt": ""},
+        ])
+        other = qty_program(pid="2" * 24)
+        other["name"] = "588/TB/GT/10/2026_OTHER"
+        other["products"][0]["san_pham_mua"][0]["ma_san_pham"] = "OTHER"
+        with self.assertRaisesRegex(ValueError, "missing its unit") as error:
+            calc.compute([qty_program(), qty_program(), other], calc.sold_lines(detail, OCT1, OCT31), {})
+        payload = json.loads(str(error.exception).split(": ", 1)[1])
+        self.assertEqual(payload["missing_unit_line_count"], 2)
+        self.assertEqual([(r["order"], r["line"], r["sku"], r["quantity"]) for r in payload["lines"]],
+                         [("BH1", "1", "230100110", 80), ("BH2", "2", "OTHER", 90)])
+        self.assertEqual(len(payload["lines"][0]["programmes"]), 1)
+        self.assertNotIn("UNRELATED", str(error.exception))
+        for field in (C1, "Quán A", "Nha Trang", "ten_kh", "sdt", "dia_chi"):
+            self.assertNotIn(field, str(error.exception))
+
+    def test_missing_unit_diagnostics_are_bounded_but_report_the_full_count(self):
+        detail = bill([{"ten_dvt": "", "ma_dvt": ""} for _ in range(30)])
+        with self.assertRaises(ValueError) as error:
+            calc.compute([qty_program()], calc.sold_lines(detail, OCT1, OCT31), {})
+        payload = json.loads(str(error.exception).split(": ", 1)[1])
+        self.assertEqual((payload["missing_unit_line_count"], len(payload["lines"])), (30, 25))
+
     def test_delivery_date_is_converted_to_vietnam_day(self):
         self.assertEqual(calc.local_day("2026-09-30T17:00:00.000Z"), date(2026, 10, 1))
         self.assertEqual(calc.local_day("2026-10-31T16:59:59.000Z"), date(2026, 10, 31))

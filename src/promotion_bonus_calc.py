@@ -29,6 +29,7 @@ same workbook layout.
 from __future__ import annotations
 
 import collections
+import json
 import logging
 import math
 from dataclasses import dataclass, replace
@@ -352,6 +353,7 @@ def compute(
             code_of.setdefault(line["customer"], line["code"])
     results: list[ui.ProgramResult] = []
     issues: list[dict[str, Any]] = []
+    missing_units: dict[tuple[str, str, str], dict[str, Any]] = {}
     for program in programs:
         try:
             rule = parse_rule(program)
@@ -370,7 +372,15 @@ def compute(
             counted = []
             for line in by_customer.get(customer_id, []):
                 if line["sku"] in rule.units and not line["unit"]:
-                    raise ValueError("Qualifying Bill sale line is missing its unit")
+                    raw = line.get("raw") or {}
+                    key = (ui.text(raw.get("ma_phieu")), ui.text(raw.get("stt")), line["sku"])
+                    gap = missing_units.setdefault(key, {"order": key[0], "line": key[1],
+                                                         "sku": key[2], "quantity": line["quantity"],
+                                                         "programmes": []})
+                    code = bonus_code(rule.name)
+                    if code not in gap["programmes"]:
+                        gap["programmes"].append(code)
+                    continue
                 if line["unit"] in rule.units.get(line["sku"], ()):
                     contribution = line["amount"] if rule.kind == AMOUNT else line["quantity"]
                     actual += contribution
@@ -420,6 +430,13 @@ def compute(
             })
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
                                         [target], rewards))
+    if missing_units:
+        # Do not return/publish partial calculations. Expose only the source keys
+        # needed to confirm units, never raw customer identity or contact fields.
+        details = {"missing_unit_line_count": len(missing_units),
+                   "lines": list(missing_units.values())[:25]}
+        raise ValueError("Qualifying Bill sale line is missing its unit: "
+                         + json.dumps(details, ensure_ascii=False))
     return results, issues
 
 
