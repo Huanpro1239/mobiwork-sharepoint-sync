@@ -414,6 +414,13 @@ def _calc_month_frames(
         except Exception as exc:  # display data is informative; never block the report
             display_note = f"Không lấy được DisplayData ({type(exc).__name__})"
             manifest["display_error"] = f"{type(exc).__name__}: {exc}"
+        confirmed = detail_config.get("display_overrides") or {}
+        for key, result in confirmed.items():  # BoSung_Mapping sheet TrungBay wins over DMS
+            code, _, name = key.partition("|")
+            displays[(code, name)] = calc.DISPLAY_FAIL if result == "Không đạt" else result
+        if confirmed:
+            display_note += f"; {len(confirmed)} kết quả trưng bày nhập tay (BoSung_Mapping/TrungBay)"
+            manifest["display_overrides"] = len(confirmed)
     sales_metadata, conflicts = calc.customer_sales_metadata(all_lines, detail_config.get("employees", {}),
                                                               detail_config)
     manifest["customer_assignment_conflicts"] = conflicts
@@ -499,6 +506,18 @@ def _calc_month_frames(
                                  "Gợi ý": "Suất chia theo ngày đạt chỉ tiêu; muốn trả thêm thì tăng "
                                           "số suất CT trên DMS"})
     manifest["quota"] = quota_summary
+    for result in results:  # customers waiting only for the display result → sheet TrungBay
+        for row in result.rows:
+            if row.get("_eligible") != calc.REVIEW_DISPLAY:
+                continue
+            extra = row.get("extra") or {}
+            program_rows.append({"_sheet": "TrungBay", "Mã Khách hàng": row.get("ma"),
+                                 "Chương trình trưng bày": extra.get("Trưng bày yêu cầu"),
+                                 "Tên Khách hàng": row.get("ten"), "Mã CT": calc.bonus_code(result.program_name),
+                                 "Còn thiếu": ["Kết quả"],
+                                 "Nguyên nhân": "Đạt doanh số; DMS chưa trả kết quả chấm trưng bày "
+                                                f"({extra.get('Kết quả trưng bày') or 'không có dữ liệu'})",
+                                 "Gợi ý": "Điền Kết quả = Đạt / Không đạt"})
     manifest["over_quota"] = over_quota
     counts = ui.snapshot_counts(results)
     diag = calc.diagnostics(results)
@@ -642,7 +661,8 @@ def _calc_month_frames(
         label = f"TraThuong {first:%Y-%m}"
         TODO_UPDATES[label] = bosung.aggregate(bosung.todo_rows(detail_issues, detail_config) + program_rows, label)
     calculation_issues = list(issues)
-    calculation_issues.extend({"Chương trình": p["Tên CT"], "Vấn đề": p["Nguyên nhân"]} for p in program_rows)
+    calculation_issues.extend({"Chương trình": p["Tên CT"], "Vấn đề": p["Nguyên nhân"]}
+                              for p in program_rows if p["_sheet"] == "ChuongTrinh")
     if calculation_issues:
         frames["Can_xem"] = pd.DataFrame(calculation_issues, dtype=object).drop_duplicates()
     manifest["template_rows"] = len(report)

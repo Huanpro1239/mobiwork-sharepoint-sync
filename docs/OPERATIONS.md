@@ -605,3 +605,7 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
 - `soSuat` = tổng số suất của CT (mỗi bội số 1 suất), `gioiHanCT = false`/trống = không giới hạn. Suất chia theo ngày
   khách đạt chỉ tiêu (sớm trước, rồi mã KH); CT theo tháng trừ suất đã trả ở các tháng trước của CT. Khách đạt sau khi
   hết suất: "Hết suất CT (khách đạt sau)", không trả. Chi tiết theo CT ở manifest `quota` và sheet ChuongTrinh.
+- Kết quả trưng bày: DMS DisplayData không trả kết quả chấm (`cham_diem` rỗng ở mọi bản ghi, kể cả khi lọc theo
+  `ten_cttb`). Khách đạt doanh số nhưng chờ trưng bày được liệt kê ở sheet **TrungBay** của CanBoSung_TongHop; điền
+  `Kết quả` = Đạt / Không đạt vào sheet TrungBay của BoSung_Mapping (khóa Mã KH + tên CT trưng bày). Đạt → trả thưởng
+  (nếu còn suất); Không đạt → "Không đạt trưng bày", không trả.

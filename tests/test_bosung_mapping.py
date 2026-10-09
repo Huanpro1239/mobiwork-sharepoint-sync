@@ -174,3 +174,22 @@ class ProgrammeSheetTests(unittest.TestCase):
         self.assertEqual(book["NPP"].iloc[0]["SS Code"], "GS1")
         self.assertEqual(list(book["ChuongTrinh"].columns)[:2], ["Mã CT", "Tên CT"])
         sp.upload_file.assert_called_once()
+
+
+class DisplaySheetTests(unittest.TestCase):
+    def test_display_results_are_parsed_and_clear_the_todo(self):
+        overrides, problems = bosung.parse_overrides(workbook({"TrungBay": [
+            {"Mã Khách hàng": "KH1", "Chương trình trưng bày": "CTTB  PET", "Kết quả": "đạt"},
+            {"Mã Khách hàng": "KH2", "Chương trình trưng bày": "CTTB PET", "Kết quả": "Không đạt"},
+            {"Mã Khách hàng": "KH3", "Chương trình trưng bày": "CTTB PET", "Kết quả": "chưa"}]}))
+        self.assertEqual(overrides["display_overrides"], {"KH1|cttb pet": "Đạt", "KH2|cttb pet": "Không đạt"})
+        self.assertEqual(len(problems), 1)
+        cfg = bosung.apply_overrides({}, overrides)
+        self.assertEqual(cfg["display_overrides"]["KH1|cttb pet"], "Đạt")
+        todo = {"TraThuong 2026-10": [
+            {"_sheet": "TrungBay", "Mã Khách hàng": "KH1", "Chương trình trưng bày": "CTTB PET",
+             "Còn thiếu": ["Kết quả"], "Số dòng": 1, "Nguồn": ["TraThuong 2026-10"]},
+            {"_sheet": "TrungBay", "Mã Khách hàng": "KH9", "Chương trình trưng bày": "CTTB PET",
+             "Còn thiếu": ["Kết quả"], "Số dòng": 1, "Nguồn": ["TraThuong 2026-10"]}]}
+        frames = bosung.todo_frames(todo, overrides)
+        self.assertEqual(list(frames["TrungBay"]["Mã Khách hàng"]), ["KH9"])

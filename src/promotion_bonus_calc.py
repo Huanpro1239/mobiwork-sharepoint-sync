@@ -55,6 +55,8 @@ DISPLAY_PASS = "Đạt"
 REVIEW_DISPLAY = "Cần kiểm tra trưng bày"
 UNIT_HOLD = "Chờ xác nhận ĐVT dòng đơn"
 QUOTA_OUT = "Hết suất CT (khách đạt sau)"
+DISPLAY_FAIL = "Không đạt (xác nhận)"  # confirmed in BoSung_Mapping/TrungBay
+DISPLAY_FAILED = "Không đạt trưng bày"
 
 
 # --------------------------------------------------------------------------- rules
@@ -446,6 +448,8 @@ def compute(
                 eligible = "Không"
             elif not rule.display_program or display in {rule.display_result or DISPLAY_PASS, DISPLAY_PASS}:
                 eligible = "Có"
+            elif display == DISPLAY_FAIL:
+                eligible = DISPLAY_FAILED
             else:
                 eligible = REVIEW_DISPLAY
             proposed = {f"{sku}|{unit}": qty * multiplier

@@ -880,3 +880,36 @@ class DisplayByProgrammeTests(unittest.TestCase):
         pet = next(c for c in calls if c.get("ten_cttb") == "CTTB PET")
         self.assertEqual((pet["tu_ngay"], pet["den_ngay"]), ("01/07/2026", "31/10/2026"))
         self.assertEqual(calc.display_passes(records)[("K1", "cttb pet")], "Đạt")
+
+
+class DisplayOverrideTests(unittest.TestCase):
+    def run_month(self, overrides):
+        program = qty_program(customers=(C1, C2), cttb={"ten": "CTTB PET", "ket_qua": {"label": "Đạt"}})
+        detail = bill([{"so_luong": 80}, {"so_luong": 80, "ID_khachhang": C2, "ma_kh": "KH2"}])
+        with patch.dict(os.environ, {"PROMOTION_BONUS_STTT": "0"}), \
+                patch.object(bonus, "fetch_programs", return_value=[program]), \
+                patch.object(bonus, "_bill_detail", return_value=detail), \
+                patch.object(calc, "fetch_display_records", return_value=[]):
+            audit = {}
+            bonus.TODO_UPDATES.clear()
+            with patch.dict(os.environ, {"BOSUNG_MAPPING": "true"}):
+                frames = bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True, {}, "t", audit,
+                                                  verbose=False, detail_config={"display_overrides": overrides,
+                                                                                "bosung_mapping": True})
+        return frames, audit
+
+    def test_pending_display_customers_are_listed_and_manual_results_apply(self):
+        frames, audit = self.run_month({})
+        self.assertEqual(audit["review_display_rows"], 2)
+        frames, audit = self.run_month({"KHHO112323|cttb pet": "Đạt", "KH2|cttb pet": "Không đạt"})
+        self.assertEqual((audit["eligible_rows"], audit["review_display_rows"]), (1, 0))
+        ledger = frames["TraThuong"]
+        self.assertIn(calc.DISPLAY_FAILED, set(ledger["Trạng thái"]))
+        todo = [r for r in bonus.TODO_UPDATES["TraThuong 2026-10"] if r["_sheet"] == "TrungBay"]
+        self.assertEqual(todo, [])
+
+    def test_waiting_customers_go_to_the_display_sheet(self):
+        self.run_month({})
+        todo = [r for r in bonus.TODO_UPDATES["TraThuong 2026-10"] if r["_sheet"] == "TrungBay"]
+        self.assertEqual({r["Mã Khách hàng"] for r in todo}, {"KHHO112323", "KH2"})
+        self.assertEqual({r["Chương trình trưng bày"] for r in todo}, {"CTTB PET"})
