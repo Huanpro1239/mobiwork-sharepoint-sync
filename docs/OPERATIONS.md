@@ -229,6 +229,9 @@ Chương trình Q4 "... THEO THÁNG" vẫn tính theo từng tháng.
 `CanBoSung.Mức độ` phân biệt `Thiếu thông tin mô tả`, `Thiếu quy đổi đơn vị` và `Chặn xuất bản`.
 Thiếu quy cách giữ số lượng quy đổi trống và báo `unit_gaps`, theo cùng chính sách CTKM.
 Lỗi identity, số tiền/số lượng hoặc hệ số quy đổi không hợp lệ chặn upload; dùng dry-run để xem chi tiết.
+Lỗi dòng bán đủ điều kiện nhưng thiếu ĐVT ghi tổng số dòng thiếu và tối đa 25 khóa
+đơn/dòng/SKU, số lượng, mã CT trong manifest lỗi. Không ghi tên, địa chỉ, điện thoại KH;
+không trả kết quả tính một phần. Chỉ thêm `line_unit_overrides` khi có xác nhận ĐVT thực.
 Manifest có `blocking_issues`, `missing_fields`, `quality_status` và số khách cần
 kiểm tra trưng bày. `status=success` là chạy xong, không đồng nghĩa đã đối chiếu DMS.
 
