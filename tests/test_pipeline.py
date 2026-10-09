@@ -48,11 +48,23 @@ class PipelineTests(unittest.TestCase):
         self.assertIsNot(self.caches[0], self.caches[2])
 
     def test_scopes_exclude_unrequested_writes(self):
-        for scope in ("promotion_history", "promotion_bonus_only"):
+        for scope in ("promotion_reports", "promotion_history", "promotion_bonus_only"):
             with self.subTest(scope=scope):
                 self.calls.clear()
                 pipeline.run(scope)
                 self.assertEqual(self.calls, list(pipeline.SCOPES[scope]))
+
+    def test_current_promotion_rebuild_shares_context_and_preserves_current_month_settings(self):
+        with patch.dict(os.environ, {"PROMOTION_BONUS_MONTHS": "", "PROMOTION_DETAIL_MONTHS": "",
+                                     "PROMOTION_DETAIL_SCOPE": "touched"}):
+            result = pipeline.run("promotion_reports")
+            self.assertEqual(os.environ["PROMOTION_BONUS_MONTHS"], "")
+            self.assertEqual(os.environ["PROMOTION_DETAIL_SCOPE"], "touched")
+        self.reports.assert_not_called()
+        self.photos.assert_not_called()
+        self.assertEqual(self.calls, ["promotion_bonus", "promotion_detail"])
+        self.assertIs(self.caches[0], self.caches[1])
+        self.assertEqual(result["status"], "success")
 
     def test_exception_stops_all_dependent_stages(self):
         self.photos.side_effect = RuntimeError("Image master invalid")

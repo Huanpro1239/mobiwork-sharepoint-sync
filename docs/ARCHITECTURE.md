@@ -13,6 +13,8 @@ Pipeline gọi các bộ xuất hiện có theo thứ tự:
 `promotion_history` chỉ chạy hai bước trả thưởng/CTKM, cùng danh sách tháng
 `PROMOTION_BONUS_MONTHS` (`YYYY-MM,YYYY-MM` hoặc `all_existing`). Nếu hai biến
 chọn tháng của hai báo cáo khác nhau, pipeline dừng trước khi tải hoặc ghi dữ liệu.
+`promotion_reports` tính lại trả thưởng hiện tại và CTKM từ master Bill đã cập nhật,
+dùng cùng bộ danh mục và kiểm tra xuất bản của pipeline; phù hợp sau khi bổ sung mapping.
 `promotion_bonus_only` chỉ chạy trả thưởng. Audit API là công cụ chẩn đoán riêng.
 
 Các lệnh cũ vẫn gọi được độc lập. Các công cụ bootstrap, rebuild, backfill,

@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = Path("output/pipeline_manifest.json")
 SCOPES = {
     "all_reports": ("reports", "photos", "promotion_bonus", "promotion_detail"),
+    "promotion_reports": ("promotion_bonus", "promotion_detail"),
     "promotion_history": ("promotion_bonus", "promotion_detail"),
     "promotion_bonus_only": ("promotion_bonus",),
 }

@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       report_scope:
-        description: "Routine sync, or rebuild promotion detail for every existing Bill month"
+        description: "Routine sync, or rebuild current/historical promotion reports from Bill masters"
         required: true
         type: choice
         options:
           - all_reports
+          - promotion_reports
           - promotion_history
           - promotion_api_audit
           - promotion_bonus_only
