@@ -26,7 +26,7 @@ def notice(title: str, text: str) -> None:
 def fetch(session: requests.Session, url: str) -> str:
     try:
         response = session.get(url, timeout=30)
-    except requests.RequestException as exc:
+    except requests.RequestException:
         return ""
     return response.text if response.ok else ""
 
