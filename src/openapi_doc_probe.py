@@ -65,7 +65,7 @@ def described(node, trail="", out=None):
 
 def spec_fields(text: str) -> None:
     try:
-        spec = json.loads(text)
+        spec = json.loads(text.lstrip('\ufeff'))
     except ValueError:
         return
     paths = spec.get("paths") or {}
@@ -98,9 +98,11 @@ def run() -> None:
         spec_fields(text)
         queue += [u for u in linked_urls(url, text) if u not in seen and "mobiwork" in u]
     joined = "\n".join(corpus)
-    for keyword in ("tt_cham_diem", "soSuat"):
-        parts = windows(joined, keyword, limit=3)
+    for keyword, width in (("tt_cham_diem", 3500), ("Trạng thái chấm", 800), ("trang_thai", 600)):
+        parts = windows(joined, keyword, width=width, limit=1)
         notice(f"OpenAPI text {keyword}", " ||| ".join(parts) if parts else "not found")
+    index = joined.find("DisplayData")
+    notice("OpenAPI DisplayData", joined[max(0, index - 200):index + 3500] if index >= 0 else "not found")
 
 
 if __name__ == "__main__":
