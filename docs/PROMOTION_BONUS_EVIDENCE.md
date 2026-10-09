@@ -232,7 +232,10 @@ period actual and eligibility status are explicit beside the template fields.
 Future/out-of-programme months are blank. A missing master or qualifying sale unit
 leaves the affected month and aggregate totals unavailable, with a source reason;
 other valid monthly results remain visible. Missing registration/contact fields stay
-blank, not inferred from programme dates or customer names. Historical membership
+blank, not inferred from programme dates or customer names. The observed Customer API
+field `nguoi_lien_he` populates the contact-person column when scalar text; absent or
+structured values remain blank. Threshold comparisons retain original contribution
+precision, with rounding only in Excel display formats. Historical membership
 and full Paybonus parity remain unverified. The second view keeps actual invoice
 sales/gifts once each and pre-VAT amount in W, physical gift quantity in Z, without
 mixing actual invoices with calculated reward lines. Existing supporting views and
