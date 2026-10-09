@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import collections
 import json
 import logging
 import os
@@ -531,6 +532,10 @@ def _calc_month_frames(
                    f"reached={manifest['reached_rows']} eligible={manifest['eligible_rows']} "
                    f"review_display={manifest['review_display_rows']} "
                    f"sold_lines={len(lines)} display={display_note}")
+    held = collections.Counter(str(row.get("_eligible")) for result in results for row in result.rows
+                               if row.get("_eligible") not in {"Có", "Không"})
+    _github_notice(f"Promotion Bonus status {first:%m/%Y}",
+                   f"not_paid_reasons={dict(held.most_common(8))} quota_cut={over_quota[:8]}")
     if verbose:
         lines_out = [f"{item['name'][:28]}|r{item['registered']}|s{item['with_sales']}|"
                      f"d{item['reached']}|tb{item['display_passed']}|e{item['eligible']}"
