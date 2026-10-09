@@ -112,7 +112,9 @@ it refers to the whole-period target; achieved slots are increments of running a
                     complete = False
                     continue
                 counted = [line for line in matching if line["unit"] in rule.units[line["sku"]]]
-                actual = round(sum(line["amount"] if rule.kind == calc.AMOUNT else line["quantity"] for line in counted), 2)
+                # Keep source precision through threshold checks, as compute() does.
+                # Rounding 71.999 to 72 before checking a 72-unit minimum grants a false slot.
+                actual = sum(line["amount"] if rule.kind == calc.AMOUNT else line["quantity"] for line in counted)
                 values.append(actual)
                 running += actual
                 if mode == "monthly":
@@ -131,8 +133,9 @@ it refers to the whole-period target; achieved slots are increments of running a
                         if value:
                             assignments[field].add(value)
             meta = customers.get(customer, {})
-            current = (row.get("objThucHien") or {}).get(calc.TARGET_ID)
-            total = round(sum(v for v in values if v is not None), 2) if complete else None
+            current = (sum(row["_weights"]) if "_weights" in row else
+                       (row.get("objThucHien") or {}).get(calc.TARGET_ID))
+            total = running if complete else None
             if rule.tiers:
                 selected = next((tier for tier in rule.tiers if current is not None and calc.reached(current, tier)), rule.tiers[0])
             else:

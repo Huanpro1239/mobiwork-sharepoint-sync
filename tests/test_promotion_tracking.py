@@ -75,6 +75,15 @@ class TrackingTests(unittest.TestCase):
         self.assertEqual(row["TỔNG SỐ SUẤT ĐẠT"], 2)
         self.assertEqual(row["Trạng thái trả thưởng"], "Không")
 
+    def test_thresholds_use_source_precision_before_display_rounding(self):
+        row = build(amounts=(71.999, 0.0009, 71.999))[0].iloc[0]
+        self.assertEqual(row["SỐ SUẤT ĐẠT T07/2026"], 0)
+        self.assertEqual(row["SỐ SUẤT ĐẠT T09/2026"], 0)
+        self.assertAlmostEqual(row["CÒN LẠI"], -0.001)
+        row = build("cumulative", amounts=(71.999, 0.0009, 0))[0].iloc[0]
+        self.assertEqual(row["TỔNG SỐ SUẤT ĐẠT"], 0)
+        self.assertAlmostEqual(row["TỔNG TÍCH LŨY"], 71.9999)
+
     def test_gifts_and_wrong_units_never_inflate_progress(self):
         row = build(extra={"ten_dvt": "Thùng", "ma_dvt": "Thùng"})[0].iloc[0]
         self.assertEqual(row["TỔNG TÍCH LŨY"], 0)
