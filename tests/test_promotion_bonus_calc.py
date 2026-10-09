@@ -116,6 +116,17 @@ class InputTests(unittest.TestCase):
         results, _ = calc.compute([qty_program()], calc.sold_lines(unrelated, OCT1, OCT31), {})
         self.assertEqual(results[0].rows[0]["objThucHien"][calc.TARGET_ID], 0)
 
+    def test_confirmed_sku_default_qualifies_sales_from_new_orders(self):
+        detail = bill([{"ma_phieu": "NEW1", "ten_dvt": "", "ma_dvt": "", "so_luong": 80},
+                       {"ma_phieu": "NEW2", "ten_dvt": "", "ma_dvt": "", "so_luong": 40}])
+        cfg = {"sale_unit_defaults": {"230100110": {"unit": "Chai", "source": "Confirmed default"}}}
+        lines = calc.sold_lines(detail, OCT1, OCT31, cfg)
+        results, issues = calc.compute([qty_program()], lines, {})
+        self.assertFalse(issues)
+        self.assertEqual(results[0].rows[0]["objThucHien"][calc.TARGET_ID], 120)
+        self.assertEqual(results[0].rows[0]["_eligible"], "Có")
+        self.assertEqual(len(results[0].rows[0]["_lines"]), 2)
+
     def test_missing_unit_diagnostics_include_all_qualifying_keys_without_customer_fields(self):
         detail = bill([
             {"ma_phieu": "BH1", "ten_dvt": "", "ma_dvt": "", "so_luong": 80},

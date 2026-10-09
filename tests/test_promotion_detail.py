@@ -255,6 +255,39 @@ class ProductCatalogueTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.source_unit(row, False, cfg)
 
+    def test_confirmed_sale_default_converts_new_orders_and_retains_its_evidence(self):
+        cfg = config()
+        cfg['sale_unit_defaults'] = {'SKU1': {'unit': 'Chai', 'source': 'Confirmed SKU default'}}
+        cfg['unit_conversions']['SKU1|Chai'] = {'target_unit': 'Thùng', 'factor': str(1/24)}
+        detail = pd.DataFrame([source(ma_phieu='NEW1', ten_dvt='', so_luong=24),
+                               source(ma_phieu='NEW2', ten_dvt='', so_luong=48)])
+        report, issues = module.build_report(detail, cfg)
+        self.assertTrue(issues.empty)
+        self.assertEqual(len(report), 2)
+        for actual, expected in zip(report['Số lượng SELL-OUT'], (1, 2), strict=True):
+            self.assertAlmostEqual(actual, expected)
+        trace = module.unit_trace(detail, report, cfg)
+        self.assertEqual(trace['Nguồn ĐVT'].tolist(), ['Confirmed SKU default'] * 2)
+
+    def test_source_and_exact_line_units_take_priority_over_sale_defaults(self):
+        row = source(ten_dvt='', ma_dvt='')
+        cfg = {'sale_unit_defaults': {'SKU1': {'unit': 'Chai', 'source': 'Default'}},
+               'line_unit_overrides': {'ORDER1|1|SKU1': {'unit': 'Thùng', 'source': 'Exact line'}}}
+        self.assertEqual(module.source_unit(row, False, cfg), ('Thùng', 'Exact line'))
+        self.assertEqual(module.source_unit({**row, 'ten_dvt': 'Két'}, False, cfg), ('Két', 'ten_dvt'))
+        self.assertEqual(module.source_unit({**row, 'ma_dvt': 'Két'}, False, cfg), ('Két', 'ma_dvt'))
+        self.assertEqual(module.source_unit({**row, 'ma_phieu': 'NEW'}, False, cfg), ('Chai', 'Default'))
+
+    def test_sale_default_requires_evidence_and_does_not_supply_gift_or_other_sku_units(self):
+        row = source(ten_dvt='', ma_dvt='')
+        cfg = {'sale_unit_defaults': {'SKU1': {'unit': 'Chai', 'source': 'Default'}}}
+        self.assertEqual(module.source_unit(row, True, cfg), ('', ''))
+        self.assertEqual(module.source_unit({**row, 'ma_sp': 'OTHER'}, False, cfg), ('', ''))
+        for invalid in ({'unit': 'Chai'}, {'unit': '', 'source': 'Default'}, 'Chai'):
+            cfg['sale_unit_defaults']['SKU1'] = invalid
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'Sale unit default'):
+                module.source_unit(row, False, cfg)
+
     def test_missing_gift_unit_uses_only_its_linked_order_promotion(self):
         row = source(is_km=True, loai_hang='Khuyến mãi', ten_dvt='', ma_dvt='',
                      ctkm='Programme', ctkmFull_id='gift-id', so_luong=4,

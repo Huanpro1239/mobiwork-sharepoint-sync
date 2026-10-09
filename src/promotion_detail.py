@@ -184,7 +184,8 @@ def source_unit(row: dict[str, Any], gift: bool, cfg: dict[str, Any] | None = No
 
     The product catalogue does not identify the unit used by a historical line.
     A linked order promotion does: require its exact ID, SKU and a single unit.
-    Sale units and ambiguous gifts remain unresolved.
+    Blank sale units use evidence-backed line overrides or explicitly confirmed
+    SKU defaults. Ambiguous gifts remain unresolved.
     """
     fields = ("ten_dvt", "ma_dvt", "ten_dvt_km", "ma_dvt_km") if gift else ("ten_dvt", "ma_dvt")
     for field in fields:
@@ -193,9 +194,13 @@ def source_unit(row: dict[str, Any], gift: bool, cfg: dict[str, Any] | None = No
     sku = text(row.get("ma_sp")) or (text(row.get("ma_sp_km")) if gift else "")
     key = "|".join([text(row.get("ma_phieu")), text(row.get("stt")), sku])
     override = (cfg or {}).get("line_unit_overrides", {}).get(key)
+    label = "Line unit override"
+    if not override and not gift:
+        override = (cfg or {}).get("sale_unit_defaults", {}).get(sku)
+        label = "Sale unit default"
     if override:
         if not isinstance(override, dict) or not text(override.get("unit")) or not text(override.get("source")):
-            raise ValueError("Line unit override requires a unit and its evidence source")
+            raise ValueError(f"{label} requires a unit and its evidence source")
         return text(override["unit"]), text(override["source"])
     if not gift:
         return "", ""
