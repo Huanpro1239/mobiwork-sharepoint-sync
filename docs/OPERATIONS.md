@@ -602,9 +602,9 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
 - DisplayData được lấy thêm theo từng chương trình trưng bày (`ten_cttb`, tham số trong tài liệu OpenAPI) trên cả
   thời gian CT; "Đạt" chỉ khi `cham_diem` ghi đúng "Đạt" (tài liệu: `tt_cham_diem = 2` vẫn có bản ghi chưa có kết quả,
   nên trạng thái này không được hiểu là Đạt). Annotation DisplayData có `by_programme` (số bản ghi, số bản ghi có kết quả).
-- `soSuat` = tổng số suất của CT (mỗi bội số 1 suất), `gioiHanCT = false`/trống = không giới hạn. Suất chia theo ngày
-  khách đạt chỉ tiêu (sớm trước, rồi mã KH); CT theo tháng trừ suất đã trả ở các tháng trước của CT. Khách đạt sau khi
-  hết suất: "Hết suất CT (khách đạt sau)", không trả. Chi tiết theo CT ở manifest `quota` và sheet ChuongTrinh.
+- `soSuat` = số suất tối đa **mỗi khách** (CT có bội số trả tối đa soSuat lần; CT không bội số không bị ảnh hưởng);
+  `gioiHanCT = false`/trống = không giới hạn. Cách hiểu "tổng suất của CT" đã thử và bị loại: CT 008 Mức 1 (soSuat 1)
+  sẽ chỉ trả 1 trong 22 khách đạt mỗi tháng; DMS cũng trả `soSuatCT`/`time_soSuat` theo từng khách.
 - Kết quả trưng bày: DMS DisplayData không trả kết quả chấm (`cham_diem` rỗng ở mọi bản ghi, kể cả khi lọc theo
   `ten_cttb`). Khách đạt doanh số nhưng chờ trưng bày được liệt kê ở sheet **TrungBay** của CanBoSung_TongHop; điền
   `Kết quả` = Đạt / Không đạt vào sheet TrungBay của BoSung_Mapping (khóa Mã KH + tên CT trưng bày). Đạt → trả thưởng
