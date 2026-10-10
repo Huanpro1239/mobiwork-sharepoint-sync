@@ -649,3 +649,15 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
   - `BIDU010132`: Doanh số thực tế 80 chai đạt Mức 1 (72 chai). Chưa có trong BaoCao do chưa được đăng ký trên DMS trong CT 006.
   - `BIDU010144`: Doanh số thực tế 150 chai đạt Mức 2 (144 chai). Chưa có trong BaoCao do chưa được đăng ký trên DMS trong CT 006.
   - Cần lọc theo `Vùng`: Khoảng 250 khách mua đạt mức trên toàn quốc là số liệu gộp nhiều vùng, chỉ các khách thuộc Miền Nam mới là đối tượng của CT 006 Miền Nam.
+
+## Theo dõi tối ưu vận hành và vệ sinh repository
+
+Monthly master không đổi nội dung nghiệp vụ thì dùng semantic no-op, **không upload lại**. Với lookback nhiều ngày, pipeline gom theo report/tháng để hạn chế số lần tải và publish workbook. Các lịch production và thủ tục phục hồi nằm trong phần *Lịch và luồng tự động sau bootstrap* ở trên và là nguồn tham chiếu thống nhất.
+
+Đề xuất chỉ tiêu giám sát nội bộ (không phải cam kết SLA tự động):
+- Scheduled report success rate: mục tiêu từ 99% trở lên.
+- Stale pipeline incident kéo dài trên 4 giờ: mục tiêu 0.
+- Manual backfill cho D-1..D-3: giảm về gần 0 nhờ nightly reconciliation.
+- SharePoint writes / target executions: giảm nhờ gom batch và semantic no-op.
+
+Không commit dữ liệu khách hàng, file báo cáo Excel/CSV, kết quả chạy, cache hoặc secrets vào GitHub. Các thư mục `output/`, `runtime/`, `cache/`, `input/`, `feedback/` thuộc runtime và đã được bỏ qua bởi `.gitignore`. CI kiểm tra thêm các file vô tình được đưa vào Git index.
