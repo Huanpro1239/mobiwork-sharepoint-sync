@@ -434,7 +434,7 @@ không thay thế hoặc thêm history cho Promotion Bonus.
   báo cáo (vd 24). Dòng sai bị bỏ qua và báo trong annotation `BoSung_Mapping`.
 - Lần đồng bộ sau tự áp dụng; tháng cũ chạy `report_scope=promotion_history`.
 - Khách hàng đổi mã trên DMS nhưng cùng ID: đơn giữ mã cũ, metadata lấy theo ID, không chặn.
-- Tắt: `"bosung_mapping": false` trong `config/promotion_detail.json`; bước trả thưởng cần thêm
+- Tắt: `\"bosung_mapping\": false` trong `config/promotion_detail.json`; bước trả thưởng cần thêm
   env `BOSUNG_MAPPING=true` (đã đặt trong workflow).
 
 Có thể chọn config runtime riêng bằng `PROMOTION_DETAIL_CONFIG` để không đưa mapping khách hàng vào Git.
@@ -479,7 +479,7 @@ Cập nhật khi nhận phiên bản danh mục mới, từ thư mục repositor
 
 ```powershell
 $env:PYTHONPATH = 'src'
-python -m import_product_reference 'D:\Vikoda\SO\Bao cao mau\DMSP\Danh Muc San Pham.xlsx'
+python -m import_product_reference 'D:\\Vikoda\\SO\\Bao cao mau\\DMSP\\Danh Muc San Pham.xlsx'
 ```
 
 Importer kiểm tra mã trùng mâu thuẫn, quy cách nguyên dương và đơn vị đóng gói;
@@ -624,3 +624,15 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
 - Manifest `coverage_gaps` (và log `Promotion Bonus coverage`) đếm theo từng mức CT: khách mua SP của CT nhưng
   không có trong danh sách đăng ký, và doanh số SP của CT bán khác ĐVT khai báo (không được tính theo quy tắc DMS),
   cùng phân bố `trang_thai` dòng đơn. Chỉ là số đếm, không có thông tin khách.
+
+## Chuẩn hóa trả thưởng: Phân biệt doanh thu và chấm ảnh DMS (10/10/2026)
+- Phân biệt minh bạch 2 nhóm chương trình:
+  1. Chương trình thuần doanh số / số lượng (không có cttb): xét thưởng 100% theo các dòng hàng hợp lệ trên hóa đơn giao hàng. Cột `Trưng bày yêu cầu` và `Kết quả trưng bày` ghi "Không áp dụng".
+  2. Chương trình liên kết trưng bày (có cttb): Thưởng tính theo doanh số được bảo lưu nguyên vẹn; kết quả trưng bày được lấy trực tiếp từ DMS OpenAPI (`DisplayData`).
+- Chấm ảnh trưng bày là chương trình riêng biệt thực hiện trực tiếp trên hệ thống DMS, dự án đồng bộ này không tự chấm ảnh hay dùng file chấm ảnh nội bộ thay thế DMS.
+- Khi DMS chưa hoàn tất chấm điểm trưng bày: trạng thái ghi "Cần kiểm tra trưng bày", phần thưởng đạt được theo doanh số vẫn được bảo lưu trong bảng tính, sheet BaoCao (`TRẢ THƯỞNG`) và sheet Ket_qua, không bị xóa sạch như trước.
+- Khách hàng bán vượt mức tối đa của mức đăng ký độc lập vẫn được tính đạt chỉ tiêu.
+
+## Sheet DoanhSoChuaTinh – vì sao khách không có trong BaoCao (10/10/2026)
+- `BaoCao` chỉ gồm dòng bán **được tính vào CT**. Khách không có dòng nào được tính (không phát sinh doanh số, chưa đăng ký CT, mua khác ĐVT) sẽ không có trong `BaoCao`; khách đăng ký luôn có trong `Tong_hop`/`TheoDoiTichLuy`.
+- `DoanhSoChuaTinh`: (1) khách mua SP của CT đạt mức tối thiểu nhưng không đăng ký mức nào của CT trên DMS – mỗi khách × CT một dòng, ghi mức cao nhất đạt được và Vùng để lọc (CT áp dụng theo vùng, khách vùng khác không thuộc CT) → nếu khách thuộc CT, cần đăng ký khách vào đúng mức CT trên DMS; (2) khách đã đăng ký nhưng mua khác ĐVT khai trong CT (DMS không quy đổi). Tra mã khách ở sheet này trước khi báo thiếu.
