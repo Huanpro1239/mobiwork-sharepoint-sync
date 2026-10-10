@@ -596,7 +596,6 @@ def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]],
         cust_region = (regions or {}).get(customer, "")
         total_qty = sum(line["quantity"] for line in matched)
         total_amt = sum(line["amount"] for line in matched)
-        total_sales = total_amt if rule.kind == AMOUNT else total_qty
         skus_str = ", ".join(sorted({line["sku"] for line in matched}))
         units_str = ", ".join(sorted({line["unit"] for line in matched}))
         order_count = len({ui.text((line.get("raw") or {}).get("ma_phieu")) for line in matched} - {""})
@@ -610,7 +609,7 @@ def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]],
             "NPP": npp or ui.text(raw.get("ten_npp")),
             "Vùng áp dụng của CT": rule.region,
             "Trạng thái đăng ký CT": reg_status or ("Đã đăng ký" if reason == OTHER_UNIT else "Chưa đăng ký"),
-            "Doanh số phát sinh": total_sales,
+            "Doanh số phát sinh": valid_sales + invalid_sales,
             "Doanh số hợp lệ": valid_sales,
             "Doanh số không được tính": invalid_sales,
             "ĐVT nguồn": units_str,
@@ -664,7 +663,7 @@ def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]],
                               "Đối chiếu giới hạn mức thưởng trên DMS" if not within_limit else
                               "Kiểm tra đối tượng trước khi đăng ký khách vào CT trên DMS")
                     rows.append(row(rule_best, customer, reason, counted_best, units,
-                                    actual=actual_best, valid_sales=actual_best, invalid_sales=total_sales - actual_best,
+                                    actual=actual_best, valid_sales=0.0, invalid_sales=total_sales,
                                     status=status, action=action, reg_status="Chưa đăng ký"))
                     if not within_limit:
                         rows[-1]["Mức đạt được"] = "Chưa xác minh (vượt ngưỡng)"
