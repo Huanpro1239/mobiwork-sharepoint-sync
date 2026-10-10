@@ -653,11 +653,10 @@ def _per_order_rewards(row: dict[str, Any], prices: dict[tuple[str, str], float]
             for index, part in enumerate(allocate(weights, qty, 0)):
                 cash[index] += part
             continue
-        else:
-            for index, part in enumerate(allocate(weights, qty, 4)):
-                texts[index].append(f"{name or sku} ({unit}): {part:g}")
-            price = prices.get((sku, unit))
-            value_total = qty * price if price else None
+        for index, part in enumerate(allocate(weights, qty, 4)):
+            texts[index].append(f"{name or sku} ({unit}): {part:g}")
+        price = prices.get((sku, unit))
+        value_total = qty * price if price else None
         if value_total is None:
             gifts = [None] * count  # retain cash even when a gift has no selling price
             continue
@@ -668,7 +667,7 @@ def _per_order_rewards(row: dict[str, Any], prices: dict[tuple[str, str], float]
     return ["; ".join(t) or None for t in texts], values, cash, gifts
 
 
-def detail_source(results: list[ui.ProgramResult], label: str,
+def detail_source(results: list[ui.ProgramResult],
                   prices: dict[tuple[str, str], float] | None = None) -> list[tuple[str, pd.DataFrame]]:
     """Bill-shaped rows per programme for the DMS CTKM template.
 

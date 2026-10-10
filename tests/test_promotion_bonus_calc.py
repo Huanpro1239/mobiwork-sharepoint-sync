@@ -257,7 +257,7 @@ class ComputeTests(unittest.TestCase):
         frames = ui.build_ui_frames(results, OCT1, OCT31)
         self.assertTrue(frames["Ket_qua"].empty)
         self.assertTrue(frames["Tong_hop"]["Thưởng dự kiến"].str.contains("12").any())
-        detail = calc.detail_source(results, "10/2026")[0][1]
+        detail = calc.detail_source(results)[0][1]
         self.assertNotIn(calc.GIFT_ORDER, detail["ma_phieu"].tolist())
 
     def test_region_uses_customer_or_unambiguous_sales_assignment(self):
@@ -428,7 +428,7 @@ class TemplateTests(unittest.TestCase):
         program = qty_program(cttb={"ten": "CTTB", "ket_qua": {"label": "Đạt"}})
         results, _ = calc.compute([program], calc.sold_lines(detail, OCT1, OCT31), {},
                                   displays={("KHHO112323", "cttb"): "Đạt"})
-        sources = calc.detail_source(results, "10/2026")
+        sources = calc.detail_source(results)
         self.assertEqual(len(sources), 1)
         code, frame = sources[0]
         self.assertEqual(code, "581/TB/GT/10/2026")
@@ -488,18 +488,18 @@ class TemplateTests(unittest.TestCase):
         detail = bill([{"so_luong": 50, "thanh_tien": 200_000, "ma_phieu": "DH1"},
                        {"so_luong": 50, "thanh_tien": 150_000, "ma_phieu": "DH2"}])
         results, _ = calc.compute([program], calc.sold_lines(detail, OCT1, OCT31), {})
-        sources = calc.detail_source(results, "10/2026", {})
+        sources = calc.detail_source(results, {})
         frame = sources[0][1]
         sales = frame[frame["ma_phieu"] != calc.GIFT_ORDER]
         self.assertEqual(list(sales[calc.BONUS_VALUE]), [314_286, 235_714])
         results, _ = calc.compute([qty_program()], calc.sold_lines(bill([{"so_luong": 72}]), OCT1, OCT31), {})
-        frame = calc.detail_source(results, "10/2026", {})[0][1]
+        frame = calc.detail_source(results, {})[0][1]
         self.assertIsNone(frame.iloc[0][calc.BONUS_VALUE])  # no selling price → no guessed value
         self.assertEqual(frame.iloc[0][calc.BONUS_TEXT], "Vikoda 500ml (Chai): 12")
 
     def test_unpaid_customer_gets_no_allocation(self):
         results, _ = calc.compute([qty_program(minimum=500)], calc.sold_lines(bill([{"so_luong": 72}]), OCT1, OCT31), {})
-        frame = calc.detail_source(results, "10/2026", {})
+        frame = calc.detail_source(results, {})
         self.assertTrue(all(f.empty or f[calc.BONUS_VALUE].isna().all() for _, f in frame))
 
     def test_template_keeps_full_level_code(self):

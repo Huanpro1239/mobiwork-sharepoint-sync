@@ -231,11 +231,8 @@ jobs:
           PROMOTION_BONUS_PROGRAM: ${{ inputs.bonus_program }}
           PROMOTION_BONUS_STTT: ${{ inputs.bonus_sttt_probe }}
           PROMOTION_BONUS_DATE_VARIANTS: ${{ inputs.bonus_date_variants }}
-          PROMOTION_PROBE_CODES: ${{ inputs.bonus_program != 'all' && inputs.bonus_program || '' }}
           SHAREPOINT_DRIVE_ID: ${{ env.SHAREPOINT_DRIVE_ID }}
         run: |
-          python src/openapi_doc_probe.py || echo "::warning title=OpenAPI doc probe::failed"
-          if [ -n "$PROMOTION_PROBE_CODES" ]; then python src/promotion_program_probe.py || echo "::warning title=Programme probe::failed"; fi
           python src/promotion_api_audit.py
           python src/sales_structure.py || echo "::warning title=Sales structure::audit failed"
 

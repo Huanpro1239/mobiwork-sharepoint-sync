@@ -291,37 +291,6 @@ def _build_or_update_month_group(
     }
 
 
-def _build_or_update_master(
-    cfg: ReportConfig,
-    target_date: date,
-    mobiwork: MobiWorkClient,
-    sharepoint: SemanticSharePointClient | None,
-    drive_id: str | None,
-    dry_run: bool,
-) -> tuple[Any, int, int, bool, int]:
-    """Backward-compatible single-date helper used by tests and local callers."""
-    bundle = _build_or_update_month_group(
-        cfg,
-        [target_date],
-        mobiwork,
-        sharepoint,
-        drive_id,
-        dry_run,
-    )
-    if bundle["errors"].get(target_date):
-        raise RuntimeError(bundle["errors"][target_date])
-    path = bundle["path"]
-    if path is None:
-        raise RuntimeError(f"No workbook produced for {cfg.key} {target_date}")
-    return (
-        path,
-        int(bundle["source_rows"].get(target_date, 0)),
-        int(bundle["master_rows"]),
-        bool(bundle["month_rebuilt"]),
-        int(bundle["rebuild_days"]),
-    )
-
-
 def run_incremental_all_reports(
     reports: list[ReportConfig],
     mobiwork: MobiWorkClient,

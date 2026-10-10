@@ -242,7 +242,7 @@ def _program_mode(program: dict[str, Any], cfg: PromotionBonusConfig,
     return "monthly" if "theo tháng" in name.casefold() else ""
 
 
-def _is_cumulative(program: dict[str, Any], cfg: PromotionBonusConfig, first: Any,
+def _is_cumulative(program: dict[str, Any], cfg: PromotionBonusConfig,
                    overrides: dict[str, dict[str, Any]] | None = None) -> bool:
     start = _program_day(program, "startDate")
     return bool(start and _program_mode(program, cfg, overrides) == "cumulative")
@@ -402,7 +402,7 @@ def _calc_month_frames(
     manifest["sold_lines_from_neighbour_months"] = len(lines) - own_month
     # Whole-period accumulation (configured programmes): sales from the programme start.
     program_overrides = detail_config.get("program_overrides", {})
-    cumulative = [p for p in programs if _is_cumulative(p, cfg, first, program_overrides)]
+    cumulative = [p for p in programs if _is_cumulative(p, cfg, program_overrides)]
     undeclared = [p for p in programs if not _program_mode(p, cfg, program_overrides)]
     groups: dict[Any, list[dict[str, Any]]] = {}
     for program in cumulative:
@@ -756,7 +756,7 @@ def _template_report(
     columns = COLUMNS + list(BONUS_COLUMNS)
     cfg = dict(_load_template_config(client) if detail_config is None else detail_config)
     cfg["customer_catalogue"] = customers
-    sources = calc.detail_source(results, f"{first:%m/%Y}", prices)
+    sources = calc.detail_source(results, prices)
     # Keep full bonus codes (e.g. "008/TB/GT/01/2026_Q4 - Mức 2"); the CTKM normaliser
     # would otherwise shorten them.
     cfg["program_codes"] = {**cfg.get("program_codes", {}), **{code: code for code, _ in sources}}

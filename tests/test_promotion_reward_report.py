@@ -82,7 +82,7 @@ class RewardCoverageTests(unittest.TestCase):
         source = bill([{"so_luong": 72, "thanh_tien": 400_000}])
         results, _ = calc.compute([qty_program(customers=(C1,))], calc.sold_lines(source, OCT1, OCT31), {})
         results[0].rows[0]["_rewards"].append((calc.MONEY_SKU, calc.MONEY_NAME, calc.MONEY_UNIT, 550_000))
-        frame = calc.detail_source(results, "10/2026")[0][1]
+        frame = calc.detail_source(results)[0][1]
         self.assertEqual(frame.iloc[0]["_cash_alloc"], 550_000)
         self.assertTrue(pd.isna(frame.iloc[0]["_gift_alloc"]))
         self.assertTrue(pd.isna(frame.iloc[0][calc.BONUS_VALUE]))
