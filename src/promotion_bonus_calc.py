@@ -653,11 +653,21 @@ def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]],
                     rule_best, counted_best, actual_best = best
                     units = "/".join(sorted({u for us in rule_best.units.values() for u in us}))
                     total_sales = sum(line["amount"] if rule_best.kind == AMOUNT else line["quantity"] for line in bought)
-                    rows.append(row(rule_best, customer, UNREGISTERED, counted_best, units,
+                    region = (regions or {}).get(customer, "")
+                    out_of_region = bool(rule_best.region and region and norm(region) != norm(rule_best.region))
+                    within_limit = reached(actual_best, rule_best)
+                    # A diagnosis cannot grant registration or payout eligibility.
+                    reason = OUT_OF_REGION if out_of_region else UNREGISTERED
+                    status = ("Không thuộc vùng áp dụng" if out_of_region else
+                              "Chưa đăng ký CT" if within_limit else "Cần xác minh ngưỡng tối đa")
+                    action = ("Đối chiếu vùng áp dụng và danh sách khách đăng ký trên DMS" if out_of_region else
+                              "Đối chiếu giới hạn mức thưởng trên DMS" if not within_limit else
+                              "Kiểm tra đối tượng trước khi đăng ký khách vào CT trên DMS")
+                    rows.append(row(rule_best, customer, reason, counted_best, units,
                                     actual=actual_best, valid_sales=actual_best, invalid_sales=total_sales - actual_best,
-                                    status="Chưa đăng ký CT",
-                                    action="Đăng ký khách vào CT trên DMS nếu thuộc đối tượng",
-                                    reg_status="Chưa đăng ký"))
+                                    status=status, action=action, reg_status="Chưa đăng ký"))
+                    if not within_limit:
+                        rows[-1]["Mức đạt được"] = "Chưa xác minh (vượt ngưỡng)"
                 continue
             for rule in rules:
                 if customer not in rule.customers:
@@ -728,14 +738,18 @@ def build_reconciliation_rows(
                 status = "Không thuộc vùng áp dụng"
                 reason = f"Không thuộc vùng áp dụng (Khách thuộc {cust_region}, CT áp dụng {region_ct})"
                 action = "Kiểm tra vùng khách hàng và điều kiện áp dụng CT"
-                valid_sales = 0.0
-                invalid_sales = actual
+                # Region mismatch is a master-data discrepancy, not proof the sales
+                # were invalid: DMS registered this customer for the programme.
+                valid_sales = actual
+                invalid_sales = 0.0
             elif r_item.get("_unit_gaps"):
                 status = "Chờ xác nhận ĐVT"
                 reason = "Sai hoặc thiếu ĐVT"
                 action = "Kiểm tra và chuẩn hóa ĐVT trên đơn hàng DMS"
-                valid_sales = 0.0
-                invalid_sales = actual
+                # 'actual' already consists solely of the matched, valid-unit lines.
+                # Missing-unit contributions cannot be quantified without confirmation.
+                valid_sales = actual
+                invalid_sales = None
             elif eligible == "Có":
                 status = "Đạt doanh số, đủ điều kiện"
                 reason = "Đã đăng ký, đạt và đủ điều kiện"
@@ -759,15 +773,25 @@ def build_reconciliation_rows(
                 reason = "Đã đăng ký nhưng chưa đạt"
                 action = "Theo dõi doanh số các kỳ tiếp theo"
                 valid_sales = actual
-                invalid_sales = actual
+                invalid_sales = 0.0
             else:
                 status = str(eligible) or "Chưa đạt"
-                reason = "Đã đăng ký nhưng chưa đạt"
-                action = "Theo dõi doanh số các kỳ tiếp theo"
+                reason = ("Vượt ngưỡng tối đa, cần đối chiếu DMS"
+                          if rule and rule.maximum and not reached(actual, rule)
+                          else "Đã đăng ký nhưng chưa đạt")
+                action = ("Xác minh ngưỡng tối đa và điều kiện từng mức CT trên DMS"
+                          if rule and rule.maximum and not reached(actual, rule)
+                          else "Theo dõi doanh số các kỳ tiếp theo")
                 valid_sales = actual
-                invalid_sales = actual
+                invalid_sales = 0.0
 
-            lines_count = len(r_item.get("_lines") or [])
+            counted_lines = r_item.get("_lines") or []
+            lines_count = len(counted_lines)
+            source_units = ", ".join(sorted({
+                ui.text(line.get("ten_dvt")) or ui.text(line.get("ma_dvt"))
+                for line in counted_lines if isinstance(line, dict)
+            } - {""}))
+            actually_reached = bool(rule and reached(actual, rule))
             rows.append({
                 "Mã CT": program_prefix(result.program_name),
                 "Tên CT": result.program_name,
@@ -781,11 +805,11 @@ def build_reconciliation_rows(
                 "Doanh số phát sinh": actual,
                 "Doanh số hợp lệ": valid_sales,
                 "Doanh số không được tính": invalid_sales,
-                "ĐVT nguồn": units_declared,
+                "ĐVT nguồn": source_units,
                 "ĐVT quy định": units_declared,
                 "Ngưỡng tối thiểu": min_val,
                 "Ngưỡng tối đa": max_val,
-                "Mức đạt được": bonus_code(result.program_name) if actual >= min_val else "Chưa đạt",
+                "Mức đạt được": bonus_code(result.program_name) if actually_reached else "Chưa đạt",
                 "Trạng thái xét thưởng": status,
                 "Nguyên nhân không được tính": reason,
                 "Hướng xử lý": action,
@@ -794,7 +818,7 @@ def build_reconciliation_rows(
                 "Mã Khách hàng": cust_code,
                 "Tên Khách hàng": cust_name,
                 "Lý do": reason,
-                "ĐVT bán": units_declared,
+                "ĐVT bán": source_units,
                 "ĐVT khai trong CT": units_declared,
                 "Số lượng": actual if rule and rule.kind == QUANTITY else 0,
                 "Thành tiền": actual if rule and rule.kind == AMOUNT else 0,
@@ -881,7 +905,9 @@ def coverage_gaps(programs: list[dict[str, Any]], lines: list[dict[str, Any]]) -
     """PII-free counts of uncounted programme sales plus Bill line statuses."""
     counts: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     for row in uncounted_sales(programs, lines):
-        counts[row["Mức CT"][:40]]["unregistered" if row["Lý do"] == UNREGISTERED else "other_unit"] += 1
+        category = ("unregistered" if row["Lý do"] == UNREGISTERED else
+                    "out_of_region" if row["Lý do"] == OUT_OF_REGION else "other_unit")
+        counts[row["Mức CT"][:40]][category] += 1
     statuses = collections.Counter(ui.text((line.get("raw") or {}).get("trang_thai")) or "(trống)"
                                    for line in lines)
     return {"programmes": {code: dict(c) for code, c in counts.items()},
