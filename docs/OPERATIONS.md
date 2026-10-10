@@ -619,3 +619,8 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
 - Thiếu file tháng trong kỳ vẫn tạm giữ thưởng như cũ. Thiếu file tháng liền kề (vd 2026-05, trước dữ liệu sớm
   nhất) chỉ ghi chú ở `Kiem_tra` và manifest `delivery_neighbour_months_missing`; manifest
   `sold_lines_from_neighbour_months` cho biết số dòng được bổ sung. KhuyenMaiDonHang/CTKM vẫn theo tháng ngày đơn.
+- Sheet KhuyenMaiDonHang (theo tháng ngày đơn) cũng lấy thêm dòng của file đơn tháng liền kề có ngày đặt trong
+  tháng (vd đặt 30/09, Bill tạo 01/10), mỗi dòng một lần; manifest `invoice_rows_from_neighbour_months`.
+- Manifest `coverage_gaps` (và log `Promotion Bonus coverage`) đếm theo từng mức CT: khách mua SP của CT nhưng
+  không có trong danh sách đăng ký, và doanh số SP của CT bán khác ĐVT khai báo (không được tính theo quy tắc DMS),
+  cùng phân bố `trang_thai` dòng đơn. Chỉ là số đếm, không có thông tin khách.

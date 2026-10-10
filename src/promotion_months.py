@@ -67,3 +67,25 @@ def select_order_month(detail: pd.DataFrame, anchor: date) -> tuple[pd.DataFrame
             return True
     mask = detail.apply(belongs, axis=1) if not detail.empty else pd.Series([], dtype=bool)
     return detail.loc[mask].copy(), int((~mask).sum())
+
+
+def order_month_rows(detail: pd.DataFrame, anchor: date) -> pd.DataFrame:
+    """Rows of another month's master whose (valid) order date falls in ``anchor``'s month.
+
+    Bill masters are split by creation date: an order placed on 30/09 whose Bill is created
+    on 01/10 is stored in the October master. Invalid dates stay with their own master,
+    where select_order_month keeps them for blocking validation.
+    """
+    def belongs(row):
+        raw = row.get("ngay_dat")
+        if raw is None or pd.isna(raw) or not str(raw).strip():
+            raw = row.get("ngay_ban_hang")
+        try:
+            parsed = pd.Timestamp(raw)
+        except (TypeError, ValueError):
+            return False
+        return (not pd.isna(parsed) and parsed.tzinfo is None
+                and (parsed.year, parsed.month) == (anchor.year, anchor.month))
+    if detail.empty:
+        return detail.copy()
+    return detail.loc[detail.apply(belongs, axis=1)].copy()

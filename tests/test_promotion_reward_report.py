@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import tempfile
 import unittest
 from pathlib import Path
@@ -152,6 +153,34 @@ class RewardCoverageTests(unittest.TestCase):
         self.assertEqual(len(frames["ChuongTrinh"]), 2)
         self.assertEqual(manifest["reward_coverage"]["invoice_programs"], 1)
         self.assertEqual(manifest["reward_coverage"]["cash_program_levels"], 0)
+
+    def test_invoice_view_includes_september_bill_of_an_october_order_only_once(self):
+        masters = {  # Bill masters are split by creation date
+            "2026-10": bill([{"ma_sp": "OTHER", "so_luong": 10, "ma_phieu": "BH1",
+                              "promotion": [{"id": "p", "ten_khuyen_mai": "CT"}]}]),
+            "2026-11": bill([{"ma_sp": "OTHER", "so_luong": 5, "ma_phieu": "BH2", "ngay_dat": "2026-10-31 20:00:00",
+                              "promotion": [{"id": "p", "ten_khuyen_mai": "CT"}]},
+                             {"ma_sp": "OTHER", "so_luong": 7, "ma_phieu": "BH3", "ngay_dat": "2026-11-02 08:00:00",
+                              "promotion": [{"id": "p", "ten_khuyen_mai": "CT"}]}]),
+        }
+
+        def detail(month, dry_run, manifest):
+            if f"{month:%Y-%m}" not in masters:
+                raise ValueError("Bill monthly master missing")
+            return masters[f"{month:%Y-%m}"]
+
+        bonus._BILL_CACHE.clear()
+        today = datetime(2026, 11, 5, tzinfo=calc.VN_TZ)
+        with patch.object(bonus, "fetch_programs", return_value=[qty_program()]), \
+                patch.object(bonus, "_bill_detail", side_effect=detail), \
+                patch.object(bonus, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = today
+            manifest = {}
+            frames = bonus._calc_month_frames(Mock(), bonus.load_config(), OCT1, OCT31, True,
+                                             {}, "test", manifest, detail_config={})
+        bonus._BILL_CACHE.clear()
+        self.assertEqual(sorted(frames["KhuyenMaiDonHang"]["Mã Đơn hàng"]), ["BH1", "BH2"])
+        self.assertEqual(manifest["invoice_rows_from_neighbour_months"], 1)
 
     def test_export_keeps_cash_typed_and_long_program_names_readable(self):
         from openpyxl import load_workbook

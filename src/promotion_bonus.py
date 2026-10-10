@@ -284,6 +284,32 @@ def _period_lines(start: Any, last: Any, dry_run: bool, missing: set[str],
     return lines
 
 
+def _order_month_detail(first: Any, dry_run: bool, own: pd.DataFrame, manifest: dict[str, Any]) -> pd.DataFrame:
+    """The month's master plus neighbour-master lines ordered in the month, each line once."""
+    import promotion_bonus_calc as calc
+    from promotion_months import order_month_rows
+
+    def keys(frame: pd.DataFrame) -> pd.Series:
+        return frame.get("ma_phieu", pd.Series("", index=frame.index)).map(ui.text) + "|" + \
+            frame.get("stt", pd.Series("", index=frame.index)).map(ui.text)
+
+    seen = set(keys(own)) if not own.empty else set()
+    frames, added = [own], 0
+    current = datetime.now(ui.VN_TZ).date().replace(day=1)
+    for month in (calc.shift_month(first, -1), calc.shift_month(first, 1)):
+        other = _cached_bill(month, dry_run) if month <= current else None
+        if other is None or other.empty:
+            continue
+        rows = order_month_rows(other, first)
+        rows = rows[~keys(rows).isin(seen)] if not rows.empty else rows
+        if not rows.empty:
+            seen.update(keys(rows))
+            frames.append(rows)
+            added += len(rows)
+    manifest["invoice_rows_from_neighbour_months"] = added
+    return pd.concat(frames, ignore_index=True) if added else own
+
+
 def _with_bill_identity(customers: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
     """Fill absent identity fields from unambiguous values on the customer's Bills."""
     merged = {key: dict(value) for key, value in customers.items()}
@@ -610,7 +636,8 @@ def _calc_month_frames(
     from promotion_reward_report import invoice_promotions, program_coverage, reward_ledger
 
     invoice_cfg = {**detail_config, "customer_catalogue": customers}
-    invoice_report, invoice_issues, invoice_programs = invoice_promotions(bill_detail, invoice_cfg, first)
+    invoice_report, invoice_issues, invoice_programs = invoice_promotions(
+        _order_month_detail(first, dry_run, bill_detail, manifest), invoice_cfg, first)
     frames["KhuyenMaiDonHang"] = invoice_report
     frames["TraThuong"] = ledger = reward_ledger(results, first)
     frames["BaoCao"] = report
