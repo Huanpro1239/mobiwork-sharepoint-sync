@@ -56,6 +56,26 @@ def bill(rows):
 
 
 class RuleTests(unittest.TestCase):
+    def test_unregistered_buyer_is_listed_once_at_the_highest_level_reached(self):
+        level1 = {**qty_program(pid="1" * 24, minimum=72, customers=(C1,)), "name": "006/TB/GT/01/2026_Q4 MỨC 1"}
+        level2 = {**qty_program(pid="2" * 24, minimum=144, customers=(C2,)), "name": "006/TB/GT/01/2026_Q4 MỨC 2"}
+        lines = calc.sold_lines(bill([{"so_luong": 150, "ID_khachhang": C3, "ma_kh": "BIDU010144"}]), OCT1, OCT31)
+        rows = calc.uncounted_sales([level1, level2], lines, {C3: "Miền Nam"})
+        self.assertEqual([(r["Mã CT"], r["Mức CT"], r["Vùng"], r["Số lượng"]) for r in rows],
+                         [("006/TB/GT/01/2026_Q4", "006/TB/GT/01/2026_Q4 - Mức 2", "Miền Nam", 150)])
+
+    def test_uncounted_sales_explain_unregistered_buyers_and_other_units(self):
+        c3, c4 = "c" * 24, "d" * 24
+        detail = bill([{"so_luong": 5, "ten_dvt": "Thùng", "ma_dvt": "Thùng"},  # registered, other unit
+                       {"so_luong": 80, "ID_khachhang": c3, "ma_kh": "BIDU010132", "ma_phieu": "DH3"},
+                       {"so_luong": 10, "ID_khachhang": c4, "ma_kh": "BIDU010271", "ma_phieu": "DH4"}])
+        lines = calc.sold_lines(detail, OCT1, OCT31)
+        rows = calc.uncounted_sales([qty_program(customers=(C1,))], lines)
+        self.assertEqual({(r["Mã Khách hàng"], r["Lý do"], r["ĐVT bán"], r["Số lượng"]) for r in rows},  # BIDU010271 < min
+                         {("KHHO112323", calc.OTHER_UNIT, "Thùng", 5), ("BIDU010132", calc.UNREGISTERED, "Chai", 80)})
+        gaps = calc.coverage_gaps([qty_program(customers=(C1,))], lines)
+        self.assertEqual(list(gaps["programmes"].values()), [{"other_unit": 1, "unregistered": 1}])
+
     def test_parse_quantity_amount_and_single_product_rules(self):
         rule = calc.parse_rule(qty_program(maximum=30))
         self.assertEqual((rule.kind, rule.minimum, rule.maximum), (calc.QUANTITY, 72, 30))
@@ -85,11 +105,35 @@ class RuleTests(unittest.TestCase):
 
     def test_reached_and_multiples(self):
         rule = calc.parse_rule(qty_program(minimum=16, maximum=30, multiple=True))
-        self.assertEqual([calc.reward_multiplier(a, rule) for a in (15, 16, 29, 30)], [0, 1, 1, 0])
+        self.assertEqual([calc.reward_multiplier(a, rule) for a in (15, 16, 29, 30)], [0, 1, 1, 1])
         open_rule = calc.parse_rule(qty_program(minimum=16, multiple=True))
         self.assertEqual(calc.reward_multiplier(33, open_rule), 2)
         plain = calc.parse_rule(qty_program(minimum=72))
         self.assertEqual(calc.reward_multiplier(1080, plain), 1)
+
+    def test_single_rule_exceeding_maximum_still_reaches(self):
+        # A standalone level (e.g. Mức 1: 10M - 20M) must not disqualify a customer selling 25M
+        rule = calc.parse_rule(amount_program(minimum=7_000_000, maximum=10_600_000))
+        self.assertTrue(calc.reached(15_000_000, rule))
+        self.assertEqual(calc.reward_multiplier(15_000_000, rule), 1)
+
+    def test_tiered_rule_matches_appropriate_tier_and_highest_when_exceeding(self):
+        buy = [{"ma_san_pham": "SP1", "don_vi_tinh": unit("Chai")}]
+        tier1 = {"san_pham_mua": buy, "yeu_cau": {"qualityMin": 10, "qualityMax": 20},
+                 "san_pham_khuyen_mai": [[{"ma_san_pham": "G1", "don_vi_tinh": unit("Chai"), "so_luong": 1}]]}
+        tier2 = {"san_pham_mua": buy, "yeu_cau": {"qualityMin": 20, "qualityMax": 40},
+                 "san_pham_khuyen_mai": [[{"ma_san_pham": "G2", "don_vi_tinh": unit("Chai"), "so_luong": 2}]]}
+        prog = {"_id": "t" * 24, "name": "Tiered Program", "ptype": {"value": "MUTI_SP_SL_SP"},
+                "products": [tier1, tier2], "customer": [C1]}
+        rule = calc.parse_rule(prog)
+        self.assertEqual(len(rule.tiers), 2)
+        # 15 qualifies for tier 1
+        self.assertEqual(calc.reward_multiplier(15, rule), 1)
+        # 25 qualifies for tier 2
+        self.assertEqual(calc.reward_multiplier(25, rule), 1)
+        # 50 exceeds tier 2 max but still matches highest tier
+        self.assertTrue(calc.reached(50, rule))
+        self.assertEqual(calc.reward_multiplier(50, rule), 1)
 
 
 class InputTests(unittest.TestCase):
@@ -252,13 +296,26 @@ class ComputeTests(unittest.TestCase):
         row = next(r for r in results[0].rows if r["ma"] == "KHHO112323")
         self.assertEqual(row["extra"]["Kết quả trưng bày"], "Chưa có dữ liệu")
         self.assertEqual(row["extra"]["Đủ điều kiện trả thưởng"], "Cần kiểm tra trưng bày")
-        self.assertFalse(row["objTraThuong"])
+        self.assertTrue(row["objTraThuong"])
         self.assertTrue(row["objThuongDuKien"])
+        self.assertTrue(row["_rewards"])
+        self.assertTrue(row["_review_display"])
         frames = ui.build_ui_frames(results, OCT1, OCT31)
-        self.assertTrue(frames["Ket_qua"].empty)
+        self.assertFalse(frames["Ket_qua"].empty)
+        self.assertEqual(frames["Ket_qua"].iloc[0]["Đủ điều kiện trả thưởng"], "Cần kiểm tra trưng bày")
         self.assertTrue(frames["Tong_hop"]["Thưởng dự kiến"].str.contains("12").any())
         detail = calc.detail_source(results)[0][1]
-        self.assertNotIn(calc.GIFT_ORDER, detail["ma_phieu"].tolist())
+        self.assertIn(calc.GIFT_ORDER, detail["ma_phieu"].tolist())
+
+    def test_pure_sales_program_distinguished_from_display(self):
+        # Pure sales program without cttb: display fields show 'Không áp dụng'
+        program = qty_program(cttb=None)
+        results, _ = calc.compute([program], calc.sold_lines(bill([{"so_luong": 80}]), OCT1, OCT31), {})
+        row = next(r for r in results[0].rows if r["ma"] == "KHHO112323")
+        self.assertEqual(row["extra"]["Trưng bày yêu cầu"], "Không áp dụng")
+        self.assertEqual(row["extra"]["Kết quả trưng bày"], "Không áp dụng")
+        self.assertEqual(row["extra"]["Đủ điều kiện trả thưởng"], "Có")
+        self.assertTrue(row["objTraThuong"])
 
     def test_region_uses_customer_or_unambiguous_sales_assignment(self):
         lines = calc.sold_lines(bill([{"so_luong": 80}]), OCT1, OCT31)
