@@ -193,3 +193,34 @@ class DisplaySheetTests(unittest.TestCase):
              "Còn thiếu": ["Kết quả"], "Số dòng": 1, "Nguồn": ["TraThuong 2026-10"]}]}
         frames = bosung.todo_frames(todo, overrides)
         self.assertEqual(list(frames["TrungBay"]["Mã Khách hàng"]), ["KH9"])
+
+
+class PrefillTests(unittest.TestCase):
+    def pending(self):
+        return {"TrungBay": pd.DataFrame([
+            {"Mã Khách hàng": "KH1", "Chương trình trưng bày": "CTTB PET", "Tên Khách hàng": "A", "Mã CT": "581",
+             "Kết quả": "", "Còn thiếu": "Kết quả"},
+            {"Mã Khách hàng": "KH2", "Chương trình trưng bày": "CTTB PET", "Tên Khách hàng": "B", "Mã CT": "581",
+             "Kết quả": "", "Còn thiếu": "Kết quả"}])}
+
+    def test_pending_display_rows_are_appended_without_touching_user_entries(self):
+        original = workbook({"TrungBay": [{"Mã Khách hàng": "KH1", "Chương trình trưng bày": "cttb  pet",
+                                           "Tên Khách hàng": "A", "Mã CT": "581", "Kết quả": "Đạt"}]})
+        sp = Mock()
+        sp.download_file_bytes.return_value = original
+        with tempfile.TemporaryDirectory() as folder:
+            added = bosung.add_missing_sheets(sp, "drive", Path(folder), self.pending())
+            book = pd.read_excel(Path(folder) / bosung.USER_FILE, sheet_name="TrungBay", dtype=object)
+        self.assertIn("TrungBay+1", added)
+        self.assertEqual(list(book["Mã Khách hàng"]), ["KH1", "KH2"])
+        self.assertEqual(book.iloc[0]["Kết quả"], "Đạt")
+        self.assertTrue(pd.isna(book.iloc[1]["Kết quả"]))
+        sp.upload_file.assert_called_once()
+
+    def test_file_changed_meanwhile_is_not_overwritten(self):
+        sp = Mock()
+        sp.download_file_bytes.side_effect = [workbook({"TrungBay": [{"Mã Khách hàng": "KH9",
+                                                                       "Chương trình trưng bày": "X"}]}), b"changed"]
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(bosung.add_missing_sheets(sp, "drive", Path(folder), self.pending()), [])
+        sp.upload_file.assert_not_called()

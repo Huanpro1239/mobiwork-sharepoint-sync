@@ -89,8 +89,9 @@ GUIDE = [
     "(cộng dồn từ ngày bắt đầu CT, trả thưởng ở tháng kết thúc) hoặc 'Theo tháng'. "
     "Khi chưa khai cách tính: chỉ hiển thị doanh số kỳ báo cáo, chưa xác nhận thưởng. "
     "Mã CT là phần đầu tên CT, vd 246/TB/GT/04/2026, áp dụng cho mọi mức/loại.",
-    "10. TrungBay: khách đã đạt doanh số nhưng DMS chưa trả kết quả chấm trưng bày. Điền Kết quả = "
-    "'Đạt' hoặc 'Không đạt'. 'Đạt' thì được trả thưởng (nếu còn suất), 'Không đạt' thì không trả.",
+    "10. TrungBay: khách đã đạt doanh số nhưng DMS chưa trả kết quả chấm trưng bày – hệ thống tự thêm dòng "
+    "vào sheet này. Chỉ cần điền Kết quả = 'Đạt' hoặc 'Không đạt'. 'Đạt' thì được trả thưởng, "
+    "'Không đạt' thì không trả.",
     "Thứ tự ưu tiên: file này > cấu hình > kho xuất của đơn > cây phòng ban hiện tại > danh mục DMS.",
 ]
 
@@ -413,8 +414,14 @@ def load_overrides(sharepoint: Any = None, drive: str = "") -> dict[str, dict[st
     return overrides
 
 
-def add_missing_sheets(sharepoint: Any, drive: str, output_dir: Path = Path("output")) -> list[str]:
-    """Add sheets introduced after the user file was created; existing sheets are untouched."""
+PREFILL_SHEETS = ("TrungBay",)  # rows the user only has to complete (key columns pre-filled)
+
+
+def add_missing_sheets(sharepoint: Any, drive: str, output_dir: Path = Path("output"),
+                       prefill: dict[str, pd.DataFrame] | None = None) -> list[str]:
+    """Add sheets introduced after the user file was created and append pending rows of
+    PREFILL_SHEETS (new keys only, value cells blank). Existing cells are never changed; the
+    upload is skipped when the file changed on SharePoint while it was being prepared."""
     from openpyxl import load_workbook
     from openpyxl.styles import Font, PatternFill
 
@@ -423,8 +430,6 @@ def add_missing_sheets(sharepoint: Any, drive: str, output_dir: Path = Path("out
         return []
     book = load_workbook(BytesIO(content))
     missing = [sheet for sheet in SHEETS if sheet not in book.sheetnames]
-    if not missing:
-        return []
     yellow, grey = PatternFill("solid", fgColor="FFF2CC"), PatternFill("solid", fgColor="D9D9D9")
     for sheet in missing:
         ws = book.create_sheet(sheet)
@@ -434,6 +439,38 @@ def add_missing_sheets(sharepoint: Any, drive: str, output_dir: Path = Path("out
             cell.fill = yellow if column in SHEETS[sheet]["values"] else grey
             ws.column_dimensions[cell.column_letter].width = 40 if column in {"Tên CT", "Gợi ý"} else 18
         ws.freeze_panes = "B2"
+    appended: list[str] = []
+    for sheet in PREFILL_SHEETS:
+        frame = (prefill or {}).get(sheet)
+        if frame is None or frame.empty or sheet not in book.sheetnames:
+            continue
+        ws = book[sheet]
+        header = [text(c.value) for c in ws[1]]
+        keys = SHEETS[sheet]["key"]
+        if any(k not in header for k in keys):
+            continue
+        positions = [header.index(k) for k in keys]
+        present = {tuple(text(row[i]) for i in positions)
+                   for row in ws.iter_rows(min_row=2, values_only=True) if row and text(row[positions[0]])}
+        if sheet == "TrungBay":
+            present = {(a, " ".join(b.split()).casefold()) for a, b in present}
+        added = 0
+        for record in frame.to_dict("records"):
+            key = tuple(text(record.get(k)) for k in keys)
+            probe = (key[0], " ".join(key[1].split()).casefold()) if sheet == "TrungBay" else key
+            if not key[0] or probe in present:
+                continue
+            present.add(probe)
+            ws.append([text(record.get(c)) if c in record and c not in SHEETS[sheet]["values"] else None
+                       for c in header])
+            for cell in ws[ws.max_row]:
+                if header[cell.column - 1] in SHEETS[sheet]["values"]:
+                    cell.fill = yellow
+            added += 1
+        if added:
+            appended.append(f"{sheet}+{added}")
+    if not missing and not appended:
+        return []
     if "HuongDan" in book.sheetnames:
         guide = book["HuongDan"]
         known = {str(c.value) for c in guide["A"]}
@@ -443,8 +480,11 @@ def add_missing_sheets(sharepoint: Any, drive: str, output_dir: Path = Path("out
     path = output_dir / USER_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     book.save(path)
+    if sharepoint.download_file_bytes(drive, f"{FOLDER}/{USER_FILE}") != content:
+        _notice("warning", "BoSung_Mapping not updated", "file changed while preparing; retried next run")
+        return []
     sharepoint.upload_file(drive, path, FOLDER)
-    return missing
+    return missing + appended
 
 
 def publish(updates: dict[str, list[dict[str, Any]]], sharepoint: Any = None, drive: str = "",
@@ -480,7 +520,9 @@ def publish(updates: dict[str, list[dict[str, Any]]], sharepoint: Any = None, dr
             result["user_file_created"] = True
         else:
             try:
-                result["user_sheets_added"] = add_missing_sheets(sharepoint, drive, output_dir)
+                result["user_sheets_added"] = add_missing_sheets(sharepoint, drive, output_dir, frames)
+                if result["user_sheets_added"]:
+                    _notice("notice", "BoSung_Mapping cập nhật", ", ".join(result["user_sheets_added"]))
             except Exception as exc:  # file open in Excel: retried next run
                 _notice("warning", "BoSung_Mapping sheets not added", f"{type(exc).__name__}: {exc}")
         try:
