@@ -242,7 +242,7 @@ def _program_mode(program: dict[str, Any], cfg: PromotionBonusConfig,
     return "monthly" if "theo tháng" in name.casefold() else ""
 
 
-def _is_cumulative(program: dict[str, Any], cfg: PromotionBonusConfig, first: Any,
+def _is_cumulative(program: dict[str, Any], cfg: PromotionBonusConfig,
                    overrides: dict[str, dict[str, Any]] | None = None) -> bool:
     start = _program_day(program, "startDate")
     return bool(start and _program_mode(program, cfg, overrides) == "cumulative")
@@ -271,19 +271,43 @@ def _program_todo_rows(undeclared: list[dict[str, Any]], issues: list[dict[str, 
 
 
 def _period_lines(start: Any, last: Any, dry_run: bool, missing: set[str],
-                  unit_config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+                  unit_config: dict[str, Any] | None = None,
+                  neighbours: set[str] | None = None) -> list[dict[str, Any]]:
+    """Sale lines delivered in [start, last], including orders created in a neighbour month."""
     import promotion_bonus_calc as calc
 
-    lines: list[dict[str, Any]] = []
-    cursor = start.replace(day=1)
-    while cursor <= last:
-        detail = _cached_bill(cursor, dry_run)
-        if detail is None:
-            missing.add(f"{cursor:%Y-%m}")
-        else:
-            lines.extend(calc.sold_lines(detail, max(cursor, start), min(_month_end(cursor), last), unit_config))
-        cursor = _month_end(cursor) + timedelta(days=1)
+    lines, absent, edge = calc.delivered_lines(lambda month: _cached_bill(month, dry_run), start, last,
+                                               unit_config, datetime.now(ui.VN_TZ).date())
+    missing.update(absent)
+    if neighbours is not None:
+        neighbours.update(edge)
     return lines
+
+
+def _order_month_detail(first: Any, dry_run: bool, own: pd.DataFrame, manifest: dict[str, Any]) -> pd.DataFrame:
+    """The month's master plus neighbour-master lines ordered in the month, each line once."""
+    import promotion_bonus_calc as calc
+    from promotion_months import order_month_rows
+
+    def keys(frame: pd.DataFrame) -> pd.Series:
+        return frame.get("ma_phieu", pd.Series("", index=frame.index)).map(ui.text) + "|" + \
+            frame.get("stt", pd.Series("", index=frame.index)).map(ui.text)
+
+    seen = set(keys(own)) if not own.empty else set()
+    frames, added = [own], 0
+    current = datetime.now(ui.VN_TZ).date().replace(day=1)
+    for month in (calc.shift_month(first, -1), calc.shift_month(first, 1)):
+        other = _cached_bill(month, dry_run) if month <= current else None
+        if other is None or other.empty:
+            continue
+        rows = order_month_rows(other, first)
+        rows = rows[~keys(rows).isin(seen)] if not rows.empty else rows
+        if not rows.empty:
+            seen.update(keys(rows))
+            frames.append(rows)
+            added += len(rows)
+    manifest["invoice_rows_from_neighbour_months"] = added
+    return pd.concat(frames, ignore_index=True) if added else own
 
 
 def _with_bill_identity(customers: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
@@ -370,11 +394,15 @@ def _calc_month_frames(
                      "program_count": len(programs)})
     bill_detail = _bill_detail(first, dry_run, manifest)
     _BILL_CACHE[f"{first:%Y-%m}"] = bill_detail
-    lines = calc.sold_lines(bill_detail, first, last, detail_config)
+    # Bill masters are split by creation date; rewards count the delivery date.
+    neighbour_gaps: set[str] = set()
+    lines = _period_lines(first, last, dry_run, set(), detail_config, neighbour_gaps)
+    own_month = len(calc.sold_lines(bill_detail, first, last, detail_config))
     manifest["sold_line_count"] = len(lines)
+    manifest["sold_lines_from_neighbour_months"] = len(lines) - own_month
     # Whole-period accumulation (configured programmes): sales from the programme start.
     program_overrides = detail_config.get("program_overrides", {})
-    cumulative = [p for p in programs if _is_cumulative(p, cfg, first, program_overrides)]
+    cumulative = [p for p in programs if _is_cumulative(p, cfg, program_overrides)]
     undeclared = [p for p in programs if not _program_mode(p, cfg, program_overrides)]
     groups: dict[Any, list[dict[str, Any]]] = {}
     for program in cumulative:
@@ -383,7 +411,7 @@ def _calc_month_frames(
     period_lines, missing_by_start = {}, {}
     for start in groups:
         missing: set[str] = set()
-        period_lines[start] = _period_lines(start, last, dry_run, missing, detail_config)
+        period_lines[start] = _period_lines(start, last, dry_run, missing, detail_config, neighbour_gaps)
         missing_by_start[start] = missing
         missing_months.update(missing)
     all_lines = lines + [line for group in period_lines.values() for line in group]
@@ -398,6 +426,8 @@ def _calc_month_frames(
                                        "lines": {str(k): len(v) for k, v in period_lines.items()},
                                        "months_without_orders": sorted(missing_months)},
                                       ensure_ascii=False))
+    if neighbour_gaps:
+        manifest["delivery_neighbour_months_missing"] = sorted(neighbour_gaps)
     customer_map = _with_bill_identity(customers, all_lines)
     displays: dict[tuple[str, str], str] = {}
     display_note = "Không có chương trình yêu cầu trưng bày"
@@ -449,6 +479,10 @@ def _calc_month_frames(
                 summary.append(f"{calc.bonus_code(item['name'])} ({region})|đăng ký {item['registered']}|"
                                f"có doanh số {item['with_sales']}|đạt {item['reached']}|trả {item['eligible']}")
             _github_notice(f"Promotion Bonus lũy kế từ {start:%d/%m/%Y} đến {last:%d/%m/%Y}", " ; ".join(summary))
+    gaps = calc.coverage_gaps([p for p in programs if p not in cumulative], lines)
+    manifest["coverage_gaps"] = gaps
+    if verbose:  # plain log lines: GitHub keeps only 10 notices per step
+        LOG.info("Promotion Bonus coverage %s: %s", f"{first:%m/%Y}", json.dumps(gaps, ensure_ascii=False))
     program_rows = _program_todo_rows(undeclared, issues)
     unit_gaps = calc.unit_gap_summary(results)
     manifest["unit_gap_lines"] = unit_gaps["missing_unit_line_count"]
@@ -530,7 +564,11 @@ def _calc_month_frames(
                       "kết quả 'Đạt' được ghi 'Cần kiểm tra trưng bày'; quà chỉ nằm ở Thưởng dự kiến, "
                       "chưa đưa vào Ket_qua hoặc dòng TRẢ THƯỞNG"),
         ("Khách hàng", customer_note + ". Danh sách khách đăng ký là danh sách hiện tại của chương trình"),
-        ("Đơn bán hàng", f"{len(lines)} dòng bán trong kỳ ({manifest.get('bill_source', '')})"),
+        ("Đơn bán hàng", f"{len(lines)} dòng bán giao trong kỳ ({manifest.get('bill_source', '')}); "
+                         f"{len(lines) - own_month} dòng của đơn tạo ở tháng liền kề nhưng giao trong kỳ. "
+                         "File đơn bán chia theo ngày tạo đơn, thưởng tính theo ngày giao hàng"
+                         + (". Chưa có file đơn tháng liền kề: " + ", ".join(sorted(neighbour_gaps))
+                            + " (đơn tạo tháng đó, giao trong kỳ có thể còn thiếu)" if neighbour_gaps else "")),
     ]
     if any(m.get("_province_source") for m in customers.values()):
         notes.append(("Nguồn tỉnh", "Ưu tiên tinh_thanh_moi; nếu trống dùng tỉnh cũ hoặc địa danh "
@@ -588,7 +626,8 @@ def _calc_month_frames(
 
     tracking = tracking_report(results, first, last, lambda month: _cached_bill(month, dry_run),
                                customer_map, detail_config,
-                               {r.program_id: _program_mode(r.program, cfg, program_overrides) for r in results})
+                               {r.program_id: _program_mode(r.program, cfg, program_overrides) for r in results},
+                               datetime.now(ui.VN_TZ).date())
     manifest["tracking_report"] = {"rows": len(tracking), "months": tracking.attrs["months"],
                                    "missing_months": tracking.attrs["missing_months"],
                                    "source_warning_rows": int(tracking["Thông tin nguồn"].ne("").sum()),
@@ -597,7 +636,8 @@ def _calc_month_frames(
     from promotion_reward_report import invoice_promotions, program_coverage, reward_ledger
 
     invoice_cfg = {**detail_config, "customer_catalogue": customers}
-    invoice_report, invoice_issues, invoice_programs = invoice_promotions(bill_detail, invoice_cfg, first)
+    invoice_report, invoice_issues, invoice_programs = invoice_promotions(
+        _order_month_detail(first, dry_run, bill_detail, manifest), invoice_cfg, first)
     frames["KhuyenMaiDonHang"] = invoice_report
     frames["TraThuong"] = ledger = reward_ledger(results, first)
     frames["BaoCao"] = report
@@ -716,7 +756,7 @@ def _template_report(
     columns = COLUMNS + list(BONUS_COLUMNS)
     cfg = dict(_load_template_config(client) if detail_config is None else detail_config)
     cfg["customer_catalogue"] = customers
-    sources = calc.detail_source(results, f"{first:%m/%Y}", prices)
+    sources = calc.detail_source(results, prices)
     # Keep full bonus codes (e.g. "008/TB/GT/01/2026_Q4 - Mức 2"); the CTKM normaliser
     # would otherwise shorten them.
     cfg["program_codes"] = {**cfg.get("program_codes", {}), **{code: code for code, _ in sources}}

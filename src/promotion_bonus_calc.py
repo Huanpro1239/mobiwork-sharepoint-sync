@@ -279,6 +279,52 @@ def sold_lines(detail: pd.DataFrame, first: date, last: date,
     return lines
 
 
+DELIVERY_NEIGHBOUR_MONTHS = 1
+
+
+def shift_month(first: date, months: int) -> date:
+    index = first.year * 12 + first.month - 1 + months
+    return date(index // 12, index % 12 + 1, 1)
+
+
+def delivered_lines(load_month: Any, start: date, last: date,
+                    unit_config: dict[str, Any] | None = None, newest: date | None = None
+                    ) -> tuple[list[dict[str, Any]], set[str], set[str]]:
+    """Sale lines delivered in [start, last] with (missing period months, missing neighbours).
+
+    Bill monthly masters are partitioned by creation date (``kieu_ngay=cdate``) while DMS
+    counts the delivery date: an order created on 28/09 and delivered on 02/10 is stored in
+    the September master. Neighbouring masters are therefore read too and every Bill line
+    (``ma_phieu`` + ``stt``) is kept once, the copy of the most recent master winning.
+    ``newest`` caps the look-ahead (no master exists after the current month).
+    """
+    first_month, last_month = start.replace(day=1), last.replace(day=1)
+    month = shift_month(last_month, DELIVERY_NEIGHBOUR_MONTHS)
+    if newest is not None:
+        month = max(min(month, newest.replace(day=1)), last_month)
+    floor = shift_month(first_month, -DELIVERY_NEIGHBOUR_MONTHS)
+    per_month: list[list[dict[str, Any]]] = []
+    seen: set[tuple[str, str]] = set()
+    missing, neighbours = set(), set()
+    while month >= floor:
+        detail = load_month(month)
+        if detail is None:
+            (missing if first_month <= month <= last_month else neighbours).add(f"{month:%Y-%m}")
+        else:
+            kept = []
+            for line in sold_lines(detail, start, last, unit_config):
+                raw = line.get("raw") or {}
+                key = (ui.text(raw.get("ma_phieu")), ui.text(raw.get("stt")))
+                if all(key):
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                kept.append(line)
+            per_month.append(kept)
+        month = shift_month(month, -1)
+    return [line for kept in reversed(per_month) for line in kept], missing, neighbours
+
+
 def norm(text: Any) -> str:
     """Case/space-insensitive key for names typed differently across DMS screens."""
     return " ".join(str(text or "").split()).casefold()
@@ -487,6 +533,45 @@ def compute(
     return results, issues
 
 
+def coverage_gaps(programs: list[dict[str, Any]], lines: list[dict[str, Any]]) -> dict[str, Any]:
+    """Programme sales the calculator does not count (PII-free counts).
+
+    Per programme level: buyers of a programme SKU who are not registered, and
+    registered buyers' sales of a programme SKU in a unit the programme does not declare.
+    """
+    by_sku: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for line in lines:
+        by_sku[line["sku"]].append(line)
+    out = []
+    for program in programs:
+        try:
+            rule = parse_rule(program)
+        except ValueError:
+            continue
+        unregistered: dict[str, float] = collections.defaultdict(float)
+        other_units: dict[str, float] = collections.defaultdict(float)
+        other_unit_customers: set[str] = set()
+        for sku, units in rule.units.items():
+            for line in by_sku.get(sku, []):
+                value = line["amount"] if rule.kind == AMOUNT else line["quantity"]
+                if line["customer"] not in rule.customers:
+                    if line["unit"] in units:
+                        unregistered[line["customer"]] += value
+                elif line["unit"] and line["unit"] not in units:
+                    other_units[f"{sku}:{line['unit']}"] += line["quantity"]
+                    other_unit_customers.add(line["customer"])
+        if unregistered or other_units:
+            out.append({"code": bonus_code(rule.name)[:40], "registered": len(rule.customers),
+                        "unregistered_buyers": len(unregistered),
+                        "unregistered_reaching_min": sum(v >= rule.minimum for v in unregistered.values()),
+                        "other_unit_customers": len(other_unit_customers),
+                        "other_units": {k: round(v, 2) for k, v in sorted(other_units.items())[:4]},
+                        "declared_units": sorted({u for units in rule.units.values() for u in units})})
+    statuses = collections.Counter(ui.text((line.get("raw") or {}).get("trang_thai")) or "(trống)"
+                                   for line in lines)
+    return {"programmes": out, "bill_line_statuses": dict(statuses.most_common(10))}
+
+
 def unit_gap_summary(results: list[ui.ProgramResult]) -> dict[str, Any]:
     """Qualifying sale lines without unit (source keys only, never customer fields)."""
     lines: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -568,11 +653,10 @@ def _per_order_rewards(row: dict[str, Any], prices: dict[tuple[str, str], float]
             for index, part in enumerate(allocate(weights, qty, 0)):
                 cash[index] += part
             continue
-        else:
-            for index, part in enumerate(allocate(weights, qty, 4)):
-                texts[index].append(f"{name or sku} ({unit}): {part:g}")
-            price = prices.get((sku, unit))
-            value_total = qty * price if price else None
+        for index, part in enumerate(allocate(weights, qty, 4)):
+            texts[index].append(f"{name or sku} ({unit}): {part:g}")
+        price = prices.get((sku, unit))
+        value_total = qty * price if price else None
         if value_total is None:
             gifts = [None] * count  # retain cash even when a gift has no selling price
             continue
@@ -583,7 +667,7 @@ def _per_order_rewards(row: dict[str, Any], prices: dict[tuple[str, str], float]
     return ["; ".join(t) or None for t in texts], values, cash, gifts
 
 
-def detail_source(results: list[ui.ProgramResult], label: str,
+def detail_source(results: list[ui.ProgramResult],
                   prices: dict[tuple[str, str], float] | None = None) -> list[tuple[str, pd.DataFrame]]:
     """Bill-shaped rows per programme for the DMS CTKM template.
 

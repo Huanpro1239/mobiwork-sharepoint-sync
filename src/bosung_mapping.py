@@ -204,13 +204,13 @@ def customer_cause(code: str, field: str, cfg: dict[str, Any]) -> str:
     return f"Danh mục khách hàng DMS để trống {field} ({source})"
 
 
-def product_cause(sku: str, field: str, cfg: dict[str, Any]) -> str:
+def product_cause(field: str) -> str:
     if field == "Package":
         return "Danh mục cấu hình thiếu Package; nganh_hang trên DMS không khai 1 Way/2 Way"
     return "Danh mục sản phẩm DMS để trống nhãn hiệu (nhan_hieu)"
 
 
-def unit_cause(sku: str, unit: str) -> str:
+def unit_cause(unit: str) -> str:
     if not unit:
         return "Dòng đơn hàng trên DMS không ghi ĐVT"
     return f"SP chưa khai quy cách {unit} → Thùng/Két/Bình (dvt_chan/dvt_le/hsqd) trên danh mục DMS"
@@ -227,7 +227,7 @@ def todo_rows(issues: pd.DataFrame | None, cfg: dict[str, Any]) -> list[dict[str
         if reason.startswith(UNIT_GAP):
             rows.append({"_sheet": "QuyDoi", "Mã sản phẩm": sku, "ĐVT nguồn": unit,
                          "Tên Sản phẩm": text(rec.get("Tên SP nguồn")), "Còn thiếu": ["Quy đổi"],
-                         "Nguyên nhân": unit_cause(sku, unit),
+                         "Nguyên nhân": unit_cause(unit),
                          "Gợi ý": "" if unit else "Đơn hàng thiếu ĐVT: nên sửa đơn trên DMS; "
                                                   "điền ở đây sẽ áp dụng cho dòng không ĐVT của SP này"})
         elif field in SALES_FIELDS:
@@ -250,7 +250,7 @@ def todo_rows(issues: pd.DataFrame | None, cfg: dict[str, Any]) -> list[dict[str
                              "Gợi ý": "Đơn không có kho xuất"})
         elif field in ("Brand", "Package"):
             rows.append({"_sheet": "SanPham", "Mã sản phẩm": sku, "Tên Sản phẩm": text(rec.get("Tên SP nguồn")),
-                         "Còn thiếu": [field], "Nguyên nhân": product_cause(sku, field, cfg),
+                         "Còn thiếu": [field], "Nguyên nhân": product_cause(field),
                          "Hiện có": _known(cfg.get("products", {}).get(sku, {}), ["Brand", "Package"])})
         elif field in ("Tỉnh", "Loại KH"):
             rows.append({"_sheet": "KhachHang", "Mã Khách hàng": text(rec.get("Mã Khách hàng")),
