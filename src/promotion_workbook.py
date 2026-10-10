@@ -72,7 +72,7 @@ def _format_tracking(sheet, month: date) -> None:
 
 def _format_reward_views(workbook) -> None:
     """Keep long DMS names and statuses readable in the supplemental reward views."""
-    for name in ("TraThuong", "KhuyenMaiDonHang", "ChuongTrinh", "Thuong_theo_don"):
+    for name in ("TraThuong", "KhuyenMaiDonHang", "ChuongTrinh", "Thuong_theo_don", "DoanhSoChuaTinh"):
         if name not in workbook:
             continue
         sheet = workbook[name]
