@@ -33,15 +33,13 @@ class RepositoryHygieneTests(unittest.TestCase):
         for path in tracked_paths:
             parts = set(path.parts)
             name = path.name
-            if parts & RUNTIME_DIRS or "__pycache__" in parts:
+            is_generated = bool(parts & RUNTIME_DIRS or "__pycache__" in parts)
+            is_private_env = name == ".env" or (name.startswith(".env.") and name != ".env.example")
+            is_temporary = name in JUNK_NAMES or name.startswith("~$")
+            is_export = (path.suffix.casefold() in (PRIVATE_SUFFIXES | JUNK_SUFFIXES)
+                         and path.parts[:2] != ("tests", "fixtures"))
+            if is_generated or is_private_env or is_temporary or is_export:
                 violations.append(str(path))
-            elif name == ".env" or (name.startswith(".env.") and name != ".env.example"):
-                violations.append(str(path))
-            elif name in JUNK_NAMES or name.startswith("~$"):
-                violations.append(str(path))
-            elif path.suffix.casefold() in (PRIVATE_SUFFIXES | JUNK_SUFFIXES):
-                if not path.parts[:2] == ("tests", "fixtures"):
-                    violations.append(str(path))
         self.assertEqual(
             sorted(set(violations)), [],
             "Remove generated data, secrets, or temporary files from the Git index",
