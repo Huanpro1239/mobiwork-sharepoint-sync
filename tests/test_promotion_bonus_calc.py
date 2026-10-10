@@ -1081,6 +1081,17 @@ class PromotionBonusStandardizationTests(unittest.TestCase):
         self.assertEqual(calc.coverage_gaps([program], lines)["programmes"][
             calc.bonus_code(program["name"])[:40]]["unregistered"], 1)
 
+    def test_unregistered_sales_are_excluded_but_reconcile_to_gross(self):
+        program = qty_program(customers=(C1,), region="Miền Nam")
+        lines = calc.sold_lines(bill([{"so_luong": 80, "ID_khachhang": C3}]), OCT1, OCT31)
+        rows = calc.uncounted_sales([program], lines, {C3: "Miền Nam"})
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["Lý do"], calc.UNREGISTERED)
+        self.assertEqual(row["Doanh số phát sinh"], 80)
+        self.assertEqual(row["Doanh số hợp lệ"], 0)
+        self.assertEqual(row["Doanh số không được tính"], 80)
+
     def test_registered_valid_sales_with_missing_unit_remain_valid(self):
         program = qty_program(customers=(C1,), minimum=72)
         data = bill([{"so_luong": 80}, {"so_luong": 5, "ten_dvt": "", "ma_dvt": ""}])
