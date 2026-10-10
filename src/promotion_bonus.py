@@ -669,10 +669,15 @@ def _calc_month_frames(
     }
     for name in ("Tong_hop", "Ket_qua", "Kiem_tra"):
         frames[name] = summary_frames[name]
-    if uncounted:  # why a customer's programme sales are not in BaoCao/Tong_hop
-        frames["DoanhSoChuaTinh"] = pd.DataFrame(uncounted, dtype=object).sort_values(
-            ["Mã CT", "Vùng", "Mã Khách hàng"], kind="stable")
-    manifest["uncounted_rows"] = len(uncounted)
+    reconciled_rows = calc.build_reconciliation_rows(
+        results, uncounted, issues=issues, missing_by_start=missing_by_start,
+        period=f"{first:%m/%Y}")
+    if reconciled_rows:  # why a customer's programme sales are not in BaoCao/Tong_hop
+        reconciled_df = pd.DataFrame(reconciled_rows, dtype=object)
+        primary_cols = [c for c in calc.RECONCILIATION_COLUMNS if c in reconciled_df.columns]
+        frames["DoanhSoChuaTinh"] = reconciled_df[primary_cols].sort_values(
+            ["Mã CT", "Vùng", "Mã khách"], kind="stable")
+    manifest["uncounted_rows"] = len(reconciled_rows)
     if not detail_issues.empty:
         from promotion_detail import OPTIONAL_MAPPING_FIELDS, UNIT_GAP
 

@@ -625,10 +625,27 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
   không có trong danh sách đăng ký, và doanh số SP của CT bán khác ĐVT khai báo (không được tính theo quy tắc DMS),
   cùng phân bố `trang_thai` dòng đơn. Chỉ là số đếm, không có thông tin khách.
 
-## Sheet DoanhSoChuaTinh – vì sao khách không có trong BaoCao (10/10/2026)
+## Sheet DoanhSoChuaTinh – Bảng đối chiếu chẩn đoán tính thưởng (10/10/2026)
 - `BaoCao` chỉ gồm dòng bán **được tính vào CT**. Khách không có dòng nào được tính (không phát sinh doanh số,
-  chưa đăng ký CT, mua khác ĐVT) sẽ không có trong `BaoCao`; khách đăng ký luôn có trong `Tong_hop`/`TheoDoiTichLuy`.
-- `DoanhSoChuaTinh`: (1) khách mua SP của CT đạt mức tối thiểu nhưng không đăng ký mức nào của CT trên DMS – mỗi
-  khách × CT một dòng, ghi mức cao nhất đạt được và Vùng để lọc (CT áp dụng theo vùng, khách vùng khác không thuộc
-  CT) → nếu khách thuộc CT, cần đăng ký khách vào đúng mức CT trên DMS; (2) khách đã đăng ký nhưng mua khác ĐVT khai
-  trong CT (DMS không quy đổi). Tra mã khách ở sheet này trước khi báo thiếu.
+  chưa đăng ký CT, mua khác ĐVT, không thuộc vùng áp dụng) sẽ không xuất hiện trong `BaoCao`; khách đăng ký luôn có trong `Tong_hop`/`TheoDoiTichLuy`.
+- `DoanhSoChuaTinh` là bảng đối chiếu có thể lọc toàn diện gồm 21 cột chuẩn:
+  1. `Mã CT`, 2. `Tên CT`, 3. `Mức CT`, 4. `Mã khách`, 5. `Tên khách`, 6. `Vùng`, 7. `NPP`,
+  8. `Vùng áp dụng của CT`, 9. `Trạng thái đăng ký CT`, 10. `Doanh số phát sinh`, 11. `Doanh số hợp lệ`,
+  12. `Doanh số không được tính`, 13. `ĐVT nguồn`, 14. `ĐVT quy định`, 15. `Ngưỡng tối thiểu`,
+  16. `Ngưỡng tối đa`, 17. `Mức đạt được`, 18. `Trạng thái xét thưởng`, 19. `Nguyên nhân không được tính`,
+  20. `Hướng xử lý`, 21. `Kỳ báo cáo`.
+- Phân loại 9 nhóm nguyên nhân đối soát:
+  1. `Đã đăng ký, đạt và đủ điều kiện`: Đủ điều kiện nhận thưởng theo quy định.
+  2. `Đã đăng ký nhưng chưa đạt`: Khách đăng ký nhưng doanh số chưa đạt ngưỡng tối thiểu của mức.
+  3. `Chưa đăng ký CT`: Khách mua sản phẩm của CT đạt mức (được ghi mức cao nhất đạt được) nhưng chưa được đăng ký trên DMS → Cần đăng ký khách vào CT trên DMS nếu thuộc đối tượng.
+  4. `Không thuộc vùng áp dụng`: Khách mua hàng nhưng thuộc vùng khác với vùng áp dụng của CT (ví dụ khách Miền Bắc/Miền Trung mua sản phẩm thuộc CT Miền Nam).
+  5. `Sai hoặc thiếu ĐVT`: Khách mua SP bằng ĐVT khác quy định hoặc dòng đơn thiếu ĐVT (DMS không tự quy đổi).
+  6. `Không có doanh số trong kỳ`: Khách đăng ký nhưng không phát sinh mua hàng trong kỳ xét thưởng.
+  7. `Đang chờ chấm trưng bày`: Khách đạt doanh số nhưng đang chờ duyệt kết quả chấm ảnh từ DMS OpenAPI.
+  8. `Thiếu dữ liệu nguồn hoặc lịch sử`: Chương trình tích lũy nhiều tháng bị thiếu dữ liệu master của tháng nguồn.
+  9. `Chương trình chưa hỗ trợ đầy đủ quy tắc`: CT có cấu hình quy tắc chưa được hỗ trợ đầy đủ.
+- Đối chiếu mã khách thực tế (ví dụ: CT 006 Q4 Miền Nam):
+  - `BIDU010271`: Doanh số thực tế 10 chai < ngưỡng tối thiểu Mức 1 (72 chai) → chưa đạt ngưỡng tối thiểu.
+  - `BIDU010132`: Doanh số thực tế 80 chai đạt Mức 1 (72 chai). Chưa có trong BaoCao do chưa được đăng ký trên DMS trong CT 006.
+  - `BIDU010144`: Doanh số thực tế 150 chai đạt Mức 2 (144 chai). Chưa có trong BaoCao do chưa được đăng ký trên DMS trong CT 006.
+  - Cần lọc theo `Vùng`: Khoảng 250 khách mua đạt mức trên toàn quốc là số liệu gộp nhiều vùng, chỉ các khách thuộc Miền Nam mới là đối tượng của CT 006 Miền Nam.

@@ -931,3 +931,129 @@ class DisplayOverrideTests(unittest.TestCase):
         todo = [r for r in bonus.TODO_UPDATES["TraThuong 2026-10"] if r["_sheet"] == "TrungBay"]
         self.assertEqual({r["Mã Khách hàng"] for r in todo}, {"KHHO112323", "KH2"})
         self.assertEqual({r["Chương trình trưng bày"] for r in todo}, {"CTTB PET"})
+
+
+class PromotionBonusStandardizationTests(unittest.TestCase):
+    def test_sales_just_below_minimum_does_not_reach(self):
+        # 1. Doanh số ngay dưới minimum: không đạt
+        rule = calc.parse_rule(qty_program(minimum=72))
+        self.assertFalse(calc.reached(71.9, rule))
+        self.assertEqual(calc.reward_multiplier(71.9, rule), 0)
+
+    def test_sales_exactly_at_minimum_reaches(self):
+        # 2. Doanh số đúng minimum: đạt
+        rule = calc.parse_rule(qty_program(minimum=72))
+        self.assertTrue(calc.reached(72.0, rule))
+        self.assertEqual(calc.reward_multiplier(72.0, rule), 1)
+
+    def test_sales_at_or_exceeding_maximum(self):
+        # 3. Doanh số bằng hoặc vượt maximum
+        rule_bounded = calc.parse_rule(qty_program(minimum=16, maximum=30))
+        self.assertTrue(calc.reached(29, rule_bounded))
+        self.assertFalse(calc.reached(30, rule_bounded))
+        rule_open = calc.parse_rule(qty_program(minimum=16, maximum=0))
+        self.assertTrue(calc.reached(100, rule_open))
+
+    def test_adjacent_tiered_levels_match_correct_level(self):
+        # 4. Nhiều mức thưởng liền kề
+        tier1 = {**qty_program(pid="1" * 24, minimum=50, maximum=100), "name": "CT 355 MỨC 1"}
+        program = {**tier1, "products": [{"yeu_cau": {"qualityMin": 50, "qualityMax": 100},
+                                          "san_pham_mua": [{"ma_san_pham": "230100110", "don_vi_tinh": unit("Chai")}],
+                                          "san_pham_khuyen_mai": [[{"ma_san_pham": "230100110", "don_vi_tinh": unit("Chai"), "so_luong": 5}]]},
+                                         {"yeu_cau": {"qualityMin": 100, "qualityMax": 200},
+                                          "san_pham_mua": [{"ma_san_pham": "230100110", "don_vi_tinh": unit("Chai")}],
+                                          "san_pham_khuyen_mai": [[{"ma_san_pham": "230100110", "don_vi_tinh": unit("Chai"), "so_luong": 12}]]}]}
+        rule = calc.parse_rule(program)
+        self.assertTrue(calc.reached(75, rule))
+        self.assertTrue(calc.reached(150, rule))
+        self.assertEqual(calc.reward_multiplier(75, rule), 1)
+        self.assertEqual(calc.reward_multiplier(150, rule), 1)
+
+    def test_buyer_in_different_region_classified_out_of_region(self):
+        # 5. Khách mua khác vùng CT
+        prog = qty_program(customers=(C1,), region="Miền Nam")
+        lines = calc.sold_lines(bill([{"so_luong": 100, "ID_khachhang": C1}]), OCT1, OCT31)
+        res, _ = calc.compute([prog], lines, {C1: {"Vùng": "Miền Bắc", "customer_code": "KH_BAC"}})
+        rows = calc.build_reconciliation_rows(res, [], period="10/2026")
+        bac_row = next(r for r in rows if r["Mã khách"] == "KH_BAC")
+        self.assertIn("Không thuộc vùng áp dụng", bac_row["Nguyên nhân không được tính"])
+
+    def test_unregistered_buyer_with_qualifying_sales_highest_level(self):
+        # 6. Khách chưa đăng ký nhưng có doanh số
+        level1 = {**qty_program(pid="1" * 24, minimum=72, customers=(C1,)), "name": "006/TB/GT/01/2026_Q4 MỨC 1"}
+        level2 = {**qty_program(pid="2" * 24, minimum=144, customers=(C2,)), "name": "006/TB/GT/01/2026_Q4 MỨC 2"}
+        lines = calc.sold_lines(bill([{"so_luong": 160, "ID_khachhang": C3, "ma_kh": "BIDU010144"}]), OCT1, OCT31)
+        rows = calc.uncounted_sales([level1, level2], lines, {C3: "Miền Nam"})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["Mức CT"], "006/TB/GT/01/2026_Q4 - Mức 2")
+        self.assertEqual(rows[0]["Trạng thái đăng ký CT"], "Chưa đăng ký")
+
+    def test_registered_customer_with_zero_sales(self):
+        # 7. Khách đăng ký nhưng không mua hàng
+        prog = qty_program(customers=(C1,))
+        res, _ = calc.compute([prog], [], {C1: {"kv": "Miền Trung 1", "customer_code": "KH_ZERO"}})
+        rows = calc.build_reconciliation_rows(res, [], period="10/2026")
+        zero_row = next(r for r in rows if r["Mã khách"] == "KH_ZERO")
+        self.assertEqual(zero_row["Nguyên nhân không được tính"], "Không có doanh số trong kỳ")
+
+    def test_mismatched_or_missing_unit_lines(self):
+        # 8. Sai ĐVT hoặc thiếu ĐVT
+        prog = qty_program(customers=(C1,), units=("Chai",))
+        # Sai ĐVT
+        lines_wrong = calc.sold_lines(bill([{"so_luong": 50, "ten_dvt": "Thùng", "ma_dvt": "Thùng", "ID_khachhang": C1}]), OCT1, OCT31)
+        uncounted = calc.uncounted_sales([prog], lines_wrong)
+        self.assertTrue(any(r["Lý do"] == calc.OTHER_UNIT for r in uncounted))
+        # Thiếu ĐVT
+        lines_missing = calc.sold_lines(bill([{"so_luong": 50, "ten_dvt": "", "ma_dvt": "", "ID_khachhang": C1}]), OCT1, OCT31)
+        res, _ = calc.compute([prog], lines_missing, {C1: {"customer_code": "KH1"}})
+        self.assertEqual(res[0].rows[0]["_eligible"], calc.UNIT_HOLD)
+
+    def test_order_month_boundary_crosses_correctly(self):
+        # 9. Đơn cuối tháng trước giao tháng sau
+        detail = bill([{"ngay_dat": "2026-09-30 10:00:00", "ngay_giao_hang": "2026-10-02T10:00:00.000Z", "so_luong": 80}])
+        lines = calc.sold_lines(detail, OCT1, OCT31)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["quantity"], 80)
+
+    def test_duplicate_orders_between_masters_deduplicated(self):
+        # 10. Đơn bị trùng giữa hai master
+        master1 = bill([{"ma_phieu": "DH_TRUNG", "stt": "1", "so_luong": 72, "ngay_giao_hang": "2026-10-05T00:00:00.000Z"}])
+        master2 = bill([{"ma_phieu": "DH_TRUNG", "stt": "1", "so_luong": 72, "ngay_giao_hang": "2026-10-05T00:00:00.000Z"}])
+        loaders = {date(2026, 9, 1): master1, date(2026, 10, 1): master2}
+        lines, _, _ = calc.delivered_lines(lambda m: loaders.get(m), OCT1, OCT31)
+        self.assertEqual(len(lines), 1)
+
+    def test_return_order_reduces_sales_and_drops_tier(self):
+        # 11. Hàng trả làm giảm mức thưởng
+        detail = bill([{"so_luong": 100, "thanh_tien": 500000, "ID_khachhang": C1},
+                       {"so_luong": -40, "thanh_tien": -200000, "ID_khachhang": C1}])
+        lines = calc.sold_lines(detail, OCT1, OCT31)
+        prog = qty_program(customers=(C1,), minimum=72)
+        res, _ = calc.compute([prog], lines, {C1: {"customer_code": "KH1"}})
+        self.assertEqual(res[0].rows[0]["objThucHien"][calc.TARGET_ID], 60)
+        self.assertEqual(res[0].rows[0]["_eligible"], "Không")
+
+    def test_cumulative_program_missing_month_holds_rewards(self):
+        # 12. CT tích lũy thiếu một tháng nguồn
+        prog = qty_program(customers=(C1,))
+        res, _ = calc.compute([prog], [], {C1: {"customer_code": "KH1"}})
+        calc.hold_rewards(res, "Thiếu dữ liệu kỳ tích lũy: 2026-09")
+        self.assertEqual(res[0].rows[0]["objTraThuong"], {})
+
+    def test_unconfirmed_display_holds_rewards_as_review_display(self):
+        # 13. Trưng bày chưa xác nhận
+        prog = qty_program(customers=(C1,), minimum=72, cttb={"ten": "CTTB TEST"})
+        lines = calc.sold_lines(bill([{"so_luong": 80, "ID_khachhang": C1}]), OCT1, OCT31)
+        res, _ = calc.compute([prog], lines, {C1: {"customer_code": "KH1"}})
+        self.assertEqual(res[0].rows[0]["_eligible"], calc.REVIEW_DISPLAY)
+
+    def test_quota_limits_integer_slots_per_customer(self):
+        # 14. Giới hạn số suất theo khách
+        prog = qty_program(customers=(C1,), minimum=10, multiple=True)
+        lines = calc.sold_lines(bill([{"so_luong": 55, "ID_khachhang": C1}]), OCT1, OCT31)
+        res, _ = calc.compute([prog], lines, {C1: {"customer_code": "KH1"}})
+        stats = calc.apply_quota(res[0], 2)
+        self.assertEqual(stats["reduced"], 1)
+        self.assertEqual(res[0].rows[0]["_slots"], 2)
+        self.assertEqual(res[0].rows[0]["objTraThuong"]["230100110|Chai"], 24)
+
