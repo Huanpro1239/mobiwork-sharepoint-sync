@@ -1057,3 +1057,62 @@ class PromotionBonusStandardizationTests(unittest.TestCase):
         self.assertEqual(res[0].rows[0]["_slots"], 2)
         self.assertEqual(res[0].rows[0]["objTraThuong"]["230100110|Chai"], 24)
 
+    def test_reconciliation_below_minimum_preserves_valid_sales(self):
+        # A valid sale that does not reach the reward target is not an excluded sale.
+        program = qty_program(customers=(C1,), minimum=72)
+        lines = calc.sold_lines(bill([{"so_luong": 60, "ID_khachhang": C1}]), OCT1, OCT31)
+        results, _ = calc.compute([program], lines, {C1: {"customer_code": "KH1"}})
+        rows = calc.build_reconciliation_rows(results, [], period="10/2026")
+        row = next(item for item in rows if item["Mã khách"] == "KH1")
+        self.assertEqual(row["Nguyên nhân không được tính"], calc.NOT_REACHED)
+        self.assertEqual(row["Doanh số phát sinh"], 60)
+        self.assertEqual(row["Doanh số hợp lệ"], 60)
+        self.assertEqual(row["Doanh số không được tính"], 0)
+        self.assertEqual(row["ĐVT nguồn"], "Chai")
+
+    def test_unregistered_outside_region_is_not_suggested_for_enrolment(self):
+        program = qty_program(customers=(C1,), minimum=72, region="Miền Nam")
+        lines = calc.sold_lines(bill([{"so_luong": 80, "ID_khachhang": C3}]), OCT1, OCT31)
+        rows = calc.uncounted_sales([program], lines, {C3: "Miền Bắc"})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["Lý do"], calc.OUT_OF_REGION)
+        self.assertEqual(rows[0]["Trạng thái xét thưởng"], "Không thuộc vùng áp dụng")
+        self.assertNotIn("Đăng ký khách vào CT", rows[0]["Hướng xử lý"])
+        self.assertEqual(calc.coverage_gaps([program], lines)["programmes"][
+            calc.bonus_code(program["name"])[:40]]["unregistered"], 1)
+
+    def test_registered_valid_sales_with_missing_unit_remain_valid(self):
+        program = qty_program(customers=(C1,), minimum=72)
+        data = bill([{"so_luong": 80}, {"so_luong": 5, "ten_dvt": "", "ma_dvt": ""}])
+        results, _ = calc.compute([program], calc.sold_lines(data, OCT1, OCT31),
+                                  {C1: {"customer_code": "KH1"}})
+        self.assertEqual(results[0].rows[0]["_eligible"], calc.UNIT_HOLD)
+        rows = calc.build_reconciliation_rows(results, [], period="10/2026")
+        row = next(item for item in rows if item["Mã khách"] == "KH1")
+        self.assertEqual(row["Doanh số hợp lệ"], 80)
+        self.assertIsNone(row["Doanh số không được tính"])
+        self.assertFalse(results[0].rows[0]["objTraThuong"])
+
+    def test_display_pending_rewards_are_proposed_not_eligible_for_payment(self):
+        from promotion_reward_report import reward_ledger
+
+        program = qty_program(customers=(C1,), minimum=72, cttb={"ten": "CTTB TEST"})
+        sales = calc.sold_lines(bill([{"so_luong": 80}]), OCT1, OCT31)
+        results, _ = calc.compute([program], sales, {C1: {"customer_code": "KH1"}})
+        ledger = reward_ledger(results, OCT1)
+        self.assertEqual(results[0].rows[0]["_eligible"], calc.REVIEW_DISPLAY)
+        self.assertEqual(ledger.iloc[0]["Số lượng quà dự kiến"], 12)
+        self.assertEqual(ledger.iloc[0]["Số lượng quà đủ điều kiện"], 0)
+        self.assertFalse(results[0].rows[0]["objTraThuong"])
+
+    def test_exceeding_standalone_maximum_is_not_reported_as_attained(self):
+        program = qty_program(customers=(C1,), minimum=72, maximum=100)
+        sales = calc.sold_lines(bill([{"so_luong": 150}]), OCT1, OCT31)
+        results, _ = calc.compute([program], sales, {C1: {"customer_code": "KH1"}})
+        rows = calc.build_reconciliation_rows(results, [], period="10/2026")
+        row = next(item for item in rows if item["Mã khách"] == "KH1")
+        self.assertEqual(row["Mức đạt được"], "Chưa đạt")
+        self.assertEqual(row["Doanh số hợp lệ"], 150)
+        self.assertEqual(row["Doanh số không được tính"], 0)
+        self.assertIn("Vượt ngưỡng tối đa", row["Nguyên nhân không được tính"])
+
