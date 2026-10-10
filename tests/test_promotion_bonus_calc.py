@@ -311,6 +311,34 @@ class RunTests(unittest.TestCase):
         saved = json.loads(Path("output/promotion_bonus_manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["status"], "success")
 
+    def test_october_report_counts_order_created_in_september_and_delivered_in_october(self):
+        env = {"DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "calc", "PROMOTION_BONUS_FROM_DATE": "2026-10-01",
+               "PROMOTION_BONUS_TO_DATE": "2026-10-31"}
+        masters = {  # Bill masters are split by creation date
+            "2026-09": bill([{"so_luong": 50, "ma_phieu": "DH0928", "ngay_giao_hang": "2026-10-02T03:00:00Z"},
+                             {"so_luong": 500, "ma_phieu": "DH0910", "ngay_giao_hang": "2026-09-12T03:00:00Z"}]),
+            "2026-10": bill([{"so_luong": 30, "ma_phieu": "DH1005"}]),
+        }
+
+        def detail(month, dry_run, manifest):
+            if f"{month:%Y-%m}" not in masters:
+                raise ValueError("Bill monthly master missing")
+            return masters[f"{month:%Y-%m}"]
+
+        bonus._BILL_CACHE.clear()
+        with patch.dict(os.environ, env), \
+                patch.object(bonus.MobiWorkClient, "from_env", return_value=Mock()), \
+                patch.object(bonus, "fetch_programs", return_value=[qty_program(customers=(C1,))]), \
+                patch.object(bonus, "_bill_detail", side_effect=detail), \
+                patch("customer_catalogue.enrich_customer_config",
+                      return_value={"customer_catalogue": {}, "customer_catalogue_audit": {"count": 0}}):
+            manifest = bonus.run()
+        bonus._BILL_CACHE.clear()
+        self.assertEqual((manifest["sold_line_count"], manifest["sold_lines_from_neighbour_months"]), (2, 1))
+        self.assertEqual((manifest["reached_rows"], manifest["eligible_rows"]), (1, 1))
+        summary = pd.read_excel("output/BaoCaoTraThuong_2026-10.xlsx", sheet_name="Tong_hop")
+        self.assertEqual(summary["Thực hiện"].tolist(), [80])
+
     def test_display_failure_does_not_block_report(self):
         env = {"DRY_RUN": "true", "PROMOTION_BONUS_SOURCE": "calc", "PROMOTION_BONUS_FROM_DATE": "2026-10-01",
                "PROMOTION_BONUS_TO_DATE": "2026-10-31"}

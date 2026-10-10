@@ -609,3 +609,13 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
   `ten_cttb`). Khách đạt doanh số nhưng chờ trưng bày được liệt kê ở sheet **TrungBay** của CanBoSung_TongHop; điền
   `Kết quả` = Đạt / Không đạt vào sheet TrungBay của BoSung_Mapping (khóa Mã KH + tên CT trưng bày). Đạt → trả thưởng
   (nếu còn suất); Không đạt → "Không đạt trưng bày", không trả.
+
+## Đơn tạo tháng trước, giao trong kỳ (10/10/2026)
+- File DonBanHang tháng lấy theo **ngày tạo đơn** (`kieu_ngay=cdate`), còn trả thưởng xét **ngày giao hàng**
+  (đã đối chiếu với DMS). Trước đây báo cáo tháng chỉ đọc file đơn của chính tháng đó, nên đơn tạo cuối tháng
+  trước nhưng giao trong tháng (vd tạo 28/09, giao 02/10) bị bỏ sót ở cả hai tháng.
+- Nay báo cáo trả thưởng (theo tháng, tích lũy) và TheoDoiTichLuy đọc thêm file đơn tháng liền trước và liền sau
+  (không đọc tháng tương lai), lọc theo ngày giao trong kỳ, mỗi dòng đơn (`ma_phieu` + `stt`) chỉ tính một lần.
+- Thiếu file tháng trong kỳ vẫn tạm giữ thưởng như cũ. Thiếu file tháng liền kề (vd 2026-05, trước dữ liệu sớm
+  nhất) chỉ ghi chú ở `Kiem_tra` và manifest `delivery_neighbour_months_missing`; manifest
+  `sold_lines_from_neighbour_months` cho biết số dòng được bổ sung. KhuyenMaiDonHang/CTKM vẫn theo tháng ngày đơn.

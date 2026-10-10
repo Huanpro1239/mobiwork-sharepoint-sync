@@ -53,7 +53,8 @@ class TrackingTests(unittest.TestCase):
         self.assertEqual((row["TỔNG TÍCH LŨY"], row["Thực hiện kỳ xét thưởng"], row["CÒN LẠI"]), (160, 80, 0))
         self.assertEqual(row["SỐ SUẤT"], 1)
         self.assertIsNone(row["NGÀY ĐĂNG KÝ"])
-        self.assertEqual(loader.call_count, 3)
+        # Jul–Sep plus the June master (orders created in June, delivered in July), once each.
+        self.assertEqual(sorted(call.args[0] for call in loader.call_args_list), [date(2026, 6, 1), JUL, AUG, SEP])
 
     def test_cumulative_slots_are_increments_not_repeated_reward(self):
         row = build("cumulative", (40, 40, 80), multiple=True)[0].iloc[0]
@@ -100,7 +101,7 @@ class TrackingTests(unittest.TestCase):
         frame = tracking_report(results, JUL, date(2026, 7, 31), loader, {}, {}, {program["_id"]: "monthly"})
         self.assertIsNone(frame.iloc[0]["TỔNG TÍCH LŨY T08/2026"])
         self.assertEqual(frame.iloc[0]["TỔNG TÍCH LŨY"], 80)
-        self.assertEqual(loader.call_count, 1)
+        self.assertEqual(sorted(call.args[0] for call in loader.call_args_list), [date(2026, 6, 1), JUL])
         self.assertEqual(results, original)
 
     def test_historical_missing_unit_marks_affected_period_unavailable(self):
@@ -147,6 +148,21 @@ class TrackingTests(unittest.TestCase):
                 self.assertEqual(invoice.freeze_panes, "A5")
             finally:
                 book.close()
+
+    def test_delivery_month_counts_orders_created_in_the_previous_month(self):
+        program = qty_program(minimum=72, customers=(C1,))
+        program.update(startDate=epoch(AUG), endDate=epoch(date(2026, 9, 30)))
+        # Created in August (August master), delivered on 2 September.
+        months = {AUG: bill([{"so_luong": 50, "ma_phieu": "DH8", "ngay_giao_hang": "2026-09-02T03:00:00Z"}]),
+                  SEP: bill([{"so_luong": 30, "ma_phieu": "DH9", "ngay_giao_hang": "2026-09-10T03:00:00Z"}])}
+        lines, missing, neighbours = calc.delivered_lines(months.get, SEP, date(2026, 9, 30), newest=SEP)
+        self.assertEqual(sorted(line["raw"]["ma_phieu"] for line in lines), ["DH8", "DH9"])
+        self.assertEqual((missing, neighbours), (set(), set()))
+        results, _ = calc.compute([program], lines, {})
+        frame = tracking_report(results, SEP, date(2026, 9, 30), months.get, {}, {}, {program["_id"]: "monthly"})
+        row = frame.iloc[0]
+        self.assertEqual((row["TỔNG TÍCH LŨY T08/2026"], row["TỔNG TÍCH LŨY T09/2026"]), (0, 80))
+        self.assertEqual(row["SỐ SUẤT ĐẠT T09/2026"], 1)
 
 
 if __name__ == "__main__":

@@ -279,6 +279,52 @@ def sold_lines(detail: pd.DataFrame, first: date, last: date,
     return lines
 
 
+DELIVERY_NEIGHBOUR_MONTHS = 1
+
+
+def shift_month(first: date, months: int) -> date:
+    index = first.year * 12 + first.month - 1 + months
+    return date(index // 12, index % 12 + 1, 1)
+
+
+def delivered_lines(load_month: Any, start: date, last: date,
+                    unit_config: dict[str, Any] | None = None, newest: date | None = None
+                    ) -> tuple[list[dict[str, Any]], set[str], set[str]]:
+    """Sale lines delivered in [start, last] with (missing period months, missing neighbours).
+
+    Bill monthly masters are partitioned by creation date (``kieu_ngay=cdate``) while DMS
+    counts the delivery date: an order created on 28/09 and delivered on 02/10 is stored in
+    the September master. Neighbouring masters are therefore read too and every Bill line
+    (``ma_phieu`` + ``stt``) is kept once, the copy of the most recent master winning.
+    ``newest`` caps the look-ahead (no master exists after the current month).
+    """
+    first_month, last_month = start.replace(day=1), last.replace(day=1)
+    month = shift_month(last_month, DELIVERY_NEIGHBOUR_MONTHS)
+    if newest is not None:
+        month = max(min(month, newest.replace(day=1)), last_month)
+    floor = shift_month(first_month, -DELIVERY_NEIGHBOUR_MONTHS)
+    per_month: list[list[dict[str, Any]]] = []
+    seen: set[tuple[str, str]] = set()
+    missing, neighbours = set(), set()
+    while month >= floor:
+        detail = load_month(month)
+        if detail is None:
+            (missing if first_month <= month <= last_month else neighbours).add(f"{month:%Y-%m}")
+        else:
+            kept = []
+            for line in sold_lines(detail, start, last, unit_config):
+                raw = line.get("raw") or {}
+                key = (ui.text(raw.get("ma_phieu")), ui.text(raw.get("stt")))
+                if all(key):
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                kept.append(line)
+            per_month.append(kept)
+        month = shift_month(month, -1)
+    return [line for kept in reversed(per_month) for line in kept], missing, neighbours
+
+
 def norm(text: Any) -> str:
     """Case/space-insensitive key for names typed differently across DMS screens."""
     return " ".join(str(text or "").split()).casefold()

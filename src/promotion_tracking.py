@@ -48,7 +48,7 @@ def month_keys(first: date, last: date) -> list[date]:
 
 def tracking_report(results: list[ProgramResult], first: date, last: date,
                     load_month: Callable[[date], pd.DataFrame | None], customers: dict[str, Any],
-                    cfg: dict[str, Any], modes: dict[str, str]) -> pd.DataFrame:
+                    cfg: dict[str, Any], modes: dict[str, str], newest: date | None = None) -> pd.DataFrame:
     """One registered customer × programme level; never use example template rows.
 
 The user explicitly confirmed one registration equals one slot. Missing registration
@@ -64,15 +64,24 @@ it refers to the whole-period target; achieved slots are increments of running a
     slot_columns = [f"SỐ SUẤT ĐẠT {label}" for label in labels]
     columns = BASE_COLUMNS + actual_columns + slot_columns + ["TỔNG SỐ SUẤT ĐẠT"] + EXTRA_COLUMNS
     # One shared read and sales normalization per historical month, not per programme.
+    loaded: dict[date, pd.DataFrame | None] = {}
+
+    def once(month: date) -> pd.DataFrame | None:
+        if month not in loaded:
+            loaded[month] = load_month(month)
+        return loaded[month]
+
     buckets: dict[date, Any] = {}
     for month in months:
         if month > last:
             continue
-        source = load_month(month)
-        if source is None:
+        if once(month) is None:
             buckets[month] = None
             continue
-        lines = calc.sold_lines(source, month, min(date(month.year, month.month, monthrange(month.year, month.month)[1]), last), cfg)
+        # Deliveries of the month, also from orders created in a neighbour month.
+        lines, _, _ = calc.delivered_lines(
+            once, month, min(date(month.year, month.month, monthrange(month.year, month.month)[1]), last),
+            cfg, newest or last)
         by_customer = defaultdict(list)
         for line in lines:
             by_customer[line["customer"]].append(line)
