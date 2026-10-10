@@ -207,13 +207,18 @@ def _tiered_rule(program: dict[str, Any]) -> Rule:
 
 def reached(actual: float, rule: Rule) -> bool:
     if rule.tiers:
-        return any(reached(actual, tier) for tier in rule.tiers)
-    return actual >= rule.minimum and (rule.maximum == 0 or actual < rule.maximum)
+        return any(tier.minimum <= actual and (tier.maximum == 0 or actual < tier.maximum)
+                   for tier in rule.tiers) or actual >= rule.tiers[-1].minimum
+    return actual >= rule.minimum
 
 
 def reward_multiplier(actual: float, rule: Rule) -> int:
     if rule.tiers:
-        return next((reward_multiplier(actual, tier) for tier in rule.tiers if reached(actual, tier)), 0)
+        matched = next((tier for tier in rule.tiers
+                        if tier.minimum <= actual and (tier.maximum == 0 or actual < tier.maximum)), None)
+        if not matched and actual >= rule.tiers[-1].minimum:
+            matched = rule.tiers[-1]
+        return reward_multiplier(actual, matched) if matched else 0
     if not reached(actual, rule):
         return 0
     if rule.multiple and rule.minimum > 0:
@@ -279,52 +284,6 @@ def sold_lines(detail: pd.DataFrame, first: date, last: date,
     return lines
 
 
-DELIVERY_NEIGHBOUR_MONTHS = 1
-
-
-def shift_month(first: date, months: int) -> date:
-    index = first.year * 12 + first.month - 1 + months
-    return date(index // 12, index % 12 + 1, 1)
-
-
-def delivered_lines(load_month: Any, start: date, last: date,
-                    unit_config: dict[str, Any] | None = None, newest: date | None = None
-                    ) -> tuple[list[dict[str, Any]], set[str], set[str]]:
-    """Sale lines delivered in [start, last] with (missing period months, missing neighbours).
-
-    Bill monthly masters are partitioned by creation date (``kieu_ngay=cdate``) while DMS
-    counts the delivery date: an order created on 28/09 and delivered on 02/10 is stored in
-    the September master. Neighbouring masters are therefore read too and every Bill line
-    (``ma_phieu`` + ``stt``) is kept once, the copy of the most recent master winning.
-    ``newest`` caps the look-ahead (no master exists after the current month).
-    """
-    first_month, last_month = start.replace(day=1), last.replace(day=1)
-    month = shift_month(last_month, DELIVERY_NEIGHBOUR_MONTHS)
-    if newest is not None:
-        month = max(min(month, newest.replace(day=1)), last_month)
-    floor = shift_month(first_month, -DELIVERY_NEIGHBOUR_MONTHS)
-    per_month: list[list[dict[str, Any]]] = []
-    seen: set[tuple[str, str]] = set()
-    missing, neighbours = set(), set()
-    while month >= floor:
-        detail = load_month(month)
-        if detail is None:
-            (missing if first_month <= month <= last_month else neighbours).add(f"{month:%Y-%m}")
-        else:
-            kept = []
-            for line in sold_lines(detail, start, last, unit_config):
-                raw = line.get("raw") or {}
-                key = (ui.text(raw.get("ma_phieu")), ui.text(raw.get("stt")))
-                if all(key):
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                kept.append(line)
-            per_month.append(kept)
-        month = shift_month(month, -1)
-    return [line for kept in reversed(per_month) for line in kept], missing, neighbours
-
-
 def norm(text: Any) -> str:
     """Case/space-insensitive key for names typed differently across DMS screens."""
     return " ".join(str(text or "").split()).casefold()
@@ -373,14 +332,14 @@ def display_summary(records: list[dict[str, Any]], programs: list[dict[str, Any]
         by_status[f"{record.get('tt_cham_diem')}|{'Đạt' if DISPLAY_PASS in texts else ('có chấm' if leaves else 'rỗng')}"] += 1
     fields = collections.Counter(k for r in records for k in r)
     return {"records": len(records), "programs_in_data": len(names),
-            "record_fields": sorted(fields)[:30],
-            "required_programs": len(wanted), "matched_programs": len(wanted & set(names)),
-            "matched_records": sum(n for name, n in names.items() if name in wanted),
-            "top_names": [f"{name[:45]}={n}" for name, n in names.most_common(6)],
-            "required_names": sorted(name[:45] for name in wanted)[:6],
-            "grading_shape": dict(shapes.most_common(6)), "status_by_grading": dict(by_status.most_common(10)),
-            "grading_keys": dict(keys.most_common(10)), "grading_values": dict(values.most_common(12)),
-            "status_values": dict(collections.Counter(str(r.get("tt_cham_diem")) for r in records))}
+        "record_fields": sorted(fields)[:30],
+        "required_programs": len(wanted), "matched_programs": len(wanted & set(names)),
+        "matched_records": sum(n for name, n in names.items() if name in wanted),
+        "top_names": [f"{name[:45]}={n}" for name, n in names.most_common(6)],
+        "required_names": sorted(name[:45] for name in wanted)[:6],
+        "grading_shape": dict(shapes.most_common(6)), "status_by_grading": dict(by_status.most_common(10)),
+        "grading_keys": dict(keys.most_common(10)), "grading_values": dict(values.most_common(12)),
+        "status_values": dict(collections.Counter(str(r.get("tt_cham_diem")) for r in records))}
 
 
 def display_passes(records: Iterable[dict[str, Any]]) -> dict[tuple[str, str], str]:
@@ -470,7 +429,13 @@ def compute(
             meta = customers.get(customer_id, {})
             sales_meta = (sales_metadata or {}).get(customer_id, {})
             code = meta.get("customer_code") or code_of.get(customer_id, "")
-            matched = next((tier for tier in rule.tiers or (rule,) if reached(actual, tier)), None)
+            if rule.tiers:
+                matched = next((tier for tier in rule.tiers
+                                if tier.minimum <= actual and (tier.maximum == 0 or actual < tier.maximum)), None)
+                if not matched and actual >= rule.tiers[-1].minimum:
+                    matched = rule.tiers[-1]
+            else:
+                matched = rule if reached(actual, rule) else None
             multiplier = reward_multiplier(actual, matched) if matched else 0
             selected_rewards = matched.rewards if matched else ()
             reached_at = ""
@@ -499,6 +464,9 @@ def compute(
                 eligible = REVIEW_DISPLAY
             proposed = {f"{sku}|{unit}": qty * multiplier
                         for sku, _, unit, qty in selected_rewards} if multiplier else {}
+            has_rewards = eligible in {"Có", REVIEW_DISPLAY}
+            earned_rewards = [(sku, name, unit, qty * multiplier)
+                              for sku, name, unit, qty in selected_rewards] if multiplier else []
             rows.append({
                 "_idCT": rule.program_id, "type": "", "ma": code or customer_id,
                 "ten": meta.get("Tên Khách hàng", ""), "sdt": meta.get("Số ĐT", ""),
@@ -507,12 +475,12 @@ def compute(
                 "loai": meta.get("Loại KH", ""), "nhom": meta.get("Nhóm KH", ""),
                 "timepass": "", "soSuatCT": program.get("soSuat"),
                 "objThucHien": {TARGET_ID: round(actual, 2)},
-                "objTraThuong": proposed if eligible == "Có" else {},
+                "objTraThuong": proposed if has_rewards else {},
                 "objThuongDuKien": proposed,
                 "extra": {"Tỉnh": meta.get("Tỉnh", ""),
                           "Vùng áp dụng CT": rule.region,
-                          "Trưng bày yêu cầu": rule.display_program,
-                          "Kết quả trưng bày": display,
+                          "Trưng bày yêu cầu": rule.display_program if rule.display_program else "Không áp dụng",
+                          "Kết quả trưng bày": display if rule.display_program else "Không áp dụng",
                           "Đủ điều kiện trả thưởng": eligible,
                           "Thưởng dự kiến": "; ".join(f"{name or sku} ({unit}): {qty * multiplier:g}"
                                                       for sku, name, unit, qty in selected_rewards)
@@ -520,8 +488,7 @@ def compute(
                           "Bội số": multiplier if rule.multiple else ""},
                 "_lines": [line for line, _ in counted if line is not None],
                 "_weights": [weight for line, weight in counted if line is not None],
-                "_rewards": [(sku, name, unit, qty * multiplier) for sku, name, unit, qty in selected_rewards]
-                if eligible == "Có" else [],
+                "_rewards": earned_rewards if has_rewards else [],
                 "_eligible": eligible,
                 "_review_display": eligible == REVIEW_DISPLAY,
                 "_unit_gaps": unit_gaps,
@@ -531,45 +498,6 @@ def compute(
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
                                         [target], rewards))
     return results, issues
-
-
-def coverage_gaps(programs: list[dict[str, Any]], lines: list[dict[str, Any]]) -> dict[str, Any]:
-    """Programme sales the calculator does not count (PII-free counts).
-
-    Per programme level: buyers of a programme SKU who are not registered, and
-    registered buyers' sales of a programme SKU in a unit the programme does not declare.
-    """
-    by_sku: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
-    for line in lines:
-        by_sku[line["sku"]].append(line)
-    out = []
-    for program in programs:
-        try:
-            rule = parse_rule(program)
-        except ValueError:
-            continue
-        unregistered: dict[str, float] = collections.defaultdict(float)
-        other_units: dict[str, float] = collections.defaultdict(float)
-        other_unit_customers: set[str] = set()
-        for sku, units in rule.units.items():
-            for line in by_sku.get(sku, []):
-                value = line["amount"] if rule.kind == AMOUNT else line["quantity"]
-                if line["customer"] not in rule.customers:
-                    if line["unit"] in units:
-                        unregistered[line["customer"]] += value
-                elif line["unit"] and line["unit"] not in units:
-                    other_units[f"{sku}:{line['unit']}"] += line["quantity"]
-                    other_unit_customers.add(line["customer"])
-        if unregistered or other_units:
-            out.append({"code": bonus_code(rule.name)[:40], "registered": len(rule.customers),
-                        "unregistered_buyers": len(unregistered),
-                        "unregistered_reaching_min": sum(v >= rule.minimum for v in unregistered.values()),
-                        "other_unit_customers": len(other_unit_customers),
-                        "other_units": {k: round(v, 2) for k, v in sorted(other_units.items())[:4]},
-                        "declared_units": sorted({u for units in rule.units.values() for u in units})})
-    statuses = collections.Counter(ui.text((line.get("raw") or {}).get("trang_thai")) or "(trống)"
-                                   for line in lines)
-    return {"programmes": out, "bill_line_statuses": dict(statuses.most_common(10))}
 
 
 def unit_gap_summary(results: list[ui.ProgramResult]) -> dict[str, Any]:
@@ -653,10 +581,11 @@ def _per_order_rewards(row: dict[str, Any], prices: dict[tuple[str, str], float]
             for index, part in enumerate(allocate(weights, qty, 0)):
                 cash[index] += part
             continue
-        for index, part in enumerate(allocate(weights, qty, 4)):
-            texts[index].append(f"{name or sku} ({unit}): {part:g}")
-        price = prices.get((sku, unit))
-        value_total = qty * price if price else None
+        else:
+            for index, part in enumerate(allocate(weights, qty, 4)):
+                texts[index].append(f"{name or sku} ({unit}): {part:g}")
+            price = prices.get((sku, unit))
+            value_total = qty * price if price else None
         if value_total is None:
             gifts = [None] * count  # retain cash even when a gift has no selling price
             continue
@@ -667,7 +596,7 @@ def _per_order_rewards(row: dict[str, Any], prices: dict[tuple[str, str], float]
     return ["; ".join(t) or None for t in texts], values, cash, gifts
 
 
-def detail_source(results: list[ui.ProgramResult],
+def detail_source(results: list[ui.ProgramResult], label: str,
                   prices: dict[tuple[str, str], float] | None = None) -> list[tuple[str, pd.DataFrame]]:
     """Bill-shaped rows per programme for the DMS CTKM template.
 
@@ -832,15 +761,15 @@ def program_quota(program: dict[str, Any]) -> int:
 
 
 def apply_quota(result: ui.ProgramResult, quota: int) -> dict[str, int]:
-    """Cap each paid customer's multiples at ``quota``; other customers are unaffected."""
+    """Cap each paid customer's multiples at ``quota`` (integer slots); other customers are unaffected."""
     stats = {"quota": quota, "reduced": 0}
     for row in result.rows:
         need = int(row.get("_slots") or 0)
-        if row.get("_eligible") != "Có" or need <= quota:
+        if row.get("_eligible") not in {"Có", REVIEW_DISPLAY} or need <= quota:
             continue
         ratio = quota / need
-        row["objTraThuong"] = {key: value * ratio for key, value in (row.get("objTraThuong") or {}).items()}
-        row["_rewards"] = [(sku, name, unit, qty * ratio) for sku, name, unit, qty in row.get("_rewards") or []]
+        row["objTraThuong"] = {key: round(value * ratio) for key, value in (row.get("objTraThuong") or {}).items()}
+        row["_rewards"] = [(sku, name, unit, round(qty * ratio)) for sku, name, unit, qty in row.get("_rewards") or []]
         row["_slots"] = quota
         extra = row.setdefault("extra", {})
         extra["Bội số"] = quota
@@ -869,10 +798,84 @@ def diagnostics(results: list[ui.ProgramResult]) -> list[dict[str, Any]]:
             "registered": len(rows),
             "with_sales": sum(1 for r in rows if (r.get("objThucHien") or {}).get(TARGET_ID, 0) > 0),
             "reached": sum(1 for r in rows if r.get("objThuongDuKien")),
-            "display_required": bool(extra and extra[0].get("Trưng bày yêu cầu")),
+            "display_required": bool(extra and extra[0].get("Trưng bày yêu cầu") not in ("", "Không áp dụng")),
             "display_passed": sum(1 for e in extra if e.get("Kết quả trưng bày") == DISPLAY_PASS),
             "eligible": sum(1 for e in extra if e.get("Đủ điều kiện trả thưởng") == "Có"),
             "review_display": sum(bool(row.get("_review_display", row.get("_eligible") == REVIEW_DISPLAY))
                                   for row in rows),
         })
     return out
+
+
+UNREGISTERED = "Mua đạt mức CT nhưng không có trong danh sách khách đăng ký của CT trên DMS"
+OTHER_UNIT = "Mua SP của CT bằng ĐVT không khai trong CT (DMS không quy đổi nên không cộng)"
+
+
+def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]],
+                    regions: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Programme sales the calculator does not count, to explain a customer missing from BaoCao.
+
+    * a buyer of the programme SKUs who is registered in no level of the programme, listed
+      once per programme with the highest level its purchases alone would reach;
+    * a registered customer's sales of a programme SKU in a unit its level does not declare.
+    """
+    by_customer: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for line in lines:
+        by_customer[line["customer"]].append(line)
+    families: dict[str, list[Rule]] = collections.defaultdict(list)
+    for program in programs:
+        with contextlib.suppress(ValueError):
+            rule = parse_rule(program)
+            families[program_prefix(rule.name)].append(rule)
+    rows = []
+
+    def row(rule: Rule, customer: str, reason: str, matched: list[dict[str, Any]], units: str) -> dict[str, Any]:
+        raw = matched[0].get("raw") or {}
+        return {"Mã CT": program_prefix(rule.name), "Mức CT": bonus_code(rule.name), "Tên CT": rule.name,
+                "Vùng": (regions or {}).get(customer, ""), "Mã Khách hàng": matched[0]["code"],
+                "Tên Khách hàng": ui.text(raw.get("ten_kh")), "Lý do": reason,
+                "Mã SP": ", ".join(sorted({line["sku"] for line in matched})),
+                "ĐVT bán": ", ".join(sorted({line["unit"] for line in matched})), "ĐVT khai trong CT": units,
+                "Số lượng": sum(line["quantity"] for line in matched),
+                "Thành tiền": sum(line["amount"] for line in matched),
+                "Số đơn": len({ui.text((line.get("raw") or {}).get("ma_phieu")) for line in matched} - {""})}
+
+    for rules in families.values():
+        registered = set().union(*(rule.customers for rule in rules))
+        skus = set().union(*(rule.units for rule in rules))
+
+        for customer, bought in by_customer.items():
+            bought = [line for line in bought if line["sku"] in skus]
+            if not bought:
+                continue
+            if customer not in registered:
+                best = None
+                for rule in sorted(rules, key=lambda r: r.tiers[0].minimum if r.tiers else r.minimum):
+                    counted = [line for line in bought if line["unit"] in rule.units.get(line["sku"], ())]
+                    actual = sum(line["amount"] if rule.kind == AMOUNT else line["quantity"] for line in counted)
+                    if counted and actual >= (rule.tiers[0].minimum if rule.tiers else rule.minimum):
+                        best = (rule, counted)
+                if best:
+                    units = "/".join(sorted({u for us in best[0].units.values() for u in us}))
+                    rows.append(row(best[0], customer, UNREGISTERED, best[1], units))
+                continue
+            for rule in rules:
+                if customer not in rule.customers:
+                    continue
+                other = [line for line in bought if line["sku"] in rule.units and line["unit"]
+                         and line["unit"] not in rule.units[line["sku"]]]
+                if other:
+                    units = "/".join(sorted({u for us in rule.units.values() for u in us}))
+                    rows.append(row(rule, customer, OTHER_UNIT, other, units))
+    return rows
+
+
+def coverage_gaps(programs: list[dict[str, Any]], lines: list[dict[str, Any]]) -> dict[str, Any]:
+    """PII-free counts of uncounted programme sales plus Bill line statuses."""
+    counts: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    for r in uncounted_sales(programs, lines):
+        counts[r["Mức CT"][:40]]["unregistered" if r["Lý do"] == UNREGISTERED else "other_unit"] += 1
+    statuses = collections.Counter(ui.text((line.get("raw") or {}).get("trang_thai")) or "(trống)"
+                                   for line in lines)
+    return {"programmes": {code: dict(c) for code, c in counts.items()},
+            "bill_line_statuses": dict(statuses.most_common(10))}
