@@ -56,6 +56,14 @@ def bill(rows):
 
 
 class RuleTests(unittest.TestCase):
+    def test_unregistered_buyer_is_listed_once_at_the_highest_level_reached(self):
+        level1 = {**qty_program(pid="1" * 24, minimum=72, customers=(C1,)), "name": "006/TB/GT/01/2026_Q4 MỨC 1"}
+        level2 = {**qty_program(pid="2" * 24, minimum=144, customers=(C2,)), "name": "006/TB/GT/01/2026_Q4 MỨC 2"}
+        lines = calc.sold_lines(bill([{"so_luong": 150, "ID_khachhang": C3, "ma_kh": "BIDU010144"}]), OCT1, OCT31)
+        rows = calc.uncounted_sales([level1, level2], lines, {C3: "Miền Nam"})
+        self.assertEqual([(r["Mã CT"], r["Mức CT"], r["Vùng"], r["Số lượng"]) for r in rows],
+                         [("006/TB/GT/01/2026_Q4", "006/TB/GT/01/2026_Q4 - Mức 2", "Miền Nam", 150)])
+
     def test_uncounted_sales_explain_unregistered_buyers_and_other_units(self):
         c3, c4 = "c" * 24, "d" * 24
         detail = bill([{"so_luong": 5, "ten_dvt": "Thùng", "ma_dvt": "Thùng"},  # registered, other unit
@@ -63,7 +71,7 @@ class RuleTests(unittest.TestCase):
                        {"so_luong": 10, "ID_khachhang": c4, "ma_kh": "BIDU010271", "ma_phieu": "DH4"}])
         lines = calc.sold_lines(detail, OCT1, OCT31)
         rows = calc.uncounted_sales([qty_program(customers=(C1,))], lines)
-        self.assertEqual({(r["Mã Khách hàng"], r["Lý do"], r["ĐVT bán"], r["Số lượng"]) for r in rows},
+        self.assertEqual({(r["Mã Khách hàng"], r["Lý do"], r["ĐVT bán"], r["Số lượng"]) for r in rows},  # BIDU010271 < min
                          {("KHHO112323", calc.OTHER_UNIT, "Thùng", 5), ("BIDU010132", calc.UNREGISTERED, "Chai", 80)})
         gaps = calc.coverage_gaps([qty_program(customers=(C1,))], lines)
         self.assertEqual(list(gaps["programmes"].values()), [{"other_unit": 1, "unregistered": 1}])

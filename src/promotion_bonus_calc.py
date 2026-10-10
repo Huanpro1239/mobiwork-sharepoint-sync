@@ -533,54 +533,65 @@ def compute(
     return results, issues
 
 
-UNREGISTERED = "Đạt mức CT nhưng không có trong danh sách khách đăng ký CT trên DMS"
+UNREGISTERED = "Mua đạt mức CT nhưng không có trong danh sách khách đăng ký của CT trên DMS"
 OTHER_UNIT = "Mua SP của CT bằng ĐVT không khai trong CT (DMS không quy đổi nên không cộng)"
 
 
-def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Programme sales the calculator does not count, per programme level × customer × SKU/unit.
+def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]],
+                    regions: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Programme sales the calculator does not count, to explain a customer missing from BaoCao.
 
-    * a buyer of the programme SKUs (declared unit) who is not registered, listed only when
-      the purchases alone reach the programme minimum (would qualify if registered);
-    * a registered customer's sales of a programme SKU in a unit the programme does not declare.
+    * a buyer of the programme SKUs who is registered in no level of the programme, listed
+      once per programme with the highest level its purchases alone would reach;
+    * a registered customer's sales of a programme SKU in a unit its level does not declare.
     """
-    by_sku: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    by_customer: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for line in lines:
-        by_sku[line["sku"]].append(line)
-    rows = []
+        by_customer[line["customer"]].append(line)
+    families: dict[str, list[Rule]] = collections.defaultdict(list)
     for program in programs:
-        try:
+        with contextlib.suppress(ValueError):
             rule = parse_rule(program)
-        except ValueError:
-            continue
-        minimum = rule.tiers[0].minimum if rule.tiers else rule.minimum
-        totals: dict[str, float] = collections.defaultdict(float)
-        found: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-        for sku, units in rule.units.items():
-            for line in by_sku.get(sku, []):
-                registered = line["customer"] in rule.customers
-                if not registered and line["unit"] in units:
-                    reason = UNREGISTERED
-                    totals[line["customer"]] += line["amount"] if rule.kind == AMOUNT else line["quantity"]
-                elif registered and line["unit"] and line["unit"] not in units:
-                    reason = OTHER_UNIT
-                else:
-                    continue
-                raw = line.get("raw") or {}
-                item = found.setdefault((line["customer"], reason, sku, line["unit"]), {
-                    "Mã CT": bonus_code(rule.name), "Tên CT": rule.name,
-                    "Mã Khách hàng": line["code"], "Tên Khách hàng": ui.text(raw.get("ten_kh")),
-                    "Lý do": reason, "Mã SP": sku, "Tên SP": rule.product_names.get(sku, ""),
-                    "ĐVT bán": line["unit"], "ĐVT khai trong CT": "/".join(sorted(units)),
-                    "Số lượng": 0.0, "Thành tiền": 0.0, "_orders": set()})
-                item["Số lượng"] += line["quantity"]
-                item["Thành tiền"] += line["amount"]
-                item["_orders"].add(ui.text(raw.get("ma_phieu")))
-        for (customer, reason, _, _), item in found.items():
-            if reason == UNREGISTERED and totals[customer] < minimum:
+            families[program_prefix(rule.name)].append(rule)
+    rows = []
+
+    def row(rule: Rule, customer: str, reason: str, matched: list[dict[str, Any]], units: str) -> dict[str, Any]:
+        raw = matched[0].get("raw") or {}
+        return {"Mã CT": program_prefix(rule.name), "Mức CT": bonus_code(rule.name), "Tên CT": rule.name,
+                "Vùng": (regions or {}).get(customer, ""), "Mã Khách hàng": matched[0]["code"],
+                "Tên Khách hàng": ui.text(raw.get("ten_kh")), "Lý do": reason,
+                "Mã SP": ", ".join(sorted({line["sku"] for line in matched})),
+                "ĐVT bán": ", ".join(sorted({line["unit"] for line in matched})), "ĐVT khai trong CT": units,
+                "Số lượng": sum(line["quantity"] for line in matched),
+                "Thành tiền": sum(line["amount"] for line in matched),
+                "Số đơn": len({ui.text((line.get("raw") or {}).get("ma_phieu")) for line in matched} - {""})}
+
+    for rules in families.values():
+        registered = set().union(*(rule.customers for rule in rules))
+        skus = set().union(*(rule.units for rule in rules))
+        for customer, bought in by_customer.items():
+            bought = [line for line in bought if line["sku"] in skus]
+            if not bought:
                 continue
-            orders = item.pop("_orders")
-            rows.append({**item, "Số đơn": len(orders - {""})})
+            if customer not in registered:
+                best = None
+                for rule in sorted(rules, key=lambda r: r.tiers[0].minimum if r.tiers else r.minimum):
+                    counted = [line for line in bought if line["unit"] in rule.units.get(line["sku"], ())]
+                    actual = sum(line["amount"] if rule.kind == AMOUNT else line["quantity"] for line in counted)
+                    if counted and actual >= (rule.tiers[0].minimum if rule.tiers else rule.minimum):
+                        best = (rule, counted)
+                if best:
+                    units = "/".join(sorted({u for us in best[0].units.values() for u in us}))
+                    rows.append(row(best[0], customer, UNREGISTERED, best[1], units))
+                continue
+            for rule in rules:
+                if customer not in rule.customers:
+                    continue
+                other = [line for line in bought if line["sku"] in rule.units and line["unit"]
+                         and line["unit"] not in rule.units[line["sku"]]]
+                if other:
+                    units = "/".join(sorted({u for us in rule.units.values() for u in us}))
+                    rows.append(row(rule, customer, OTHER_UNIT, other, units))
     return rows
 
 
@@ -588,7 +599,7 @@ def coverage_gaps(programs: list[dict[str, Any]], lines: list[dict[str, Any]]) -
     """PII-free counts of uncounted programme sales plus Bill line statuses."""
     counts: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     for row in uncounted_sales(programs, lines):
-        counts[row["Mã CT"][:40]]["unregistered" if row["Lý do"] == UNREGISTERED else "other_unit"] += 1
+        counts[row["Mức CT"][:40]]["unregistered" if row["Lý do"] == UNREGISTERED else "other_unit"] += 1
     statuses = collections.Counter(ui.text((line.get("raw") or {}).get("trang_thai")) or "(trống)"
                                    for line in lines)
     return {"programmes": {code: dict(c) for code, c in counts.items()},

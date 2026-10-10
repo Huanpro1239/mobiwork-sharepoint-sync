@@ -480,9 +480,11 @@ def _calc_month_frames(
                                f"có doanh số {item['with_sales']}|đạt {item['reached']}|trả {item['eligible']}")
             _github_notice(f"Promotion Bonus lũy kế từ {start:%d/%m/%Y} đến {last:%d/%m/%Y}", " ; ".join(summary))
     monthly_programs = [p for p in programs if p not in cumulative]
-    uncounted = calc.uncounted_sales(monthly_programs, lines)
+    regions = {c: ui.text(customer_map.get(c, {}).get("Vùng")) or meta.get("Vùng", "")
+               for c, meta in sales_metadata.items()}
+    uncounted = calc.uncounted_sales(monthly_programs, lines, regions)
     for start, group in groups.items():
-        uncounted.extend(calc.uncounted_sales(group, period_lines[start]))
+        uncounted.extend(calc.uncounted_sales(group, period_lines[start], regions))
     gaps = calc.coverage_gaps(monthly_programs, lines)
     manifest["coverage_gaps"] = gaps
     if verbose:  # plain log lines: GitHub keeps only 10 notices per step
@@ -669,7 +671,7 @@ def _calc_month_frames(
         frames[name] = summary_frames[name]
     if uncounted:  # why a customer's programme sales are not in BaoCao/Tong_hop
         frames["DoanhSoChuaTinh"] = pd.DataFrame(uncounted, dtype=object).sort_values(
-            ["Mã CT", "Mã Khách hàng", "Mã SP"], kind="stable")
+            ["Mã CT", "Vùng", "Mã Khách hàng"], kind="stable")
     manifest["uncounted_rows"] = len(uncounted)
     if not detail_issues.empty:
         from promotion_detail import OPTIONAL_MAPPING_FIELDS, UNIT_GAP

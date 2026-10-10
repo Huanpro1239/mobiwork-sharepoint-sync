@@ -628,6 +628,7 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
 ## Sheet DoanhSoChuaTinh – vì sao khách không có trong BaoCao (10/10/2026)
 - `BaoCao` chỉ gồm dòng bán **được tính vào CT**. Khách không có dòng nào được tính (không phát sinh doanh số,
   chưa đăng ký CT, mua khác ĐVT) sẽ không có trong `BaoCao`; khách đăng ký luôn có trong `Tong_hop`/`TheoDoiTichLuy`.
-- `DoanhSoChuaTinh` liệt kê theo mức CT × khách × SP/ĐVT: (1) khách mua SP của CT đạt mức tối thiểu nhưng không có
-  trong danh sách đăng ký CT trên DMS → cần đăng ký khách vào đúng mức CT trên DMS; (2) khách đã đăng ký nhưng mua
-  khác ĐVT khai trong CT (DMS không quy đổi). Tra mã khách ở sheet này trước khi báo thiếu.
+- `DoanhSoChuaTinh`: (1) khách mua SP của CT đạt mức tối thiểu nhưng không đăng ký mức nào của CT trên DMS – mỗi
+  khách × CT một dòng, ghi mức cao nhất đạt được và Vùng để lọc (CT áp dụng theo vùng, khách vùng khác không thuộc
+  CT) → nếu khách thuộc CT, cần đăng ký khách vào đúng mức CT trên DMS; (2) khách đã đăng ký nhưng mua khác ĐVT khai
+  trong CT (DMS không quy đổi). Tra mã khách ở sheet này trước khi báo thiếu.
