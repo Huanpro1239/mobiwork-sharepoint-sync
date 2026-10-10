@@ -453,6 +453,10 @@ def _calc_month_frames(
                 summary.append(f"{calc.bonus_code(item['name'])} ({region})|đăng ký {item['registered']}|"
                                f"có doanh số {item['with_sales']}|đạt {item['reached']}|trả {item['eligible']}")
             _github_notice(f"Promotion Bonus lũy kế từ {start:%d/%m/%Y} đến {last:%d/%m/%Y}", " ; ".join(summary))
+    gaps = calc.coverage_gaps([p for p in programs if p not in cumulative], lines)
+    manifest["coverage_gaps"] = gaps
+    if verbose:  # plain log lines: GitHub keeps only 10 notices per step
+        LOG.info("Promotion Bonus coverage %s: %s", f"{first:%m/%Y}", json.dumps(gaps, ensure_ascii=False))
     program_rows = _program_todo_rows(undeclared, issues)
     unit_gaps = calc.unit_gap_summary(results)
     manifest["unit_gap_lines"] = unit_gaps["missing_unit_line_count"]

@@ -533,6 +533,45 @@ def compute(
     return results, issues
 
 
+def coverage_gaps(programs: list[dict[str, Any]], lines: list[dict[str, Any]]) -> dict[str, Any]:
+    """Programme sales the calculator does not count (PII-free counts).
+
+    Per programme level: buyers of a programme SKU who are not registered, and
+    registered buyers' sales of a programme SKU in a unit the programme does not declare.
+    """
+    by_sku: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for line in lines:
+        by_sku[line["sku"]].append(line)
+    out = []
+    for program in programs:
+        try:
+            rule = parse_rule(program)
+        except ValueError:
+            continue
+        unregistered: dict[str, float] = collections.defaultdict(float)
+        other_units: dict[str, float] = collections.defaultdict(float)
+        other_unit_customers: set[str] = set()
+        for sku, units in rule.units.items():
+            for line in by_sku.get(sku, []):
+                value = line["amount"] if rule.kind == AMOUNT else line["quantity"]
+                if line["customer"] not in rule.customers:
+                    if line["unit"] in units:
+                        unregistered[line["customer"]] += value
+                elif line["unit"] and line["unit"] not in units:
+                    other_units[f"{sku}:{line['unit']}"] += line["quantity"]
+                    other_unit_customers.add(line["customer"])
+        if unregistered or other_units:
+            out.append({"code": bonus_code(rule.name)[:40], "registered": len(rule.customers),
+                        "unregistered_buyers": len(unregistered),
+                        "unregistered_reaching_min": sum(v >= rule.minimum for v in unregistered.values()),
+                        "other_unit_customers": len(other_unit_customers),
+                        "other_units": {k: round(v, 2) for k, v in sorted(other_units.items())[:4]},
+                        "declared_units": sorted({u for units in rule.units.values() for u in units})})
+    statuses = collections.Counter(ui.text((line.get("raw") or {}).get("trang_thai")) or "(trống)"
+                                   for line in lines)
+    return {"programmes": out, "bill_line_statuses": dict(statuses.most_common(10))}
+
+
 def unit_gap_summary(results: list[ui.ProgramResult]) -> dict[str, Any]:
     """Qualifying sale lines without unit (source keys only, never customer fields)."""
     lines: dict[tuple[str, str, str], dict[str, Any]] = {}
