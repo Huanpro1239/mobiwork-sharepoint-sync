@@ -624,3 +624,10 @@ thì chưa xác nhận thưởng, kể cả tháng kết thúc. Một master th�
 - Manifest `coverage_gaps` (và log `Promotion Bonus coverage`) đếm theo từng mức CT: khách mua SP của CT nhưng
   không có trong danh sách đăng ký, và doanh số SP của CT bán khác ĐVT khai báo (không được tính theo quy tắc DMS),
   cùng phân bố `trang_thai` dòng đơn. Chỉ là số đếm, không có thông tin khách.
+
+## Sheet DoanhSoChuaTinh – vì sao khách không có trong BaoCao (10/10/2026)
+- `BaoCao` chỉ gồm dòng bán **được tính vào CT**. Khách không có dòng nào được tính (không phát sinh doanh số,
+  chưa đăng ký CT, mua khác ĐVT) sẽ không có trong `BaoCao`; khách đăng ký luôn có trong `Tong_hop`/`TheoDoiTichLuy`.
+- `DoanhSoChuaTinh` liệt kê theo mức CT × khách × SP/ĐVT: (1) khách mua SP của CT đạt mức tối thiểu nhưng không có
+  trong danh sách đăng ký CT trên DMS → cần đăng ký khách vào đúng mức CT trên DMS; (2) khách đã đăng ký nhưng mua
+  khác ĐVT khai trong CT (DMS không quy đổi). Tra mã khách ở sheet này trước khi báo thiếu.

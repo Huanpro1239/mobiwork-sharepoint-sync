@@ -479,7 +479,11 @@ def _calc_month_frames(
                 summary.append(f"{calc.bonus_code(item['name'])} ({region})|đăng ký {item['registered']}|"
                                f"có doanh số {item['with_sales']}|đạt {item['reached']}|trả {item['eligible']}")
             _github_notice(f"Promotion Bonus lũy kế từ {start:%d/%m/%Y} đến {last:%d/%m/%Y}", " ; ".join(summary))
-    gaps = calc.coverage_gaps([p for p in programs if p not in cumulative], lines)
+    monthly_programs = [p for p in programs if p not in cumulative]
+    uncounted = calc.uncounted_sales(monthly_programs, lines)
+    for start, group in groups.items():
+        uncounted.extend(calc.uncounted_sales(group, period_lines[start]))
+    gaps = calc.coverage_gaps(monthly_programs, lines)
     manifest["coverage_gaps"] = gaps
     if verbose:  # plain log lines: GitHub keeps only 10 notices per step
         LOG.info("Promotion Bonus coverage %s: %s", f"{first:%m/%Y}", json.dumps(gaps, ensure_ascii=False))
@@ -595,6 +599,11 @@ def _calc_month_frames(
                   "bằng dòng TRẢ THƯỞNG. Tiền thưởng của quà hiện vật = số lượng quà × giá bán bình quân của "
                   "chính sản phẩm/ĐVT đó trong kỳ; không có giá bán thì để trống. Khách 'Tạm tính' hoặc "
                   "'Cần kiểm tra trưng bày' chưa phân bổ."))
+    notes.append(("DoanhSoChuaTinh",
+                  "Doanh số SP của CT không được cộng: khách mua đạt mức CT nhưng không có trong danh sách "
+                  "đăng ký CT trên DMS (cần đăng ký khách vào CT trên DMS), hoặc khách đăng ký nhưng mua khác "
+                  "ĐVT khai trong CT. Khách không có dòng bán tính vào CT sẽ không có trong sheet BaoCao; "
+                  "khách đăng ký luôn có trong Tong_hop và TheoDoiTichLuy."))
     notes.extend([
         ("Tiền mặt và quà", "TraThuong: từng khách × CT × khoản thưởng, gồm dự kiến và đủ điều kiện. "
                             "Đủ điều kiện là kết quả tính, chưa xác nhận đã chi tiền/giao quà. "
@@ -658,6 +667,10 @@ def _calc_month_frames(
     }
     for name in ("Tong_hop", "Ket_qua", "Kiem_tra"):
         frames[name] = summary_frames[name]
+    if uncounted:  # why a customer's programme sales are not in BaoCao/Tong_hop
+        frames["DoanhSoChuaTinh"] = pd.DataFrame(uncounted, dtype=object).sort_values(
+            ["Mã CT", "Mã Khách hàng", "Mã SP"], kind="stable")
+    manifest["uncounted_rows"] = len(uncounted)
     if not detail_issues.empty:
         from promotion_detail import OPTIONAL_MAPPING_FIELDS, UNIT_GAP
 

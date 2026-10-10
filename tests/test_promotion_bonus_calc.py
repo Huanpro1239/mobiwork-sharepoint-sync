@@ -56,6 +56,18 @@ def bill(rows):
 
 
 class RuleTests(unittest.TestCase):
+    def test_uncounted_sales_explain_unregistered_buyers_and_other_units(self):
+        c3, c4 = "c" * 24, "d" * 24
+        detail = bill([{"so_luong": 5, "ten_dvt": "Thùng", "ma_dvt": "Thùng"},  # registered, other unit
+                       {"so_luong": 80, "ID_khachhang": c3, "ma_kh": "BIDU010132", "ma_phieu": "DH3"},
+                       {"so_luong": 10, "ID_khachhang": c4, "ma_kh": "BIDU010271", "ma_phieu": "DH4"}])
+        lines = calc.sold_lines(detail, OCT1, OCT31)
+        rows = calc.uncounted_sales([qty_program(customers=(C1,))], lines)
+        self.assertEqual({(r["Mã Khách hàng"], r["Lý do"], r["ĐVT bán"], r["Số lượng"]) for r in rows},
+                         {("KHHO112323", calc.OTHER_UNIT, "Thùng", 5), ("BIDU010132", calc.UNREGISTERED, "Chai", 80)})
+        gaps = calc.coverage_gaps([qty_program(customers=(C1,))], lines)
+        self.assertEqual(list(gaps["programmes"].values()), [{"other_unit": 1, "unregistered": 1}])
+
     def test_parse_quantity_amount_and_single_product_rules(self):
         rule = calc.parse_rule(qty_program(maximum=30))
         self.assertEqual((rule.kind, rule.minimum, rule.maximum), (calc.QUANTITY, 72, 30))
