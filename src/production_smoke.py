@@ -82,10 +82,29 @@ def compare_report_frames(
                 rtol=0,
                 atol=0,
             )
-        except AssertionError as exc:
+        except AssertionError:
+            # Pandas includes complete column contents in assertion messages.
+            # These can contain customer telephone numbers, names and addresses:
+            # never write them to public CI logs, GitHub summaries or manifests.
+            differing_columns = []
+            for column in expected_selected.columns:
+                try:
+                    pd.testing.assert_series_equal(
+                        actual_selected[column],
+                        expected_selected[column],
+                        check_dtype=False,
+                        check_exact=False,
+                        rtol=0,
+                        atol=0,
+                    )
+                except AssertionError:
+                    differing_columns.append(str(column))
             raise AssertionError(
-                f"Sheet {sheet_name}: SharePoint partition does not match fresh MobiWork source: {exc}"
-            ) from exc
+                f"Sheet {sheet_name}: SharePoint partition does not match fresh MobiWork source; "
+                f"actual_rows={len(actual_selected)} expected_rows={len(expected_selected)} "
+                f"differing_columns={differing_columns[:20]} "
+                "(cell values suppressed to protect customer data)"
+            ) from None
         compared_rows += len(expected_selected)
 
     return {"compared_rows": compared_rows}
