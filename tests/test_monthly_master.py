@@ -284,6 +284,30 @@ class MonthlyMasterTests(unittest.TestCase):
         self.assertIn(SYNC_DATE_COLUMN, loaded["Data"].columns)
         self.assertEqual(loaded["Data"][SYNC_DATE_COLUMN].astype(str).tolist(), ["2026-08-21"])
 
+    def test_flat_customer_phones_and_ids_roundtrip_without_losing_leading_zeroes(self):
+        day = date(2026, 10, 10)
+        phones = ["0984989830", "001234567", "0984989831"]
+        records = [
+            {"ID": "0001", "makh": "000001", "sdt": phones[0]},
+            {"ID": "0002", "makh": "000002", "sdt": phones[1]},
+            {"ID": "0003", "makh": "000003", "sdt": phones[2]},
+        ]
+        frames = frames_from_records(records, "flat", day)
+        self.assertEqual(frames["Data"]["sdt"].tolist(), phones)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            current = Path.cwd()
+            try:
+                import os
+
+                os.chdir(temp_dir)
+                path = write_master(frames, "MoMoiKhachHang", day)
+                restored = read_master(path.read_bytes(), "flat")["Data"]
+            finally:
+                os.chdir(current)
+        self.assertEqual(restored["sdt"].tolist(), phones)
+        self.assertEqual(restored["makh"].tolist(), ["000001", "000002", "000003"])
+        self.assertEqual(restored["ID"].tolist(), ["0001", "0002", "0003"])
+
     def test_legacy_file_matching_is_conservative(self):
         canonical = "BaoCaoViengTham_2026-08.xlsx"
         self.assertFalse(

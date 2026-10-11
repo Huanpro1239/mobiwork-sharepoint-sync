@@ -9,10 +9,15 @@ from typing import Any
 import pandas as pd
 from openpyxl.utils import get_column_letter
 
-from excel_export import _assert_unique, _format_sheet, _validate_excel_size, build_order_frames
+from excel_export import CODE_COLUMNS, _assert_unique, _format_sheet, _validate_excel_size, build_order_frames
 
 
 SYNC_DATE_COLUMN = "_sync_date"
+# IDs, business codes and telephone numbers must survive Excel round trips as
+# text.  Pandas' default inference can remove leading zeroes when reading a
+# single day's workbook, even though the monthly workbook holds strings.
+TEXT_COLUMNS = CODE_COLUMNS | {"ID", "makh"}
+TEXT_DTYPES = {column: "string" for column in TEXT_COLUMNS}
 
 
 def master_filename(report_name: str, target_date: date) -> str:
@@ -43,6 +48,8 @@ def frames_from_records(
         return {"DonHang": header, "ChiTietSP": detail}
 
     frame = pd.json_normalize(records, sep="_") if records else pd.DataFrame()
+    for column in TEXT_COLUMNS.intersection(frame.columns):
+        frame[column] = frame[column].astype("string")
     frame.insert(0, SYNC_DATE_COLUMN, partition)
     _validate_excel_size(frame, "Data")
     return {"Data": frame}
@@ -55,16 +62,21 @@ def read_master(content: bytes, export_mode: str) -> dict[str, pd.DataFrame]:
     source = BytesIO(content)
     if export_mode == "order":
         frames = {
-            "DonHang": pd.read_excel(source, sheet_name="DonHang", engine="openpyxl"),
+            "DonHang": pd.read_excel(
+                source, sheet_name="DonHang", engine="openpyxl", dtype=TEXT_DTYPES
+            ),
         }
         source.seek(0)
         frames["ChiTietSP"] = pd.read_excel(
             source,
             sheet_name="ChiTietSP",
             engine="openpyxl",
+            dtype=TEXT_DTYPES,
         )
     else:
-        frames = {"Data": pd.read_excel(source, sheet_name="Data", engine="openpyxl")}
+        frames = {"Data": pd.read_excel(
+            source, sheet_name="Data", engine="openpyxl", dtype=TEXT_DTYPES
+        )}
 
     for sheet_name, frame in frames.items():
         if SYNC_DATE_COLUMN not in frame.columns:
