@@ -16,7 +16,7 @@ SYNC_DATE_COLUMN = "_sync_date"
 # IDs, business codes and telephone numbers must survive Excel round trips as
 # text.  Pandas' default inference can remove leading zeroes when reading a
 # single day's workbook, even though the monthly workbook holds strings.
-TEXT_COLUMNS = CODE_COLUMNS | {"ID"}
+TEXT_COLUMNS = CODE_COLUMNS | {"ID", "makh"}
 TEXT_DTYPES = {column: "string" for column in TEXT_COLUMNS}
 
 
