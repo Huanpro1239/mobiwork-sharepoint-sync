@@ -149,6 +149,30 @@ class PromotionReconciliationGateTests(unittest.TestCase):
         self.assertEqual(summary["eligible_customer_rows"], 1)
         self.assertNotIn("UNREGISTERED", repr(summary))
 
+    def test_dropped_uncounted_customer_blocks_publish_without_identity_in_error(self):
+        source = {
+            "Mức CT": "CT ĐÚNG MỨC 1", "Mã khách": "UNREGISTERED",
+            "Trạng thái đăng ký CT": "Chưa đăng ký",
+            "Nguyên nhân không được tính": calc.UNREGISTERED,
+        }
+        rows = [dict(source)]
+        with self.assertRaises(ReconciliationGateError) as raised:
+            evaluate(self.frames, self.results, self.manifest, uncounted=rows)
+        self.assertIn("uncounted_customer_coverage_mismatch", str(raised.exception))
+        self.assertNotIn("UNREGISTERED", str(raised.exception))
+
+        frames = deepcopy(self.frames)
+        extra = {col: None for col in calc.RECONCILIATION_COLUMNS}
+        extra.update(source)
+        frames["DoanhSoChuaTinh"] = pd.concat(
+            [frames["DoanhSoChuaTinh"], pd.DataFrame([extra])],
+            ignore_index=True,
+        )
+        summary = evaluate(frames, self.results, {
+            **self.manifest, "uncounted_rows": 3,
+        }, uncounted=rows)
+        self.assertEqual(summary["review"]["unregistered"], 1)
+
     def test_empty_programmes_still_produce_21_column_sheet(self):
         frames = {
             "DoanhSoChuaTinh": pd.DataFrame(columns=calc.RECONCILIATION_COLUMNS),
