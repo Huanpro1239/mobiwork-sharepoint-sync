@@ -579,11 +579,16 @@ def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]],
     by_customer: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for line in lines:
         by_customer[line["customer"]].append(line)
-    families: dict[str, list[Rule]] = collections.defaultdict(list)
+    families: dict[tuple[str, str, str, str, str], list[Rule]] = collections.defaultdict(list)
     for program in programs:
         with contextlib.suppress(ValueError):
             rule = parse_rule(program)
-            families[program_prefix(rule.name)].append(rule)
+            # Levels can share a printed programme prefix but belong to
+            # different regions, date windows or target kinds.
+            identity = (program_prefix(rule.name), norm(rule.region),
+                        str(program.get("startDate") or ""),
+                        str(program.get("endDate") or ""), rule.kind)
+            families[identity].append(rule)
     rows = []
 
     def row(rule: Rule, customer: str, reason: str, matched: list[dict[str, Any]], units: str,
