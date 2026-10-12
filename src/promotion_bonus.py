@@ -484,7 +484,10 @@ def _calc_month_frames(
                for c, meta in sales_metadata.items()}
     uncounted = calc.uncounted_sales(monthly_programs, lines, regions)
     for start, group in groups.items():
-        uncounted.extend(calc.uncounted_sales(group, period_lines[start], regions))
+        # A partial accumulation period cannot support a trustworthy
+        # unregistered/missing-customer conclusion.
+        if not missing_by_start[start]:
+            uncounted.extend(calc.uncounted_sales(group, period_lines[start], regions))
     gaps = calc.coverage_gaps(monthly_programs, lines)
     manifest["coverage_gaps"] = gaps
     if verbose:  # plain log lines: GitHub keeps only 10 notices per step
@@ -672,11 +675,12 @@ def _calc_month_frames(
     reconciled_rows = calc.build_reconciliation_rows(
         results, uncounted, issues=issues, missing_by_start=missing_by_start,
         period=f"{first:%m/%Y}")
-    if reconciled_rows:  # why a customer's programme sales are not in BaoCao/Tong_hop
-        reconciled_df = pd.DataFrame(reconciled_rows, dtype=object)
-        primary_cols = [c for c in calc.RECONCILIATION_COLUMNS if c in reconciled_df.columns]
-        frames["DoanhSoChuaTinh"] = reconciled_df[primary_cols].sort_values(
-            ["Mã CT", "Vùng", "Mã khách"], kind="stable")
+    # Keep the sheet and its 21-column contract present even for an empty report.
+    reconciled_df = pd.DataFrame(reconciled_rows, columns=calc.RECONCILIATION_COLUMNS)
+    frames["DoanhSoChuaTinh"] = (
+        reconciled_df.sort_values(["Mã CT", "Vùng", "Mã khách"], kind="stable")
+        if reconciled_rows else reconciled_df
+    )
     manifest["uncounted_rows"] = len(reconciled_rows)
     if not detail_issues.empty:
         from promotion_detail import OPTIONAL_MAPPING_FIELDS, UNIT_GAP
