@@ -74,7 +74,10 @@ class RuleTests(unittest.TestCase):
         self.assertEqual({(r["Mã Khách hàng"], r["Lý do"], r["ĐVT bán"], r["Số lượng"]) for r in rows},  # BIDU010271 < min
                          {("KHHO112323", calc.OTHER_UNIT, "Thùng", 5), ("BIDU010132", calc.UNREGISTERED, "Chai", 80)})
         gaps = calc.coverage_gaps([qty_program(customers=(C1,))], lines)
-        self.assertEqual(list(gaps["programmes"].values()), [{"other_unit": 1, "unregistered": 1}])
+        self.assertIsInstance(gaps["programmes"], list)  # stable published manifest contract
+        self.assertEqual(gaps["programmes"][0]["other_unit_customers"], 1)
+        self.assertEqual(gaps["programmes"][0]["unregistered_buyers"], 2)
+        self.assertEqual(gaps["programmes"][0]["unregistered_reaching_min"], 1)
 
     def test_parse_quantity_amount_and_single_product_rules(self):
         rule = calc.parse_rule(qty_program(maximum=30))
@@ -1078,8 +1081,9 @@ class PromotionBonusStandardizationTests(unittest.TestCase):
         self.assertEqual(rows[0]["Lý do"], calc.OUT_OF_REGION)
         self.assertEqual(rows[0]["Trạng thái xét thưởng"], "Không thuộc vùng áp dụng")
         self.assertNotIn("Đăng ký khách vào CT", rows[0]["Hướng xử lý"])
-        self.assertEqual(calc.coverage_gaps([program], lines)["programmes"][
-            calc.bonus_code(program["name"])[:40]]["unregistered"], 1)
+        coverage = calc.coverage_gaps([program], lines)["programmes"]
+        self.assertEqual(len(coverage), 1)
+        self.assertEqual(coverage[0]["unregistered_buyers"], 1)
 
     def test_unregistered_sales_are_excluded_but_reconcile_to_gross(self):
         program = qty_program(customers=(C1,), region="Miền Nam")
