@@ -213,7 +213,7 @@ def reached(actual: float, rule: Rule) -> bool:
 
 def reward_multiplier(actual: float, rule: Rule) -> int:
     if rule.tiers:
-        return next((reward_multiplier(actual, tier) for tier in rule.tiers if reached(actual, tier)), 0)
+        return next((reward_multiplier(actual, tier) for tier in reversed(rule.tiers) if reached(actual, tier)), 0)
     if not reached(actual, rule):
         return 0
     if rule.multiple and rule.minimum > 0:
@@ -470,7 +470,7 @@ def compute(
             meta = customers.get(customer_id, {})
             sales_meta = (sales_metadata or {}).get(customer_id, {})
             code = meta.get("customer_code") or code_of.get(customer_id, "")
-            matched = next((tier for tier in rule.tiers or (rule,) if reached(actual, tier)), None)
+            matched = next((tier for tier in (reversed(rule.tiers) if rule.tiers else (rule,)) if reached(actual, tier)), None)
             multiplier = reward_multiplier(actual, matched) if matched else 0
             selected_rewards = matched.rewards if matched else ()
             reached_at = ""
@@ -531,6 +531,378 @@ def compute(
         results.append(ui.ProgramResult(program, ui.FINAL if rows else ui.EMPTY, 1, rows,
                                         [target], rewards))
     return results, issues
+
+
+UNREGISTERED = "Mua đạt mức CT nhưng không có trong danh sách khách đăng ký của CT trên DMS"
+OTHER_UNIT = "Mua SP của CT bằng ĐVT không khai trong CT (DMS không quy đổi nên không cộng)"
+OUT_OF_REGION = "Không thuộc vùng áp dụng của CT"
+ELIGIBLE_STATUS = "Đã đăng ký, đạt và đủ điều kiện"
+NOT_REACHED = "Đã đăng ký nhưng chưa đạt"
+ZERO_SALES = "Không có doanh số trong kỳ"
+PENDING_DISPLAY = "Đang chờ chấm trưng bày"
+MISSING_HISTORY = "Thiếu dữ liệu nguồn hoặc lịch sử"
+UNSUPPORTED_RULE = "Chương trình chưa hỗ trợ đầy đủ quy tắc"
+
+RECONCILIATION_COLUMNS = [
+    "Mã CT",
+    "Tên CT",
+    "Mức CT",
+    "Mã khách",
+    "Tên khách",
+    "Vùng",
+    "NPP",
+    "Vùng áp dụng của CT",
+    "Trạng thái đăng ký CT",
+    "Doanh số phát sinh",
+    "Doanh số hợp lệ",
+    "Doanh số không được tính",
+    "ĐVT nguồn",
+    "ĐVT quy định",
+    "Ngưỡng tối thiểu",
+    "Ngưỡng tối đa",
+    "Mức đạt được",
+    "Trạng thái xét thưởng",
+    "Nguyên nhân không được tính",
+    "Hướng xử lý",
+    "Kỳ báo cáo",
+]
+
+
+def uncounted_sales(programs: list[dict[str, Any]], lines: list[dict[str, Any]],
+                    regions: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Programme sales the calculator does not count, to explain a customer missing from BaoCao.
+
+    * a buyer of the programme SKUs who is registered in no level of the programme, listed
+      once per programme with the highest level its purchases alone would reach;
+    * a registered customer's sales of a programme SKU in a unit its level does not declare.
+    """
+    by_customer: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for line in lines:
+        by_customer[line["customer"]].append(line)
+    families: dict[tuple[str, str, str, str, str], list[Rule]] = collections.defaultdict(list)
+    for program in programs:
+        with contextlib.suppress(ValueError):
+            rule = parse_rule(program)
+            # Levels can share a printed programme prefix but belong to
+            # different regions, date windows or target kinds.
+            identity = (program_prefix(rule.name), norm(rule.region),
+                        str(program.get("startDate") or ""),
+                        str(program.get("endDate") or ""), rule.kind)
+            families[identity].append(rule)
+    rows = []
+
+    def row(rule: Rule, customer: str, reason: str, matched: list[dict[str, Any]], units: str,
+            actual: float = 0.0, valid_sales: float = 0.0, invalid_sales: float = 0.0,
+            status: str = "", action: str = "", period: str = "",
+            reg_status: str = "", npp: str = "") -> dict[str, Any]:
+        raw = matched[0].get("raw") or {}
+        code = matched[0]["code"] or customer
+        cust_name = ui.text(raw.get("ten_kh"))
+        cust_region = (regions or {}).get(customer, "")
+        total_qty = sum(line["quantity"] for line in matched)
+        total_amt = sum(line["amount"] for line in matched)
+        skus_str = ", ".join(sorted({line["sku"] for line in matched}))
+        units_str = ", ".join(sorted({line["unit"] for line in matched}))
+        order_count = len({ui.text((line.get("raw") or {}).get("ma_phieu")) for line in matched} - {""})
+        return {
+            "Mã CT": program_prefix(rule.name),
+            "Tên CT": rule.name,
+            "Mức CT": bonus_code(rule.name),
+            "Mã khách": code,
+            "Tên khách": cust_name,
+            "Vùng": cust_region,
+            "NPP": npp or ui.text(raw.get("ten_npp")),
+            "Vùng áp dụng của CT": rule.region,
+            "Trạng thái đăng ký CT": reg_status or ("Đã đăng ký" if reason == OTHER_UNIT else "Chưa đăng ký"),
+            "Doanh số phát sinh": valid_sales + invalid_sales,
+            "Doanh số hợp lệ": valid_sales,
+            "Doanh số không được tính": invalid_sales,
+            "ĐVT nguồn": units_str,
+            "ĐVT quy định": units,
+            "Ngưỡng tối thiểu": rule.minimum,
+            "Ngưỡng tối đa": rule.maximum,
+            "Mức đạt được": bonus_code(rule.name),
+            "Trạng thái xét thưởng": status or ("Sai hoặc thiếu ĐVT" if reason == OTHER_UNIT else "Chưa đăng ký CT"),
+            "Nguyên nhân không được tính": reason,
+            "Hướng xử lý": action or ("Kiểm tra và chuẩn hóa ĐVT trên đơn hàng DMS" if reason == OTHER_UNIT else "Đăng ký khách vào CT trên DMS nếu thuộc đối tượng"),
+            "Kỳ báo cáo": period,
+            # Backward-compatible aliases:
+            "Mã Khách hàng": code,
+            "Tên Khách hàng": cust_name,
+            "Lý do": reason,
+            "ĐVT bán": units_str,
+            "ĐVT khai trong CT": units,
+            "Số lượng": total_qty,
+            "Thành tiền": total_amt,
+            "Số đơn": order_count,
+            "Mã SP": skus_str,
+        }
+
+    for rules in families.values():
+        registered = set().union(*(rule.customers for rule in rules))
+        skus = set().union(*(rule.units for rule in rules))
+        for customer, bought in by_customer.items():
+            bought = [line for line in bought if line["sku"] in skus]
+            if not bought:
+                continue
+            if customer not in registered:
+                best = None
+                for rule in sorted(rules, key=lambda r: (r.tiers[-1].minimum if r.tiers else r.minimum)):
+                    counted = [line for line in bought if line["sku"] in rule.units and line["unit"] in rule.units.get(line["sku"], ())]
+                    actual = sum(line["amount"] if rule.kind == AMOUNT else line["quantity"] for line in counted)
+                    is_highest = not any(other.minimum > rule.minimum and actual >= other.minimum for other in rules)
+                    if counted and (reached(actual, rule) or reward_multiplier(actual, rule) > 0 or (actual >= rule.minimum and is_highest)):
+                        best = (rule, counted, actual)
+                if best:
+                    rule_best, counted_best, actual_best = best
+                    units = "/".join(sorted({u for us in rule_best.units.values() for u in us}))
+                    total_sales = sum(line["amount"] if rule_best.kind == AMOUNT else line["quantity"] for line in bought)
+                    region = (regions or {}).get(customer, "")
+                    out_of_region = bool(rule_best.region and region and norm(region) != norm(rule_best.region))
+                    within_limit = reached(actual_best, rule_best)
+                    # A diagnosis cannot grant registration or payout eligibility.
+                    reason = OUT_OF_REGION if out_of_region else UNREGISTERED
+                    status = ("Không thuộc vùng áp dụng" if out_of_region else
+                              "Chưa đăng ký CT" if within_limit else "Cần xác minh ngưỡng tối đa")
+                    action = ("Đối chiếu vùng áp dụng và danh sách khách đăng ký trên DMS" if out_of_region else
+                              "Đối chiếu giới hạn mức thưởng trên DMS" if not within_limit else
+                              "Kiểm tra đối tượng trước khi đăng ký khách vào CT trên DMS")
+                    rows.append(row(rule_best, customer, reason, counted_best, units,
+                                    actual=actual_best, valid_sales=0.0, invalid_sales=total_sales,
+                                    status=status, action=action, reg_status="Chưa đăng ký"))
+                    if not within_limit:
+                        rows[-1]["Mức đạt được"] = "Chưa xác minh (vượt ngưỡng)"
+                continue
+            for rule in rules:
+                if customer not in rule.customers:
+                    continue
+                other = [line for line in bought if line["sku"] in rule.units and line["unit"]
+                         and line["unit"] not in rule.units[line["sku"]]]
+                if other:
+                    units = "/".join(sorted({u for us in rule.units.values() for u in us}))
+                    other_sales = sum(line["amount"] if rule.kind == AMOUNT else line["quantity"] for line in other)
+                    rows.append(row(rule, customer, OTHER_UNIT, other, units,
+                                    actual=other_sales, valid_sales=0.0, invalid_sales=other_sales,
+                                    status="Sai hoặc thiếu ĐVT",
+                                    action="Kiểm tra và chuẩn hóa ĐVT trên đơn hàng DMS",
+                                    reg_status="Đã đăng ký"))
+    return rows
+
+
+def build_reconciliation_rows(
+    results: list[ui.ProgramResult],
+    uncounted: list[dict[str, Any]],
+    *,
+    issues: list[dict[str, Any]] | None = None,
+    missing_by_start: dict[Any, set[str]] | None = None,
+    period: str = "",
+) -> list[dict[str, Any]]:
+    """Build the complete, filterable reconciliation rows for sheet DoanhSoChuaTinh.
+
+    Covers all 9 minimum classifications:
+    1. Đã đăng ký, đạt và đủ điều kiện
+    2. Đã đăng ký nhưng chưa đạt
+    3. Chưa đăng ký CT
+    4. Không thuộc vùng áp dụng
+    5. Sai hoặc thiếu ĐVT
+    6. Không có doanh số trong kỳ
+    7. Đang chờ chấm trưng bày
+    8. Thiếu dữ liệu nguồn hoặc lịch sử
+    9. Chương trình chưa hỗ trợ đầy đủ quy tắc
+    """
+    rows: list[dict[str, Any]] = []
+
+    # 1. Uncounted programme sales (unregistered buyers reaching threshold & other unit sales)
+    for u in uncounted:
+        item = dict(u)
+        if period and not item.get("Kỳ báo cáo"):
+            item["Kỳ báo cáo"] = period
+        rows.append(item)
+
+    # 2. Registered customers from computed results
+    for result in results:
+        rule: Rule | None = None
+        with contextlib.suppress(ValueError):
+            rule = parse_rule(result.program)
+        units_declared = "/".join(sorted({u for us in rule.units.values() for u in us})) if rule else ""
+        skus_declared = ", ".join(sorted(rule.units.keys())) if rule else ""
+        min_val = (rule.tiers[0].minimum if rule.tiers else rule.minimum) if rule else 0
+        max_val = (rule.tiers[-1].maximum if rule.tiers else rule.maximum) if rule else 0
+        region_ct = rule.region if rule else ""
+
+        for r_item in result.rows:
+            actual = float((r_item.get("objThucHien") or {}).get(TARGET_ID, 0.0))
+            eligible = r_item.get("_eligible", "")
+            cust_region = r_item.get("kv") or ""
+            cust_code = r_item.get("ma") or ""
+            cust_name = r_item.get("ten") or ""
+            npp = r_item.get("npp") or ""
+
+            if region_ct and cust_region and cust_region != region_ct:
+                status = "Không thuộc vùng áp dụng"
+                reason = f"Không thuộc vùng áp dụng (Khách thuộc {cust_region}, CT áp dụng {region_ct})"
+                action = "Kiểm tra vùng khách hàng và điều kiện áp dụng CT"
+                # Region mismatch is a master-data discrepancy, not proof the sales
+                # were invalid: DMS registered this customer for the programme.
+                valid_sales = actual
+                invalid_sales = 0.0
+            elif r_item.get("_unit_gaps"):
+                status = "Chờ xác nhận ĐVT"
+                reason = "Sai hoặc thiếu ĐVT"
+                action = "Kiểm tra và chuẩn hóa ĐVT trên đơn hàng DMS"
+                # 'actual' already consists solely of the matched, valid-unit lines.
+                # Missing-unit contributions cannot be quantified without confirmation.
+                valid_sales = actual
+                invalid_sales = None
+            elif eligible == "Có":
+                status = "Đạt doanh số, đủ điều kiện"
+                reason = "Đã đăng ký, đạt và đủ điều kiện"
+                action = "Đủ điều kiện chi trả theo quy định"
+                valid_sales = actual
+                invalid_sales = 0.0
+            elif eligible == REVIEW_DISPLAY:
+                status = "Chờ xác minh"
+                reason = "Đang chờ chấm trưng bày"
+                action = "Chờ DMS cập nhật kết quả chấm ảnh trưng bày"
+                valid_sales = actual
+                invalid_sales = 0.0
+            elif actual == 0:
+                status = "Không có doanh số"
+                reason = "Không có doanh số trong kỳ"
+                action = "Chưa phát sinh mua hàng trong kỳ"
+                valid_sales = 0.0
+                invalid_sales = 0.0
+            elif actual < min_val:
+                status = "Chưa đạt"
+                reason = "Đã đăng ký nhưng chưa đạt"
+                action = "Theo dõi doanh số các kỳ tiếp theo"
+                valid_sales = actual
+                invalid_sales = 0.0
+            else:
+                status = str(eligible) or "Chưa đạt"
+                reason = ("Vượt ngưỡng tối đa, cần đối chiếu DMS"
+                          if rule and rule.maximum and not reached(actual, rule)
+                          else "Đã đăng ký nhưng chưa đạt")
+                action = ("Xác minh ngưỡng tối đa và điều kiện từng mức CT trên DMS"
+                          if rule and rule.maximum and not reached(actual, rule)
+                          else "Theo dõi doanh số các kỳ tiếp theo")
+                valid_sales = actual
+                invalid_sales = 0.0
+
+            counted_lines = r_item.get("_lines") or []
+            lines_count = len(counted_lines)
+            source_units = ", ".join(sorted({
+                ui.text(line.get("ten_dvt")) or ui.text(line.get("ma_dvt"))
+                for line in counted_lines if isinstance(line, dict)
+            } - {""}))
+            actually_reached = bool(rule and reached(actual, rule))
+            rows.append({
+                "Mã CT": program_prefix(result.program_name),
+                "Tên CT": result.program_name,
+                "Mức CT": bonus_code(result.program_name),
+                "Mã khách": cust_code,
+                "Tên khách": cust_name,
+                "Vùng": cust_region,
+                "NPP": npp,
+                "Vùng áp dụng của CT": region_ct,
+                "Trạng thái đăng ký CT": "Đã đăng ký",
+                "Doanh số phát sinh": actual,
+                "Doanh số hợp lệ": valid_sales,
+                "Doanh số không được tính": invalid_sales,
+                "ĐVT nguồn": source_units,
+                "ĐVT quy định": units_declared,
+                "Ngưỡng tối thiểu": min_val,
+                "Ngưỡng tối đa": max_val,
+                "Mức đạt được": bonus_code(result.program_name) if actually_reached else "Chưa đạt",
+                "Trạng thái xét thưởng": status,
+                "Nguyên nhân không được tính": reason,
+                "Hướng xử lý": action,
+                "Kỳ báo cáo": period,
+                # compatibility aliases:
+                "Mã Khách hàng": cust_code,
+                "Tên Khách hàng": cust_name,
+                "Lý do": reason,
+                "ĐVT bán": source_units,
+                "ĐVT khai trong CT": units_declared,
+                "Số lượng": actual if rule and rule.kind == QUANTITY else 0,
+                "Thành tiền": actual if rule and rule.kind == AMOUNT else 0,
+                "Số đơn": lines_count,
+                "Mã SP": skus_declared,
+            })
+
+    # 3. Unsupported rule issues
+    for issue in issues or []:
+        prog_name = str(issue.get("Chương trình") or "")
+        rows.append({
+            "Mã CT": program_prefix(prog_name) or str(issue.get("Mã CT (id)", "")),
+            "Tên CT": prog_name,
+            "Mức CT": bonus_code(prog_name),
+            "Mã khách": "",
+            "Tên khách": "",
+            "Vùng": "",
+            "NPP": "",
+            "Vùng áp dụng của CT": "",
+            "Trạng thái đăng ký CT": "Chưa xác định",
+            "Doanh số phát sinh": 0.0,
+            "Doanh số hợp lệ": 0.0,
+            "Doanh số không được tính": 0.0,
+            "ĐVT nguồn": "",
+            "ĐVT quy định": "",
+            "Ngưỡng tối thiểu": 0,
+            "Ngưỡng tối đa": 0,
+            "Mức đạt được": "Chưa hỗ trợ",
+            "Trạng thái xét thưởng": "Chưa hỗ trợ",
+            "Nguyên nhân không được tính": "Chương trình chưa hỗ trợ đầy đủ quy tắc",
+            "Hướng xử lý": f"Cấu hình quy tắc bổ sung: {issue.get('Vấn đề', '')}",
+            "Kỳ báo cáo": period,
+            "Mã Khách hàng": "",
+            "Tên Khách hàng": "",
+            "Lý do": "Chương trình chưa hỗ trợ đầy đủ quy tắc",
+            "ĐVT bán": "",
+            "ĐVT khai trong CT": "",
+            "Số lượng": 0,
+            "Thành tiền": 0,
+            "Số đơn": 0,
+            "Mã SP": "",
+        })
+
+    # 4. Missing historical months for cumulative programmes
+    for start_dt, missing in (missing_by_start or {}).items():
+        if missing:
+            rows.append({
+                "Mã CT": "",
+                "Tên CT": f"Kỳ tích lũy từ {start_dt:%d/%m/%Y}",
+                "Mức CT": "",
+                "Mã khách": "",
+                "Tên khách": "",
+                "Vùng": "",
+                "NPP": "",
+                "Vùng áp dụng của CT": "",
+                "Trạng thái đăng ký CT": "Chưa xác định",
+                "Doanh số phát sinh": 0.0,
+                "Doanh số hợp lệ": 0.0,
+                "Doanh số không được tính": 0.0,
+                "ĐVT nguồn": "",
+                "ĐVT quy định": "",
+                "Ngưỡng tối thiểu": 0,
+                "Ngưỡng tối đa": 0,
+                "Mức đạt được": "Chờ dữ liệu",
+                "Trạng thái xét thưởng": "Chờ dữ liệu",
+                "Nguyên nhân không được tính": "Thiếu dữ liệu nguồn hoặc lịch sử",
+                "Hướng xử lý": f"Bổ sung dữ liệu đơn hàng tháng thiếu: {', '.join(sorted(missing))}",
+                "Kỳ báo cáo": period,
+                "Mã Khách hàng": "",
+                "Tên Khách hàng": "",
+                "Lý do": "Thiếu dữ liệu nguồn hoặc lịch sử",
+                "ĐVT bán": "",
+                "ĐVT khai trong CT": "",
+                "Số lượng": 0,
+                "Thành tiền": 0,
+                "Số đơn": 0,
+                "Mã SP": "",
+            })
+
+    return rows
 
 
 def coverage_gaps(programs: list[dict[str, Any]], lines: list[dict[str, Any]]) -> dict[str, Any]:
