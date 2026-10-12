@@ -727,6 +727,18 @@ def _calc_month_frames(
     if manifest["blocking_issues"] and not dry_run:
         raise ValueError("Promotion Bonus has invalid source values, identities or conversions; "
                          "run dry-run to inspect CanBoSung. Nothing published.")
+
+    # Validate the computed workbook *before* it can be uploaded to SharePoint.
+    # Pending display evidence stays in review; confirmed payouts never inherit
+    # projected rewards. Only PII-free aggregate counters enter the manifest.
+    from promotion_reconciliation_gate import evaluate
+
+    manifest["reconciliation_gate"] = evaluate(
+        frames, results, manifest, uncounted=uncounted
+    )
+    LOG.info("Promotion Bonus reconciliation gate %s", json.dumps(
+        manifest["reconciliation_gate"], ensure_ascii=False, sort_keys=True
+    ))
     return frames
 
 

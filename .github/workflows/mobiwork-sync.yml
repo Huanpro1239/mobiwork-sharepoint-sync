@@ -340,6 +340,22 @@ jobs:
                       f"invoice gift rows={coverage.get('invoice_gift_rows', 0)}")
           if bonus.get("reward_coverage"):
               lines.append(f"- Reward coverage: {reward_coverage_summary(bonus)}")
+          gate = bonus.get("reconciliation_gate")
+          if isinstance(gate, dict):
+              review = gate.get("review", {})
+              lines.extend([
+                  "",
+                  "### Promotion Bonus Reconciliation Gate (no customer PII)",
+                  "",
+                  f"- Gate status: **{gate.get('status', 'unknown')}**",
+                  f"- Registered rows verified: **{gate.get('registered_rows_checked', 0)}**",
+                  f"- DoanhSoChuaTinh rows: **{gate.get('reconciliation_rows', 0)}**",
+                  f"- Unregistered customer rows: **{review.get('unregistered', 0)}**",
+                  f"- Other unit rows: **{review.get('other_unit', 0)}**",
+                  f"- Pending display customers: **{review.get('pending_display', 0)}**",
+                  f"- Deferred reward ledger rows: **{review.get('deferred_reward_lines', 0)}**",
+                  f"- DMS business parity confirmed: **{gate.get('dms_equivalence_verified', False)}**",
+              ])
           for month, item in bonus.get("months", {}).items():
               lines.append(f"- {month}: {item.get('quality_status', 'failed' if item.get('error') else 'unknown')}; "
                            f"rows={item.get('customer_row_count', 0)}; eligible={item.get('eligible_rows', 0)}")
