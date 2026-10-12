@@ -58,6 +58,8 @@ def evaluate(
     frames: dict[str, pd.DataFrame],
     results: list[ProgramResult],
     manifest: dict[str, Any],
+    *,
+    uncounted: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Check row coverage, payout holds and reconciliation contract before publish.
 
@@ -100,6 +102,27 @@ def evaluate(
             "registered_customer_coverage_mismatch "
             f"missing_rows={missing_count} unexpected_rows={unexpected_count}"
         )
+
+    # The diagnostic source list is preserved separately until this check:
+    # comparing it with the actual sheet catches dropped unregistered buyers
+    # without exposing identities in issue text or the resulting manifest.
+    if uncounted is not None:
+        key_fields = ("Mức CT", "Mã khách", "Nguyên nhân không được tính")
+        expected_uncounted = Counter(
+            tuple(str(row.get(k) or "") for k in key_fields) for row in uncounted
+        )
+        actual_uncounted = Counter(
+            tuple(str(row.get(k) or "") for k in key_fields)
+            for row in reconciliation.to_dict("records")
+            if row["Trạng thái đăng ký CT"] == "Chưa đăng ký"
+            or row["Nguyên nhân không được tính"] == calc.OTHER_UNIT
+        )
+        if expected_uncounted != actual_uncounted:
+            raise ReconciliationGateError(
+                "uncounted_customer_coverage_mismatch "
+                f"missing_rows={sum((expected_uncounted - actual_uncounted).values())} "
+                f"unexpected_rows={sum((actual_uncounted - expected_uncounted).values())}"
+            )
 
     for row in rows:
         if row.get("_eligible") == "Có":
