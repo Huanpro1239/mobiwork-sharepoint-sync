@@ -1073,6 +1073,33 @@ class PromotionBonusStandardizationTests(unittest.TestCase):
         self.assertEqual(row["Doanh số không được tính"], 0)
         self.assertEqual(row["ĐVT nguồn"], "Chai")
 
+    def test_reconciliation_keeps_regional_programme_families_separate(self):
+        south = {**qty_program(pid="a" * 24, customers=(C1,), region="Miền Nam"),
+                 "name": "006/TB/GT/01/2026_Q4 MỨC 1"}
+        north = {**qty_program(pid="b" * 24, customers=(C2,), region="Miền Bắc"),
+                 "name": "006/TB/GT/01/2026_Q4 MỨC 1"}
+        lines = calc.sold_lines(bill([{"so_luong": 90, "ID_khachhang": C3}]),
+                                OCT1, OCT31)
+        rows = calc.uncounted_sales([south, north], lines, {C3: "Miền Nam"})
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({row["Vùng áp dụng của CT"] for row in rows},
+                         {"Miền Bắc", "Miền Nam"})
+        self.assertEqual(sum(row["Lý do"] == calc.OUT_OF_REGION for row in rows), 1)
+        self.assertEqual(sum(row["Lý do"] == calc.UNREGISTERED for row in rows), 1)
+
+    def test_reconciliation_keeps_programme_windows_separate(self):
+        early = {**qty_program(pid="a" * 24, customers=(C1,)),
+                 "name": "006/TB/GT/01/2026_Q4 MỨC 1",
+                 "startDate": "2026-10-01", "endDate": "2026-10-15"}
+        late = {**qty_program(pid="b" * 24, customers=(C2,)),
+                "name": "006/TB/GT/01/2026_Q4 MỨC 1",
+                "startDate": "2026-10-16", "endDate": "2026-10-31"}
+        lines = calc.sold_lines(bill([{"so_luong": 90, "ID_khachhang": C3}]),
+                                OCT1, OCT31)
+        # This helper is diagnostic only. The runner selects programme-period
+        # lines; grouping must not incorrectly merge two campaigns.
+        self.assertEqual(len(calc.uncounted_sales([early, late], lines)), 2)
+
     def test_unregistered_outside_region_is_not_suggested_for_enrolment(self):
         program = qty_program(customers=(C1,), minimum=72, region="Miền Nam")
         lines = calc.sold_lines(bill([{"so_luong": 80, "ID_khachhang": C3}]), OCT1, OCT31)
