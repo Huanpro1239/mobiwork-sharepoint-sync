@@ -733,7 +733,9 @@ def _calc_month_frames(
     # projected rewards. Only PII-free aggregate counters enter the manifest.
     from promotion_reconciliation_gate import evaluate
 
-    manifest["reconciliation_gate"] = evaluate(frames, results, manifest)
+    manifest["reconciliation_gate"] = evaluate(
+        frames, results, manifest, uncounted=uncounted
+    )
     LOG.info("Promotion Bonus reconciliation gate %s", json.dumps(
         manifest["reconciliation_gate"], ensure_ascii=False, sort_keys=True
     ))
