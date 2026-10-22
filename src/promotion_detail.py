@@ -19,7 +19,6 @@ from data_cham_anh_export import _monthly_master_path
 from customer_catalogue import enrich_customer_config
 from main import load_reports
 from monthly_master import master_filename
-from api_contract import api_total as _api_total, expect_object_list as _expect_object_list
 from excel_export import records_frame as _frame
 from promotion_catalogue import fetch_programs, load_config as load_bonus_config
 from report_context import CatalogueCache, enrich_cached
@@ -27,6 +26,7 @@ from report_runtime import env_bool, write_manifest
 from promotion_months import discover_bill_months, parse_requested_months, select_order_month
 from promotion_workbook import write_detail_workbook
 from mobiwork import MobiWorkClient
+from order_units import fetch_product_catalogue
 from region_mapping import employee_prefix, load_region_map
 from run_all_reports import incremental_target_dates
 from run_data_cham_anh import month_anchors
@@ -225,37 +225,7 @@ def source_unit(row: dict[str, Any], gift: bool, cfg: dict[str, Any] | None = No
 def enrich_product_config(client: MobiWorkClient, cfg: dict[str, Any]) -> dict[str, Any]:
     """Read the documented Product catalogue for brand and packaging-unit conversion."""
     cfg = json.loads(json.dumps(cfg))
-    seen_pages, products = set(), {}
-    expected, count = None, 0
-    for page in range(1, 10_001):
-        payload = client.get_json("https://openapi.mobiwork.vn/OpenAPI/V1/Product",
-                                  {"page_size": 200, "page_number": page},
-                                  operation_key="promotion_detail_products", request_number=page)
-        total = _api_total(payload, "Product catalogue")
-        if expected is None:
-            expected = total
-        elif total is not None and total != expected:
-            raise ValueError("Product catalogue total changed")
-        rows = _expect_object_list(payload, "data", "Product catalogue")
-        signature = json.dumps(rows, sort_keys=True, ensure_ascii=False)
-        if rows and signature in seen_pages:
-            raise ValueError("Product catalogue repeated page")
-        seen_pages.add(signature)
-        count += len(rows)
-        for row in rows:
-            sku = text(row.get("ma_sp"))
-            if not sku:
-                # Some documented catalogue entries have null codes; they cannot map a Bill SKU.
-                continue
-            if sku in products and products[sku] != row:
-                raise ValueError("Conflicting Product catalogue SKU")
-            products[sku] = row
-        if not rows or (expected is not None and count >= expected):
-            break
-    else:
-        raise ValueError("Product catalogue pagination safety limit")
-    if expected is not None and count != expected:
-        raise ValueError("Product catalogue total mismatch")
+    products = fetch_product_catalogue(client, "promotion_detail_products")
     for sku, row in products.items():
         brand = text(row.get("nhan_hieu"))
         if brand:
