@@ -149,7 +149,10 @@ def standardise_order_units(records: list[dict[str, Any]],
             for item in items:
                 line = standardise_item(item, conversions) if isinstance(item, dict) else item
                 if line is None:
-                    unconverted.add((_text(item.get("ma_sp")), _line_unit(item)))
+                    sku = _text(item.get("ma_sp"))
+                    # Lines without a SKU (e.g. cash discounts) have no hsqd to declare.
+                    if sku:
+                        unconverted.add((sku, _line_unit(item)))
                     line = item
                 converted.append(line)
             order[field] = converted
