@@ -105,6 +105,6 @@ def update_config(source: Path, destination: Path) -> dict[str, int]:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
-    parser.add_argument("--config", type=Path, default=Path("config/promotion_detail.json"))
+    parser.add_argument("--config", type=Path, default=Path("config/unit_conversions.json"))
     args = parser.parse_args()
     print(json.dumps(update_config(args.source, args.config)))

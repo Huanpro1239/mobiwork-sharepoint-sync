@@ -24,7 +24,7 @@ else:
 
 PRODUCT_URL = "https://openapi.mobiwork.vn/OpenAPI/V1/Product"
 PACK_UNITS = {"thùng", "két", "bình"}
-CONFIG = Path(__file__).resolve().parents[1] / "config/promotion_detail.json"
+CONFIG = Path(__file__).resolve().parents[1] / "config/unit_conversions.json"
 
 LOG = logging.getLogger("mobiwork_sync")
 
@@ -77,8 +77,8 @@ def fetch_product_catalogue(client: Any, operation_key: str) -> dict[str, dict[s
 
 
 def configured_conversions() -> dict[tuple[str, str], dict[str, Any]]:
-    """Reviewed conversions kept in config (product reference file / BoSung QuyDoi)."""
-    path = Path(os.environ.get("PROMOTION_DETAIL_CONFIG", str(CONFIG)))
+    """Reviewed conversions kept in config (imported from the product reference file)."""
+    path = Path(os.environ.get("UNIT_CONVERSIONS_CONFIG", str(CONFIG)))
     mapping = json.loads(path.read_text(encoding="utf-8")).get("unit_conversions", {})
     result = {}
     for key, value in mapping.items():

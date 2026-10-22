@@ -111,12 +111,13 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         self.assertNotIn('cron: "5 * * * *"', report)
         self.assertIn("DATA_CHAM_ANH_SKIP_WHEN_UNCHANGED", report)
 
-    def test_report_sync_refreshes_promotion_bonus_snapshot(self):
+    def test_report_sync_has_no_promotion_steps(self):
         report = self._read("mobiwork-sync.yml")
 
         self.assertIn("run: python src/pipeline.py", report)
-        self.assertIn("output/promotion_bonus_manifest.json", report)
         self.assertIn("group: mobiwork-sharepoint-production", report)
+        for removed in ("promotion", "PROMOTION_", "report_scope", "MOBIWORK_WEB_"):
+            self.assertNotIn(removed, report)
 
     def test_production_sync_preflight_is_lightweight(self):
         report = self._read("mobiwork-sync.yml")
@@ -219,21 +220,20 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-class PromotionBonusWorkflowTests(unittest.TestCase):
-    def test_bonus_failure_and_dry_run_artifacts(self):
+class SyncWorkflowTests(unittest.TestCase):
+    def test_pipeline_step_and_artifacts(self):
         text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
-        bonus = text.split('      - name: Run report pipeline')[1].split('      - name: Publish run summary')[0]
-        self.assertNotIn('continue-on-error', bonus)
-        self.assertIn("inputs.report_scope == 'all_reports'", bonus)
+        step = text.split('      - name: Run report pipeline')[1].split('      - name: Publish run summary')[0]
+        self.assertNotIn('continue-on-error', step)
         shared = text.split('\nenv:\n')[1].split('\njobs:')[0]
         self.assertIn('DRY_RUN:', shared)
         self.assertIn('MOBIWORK_TOKEN:', shared)
-        self.assertNotIn('MOBIWORK_TOKEN:', bonus)
+        self.assertNotIn('MOBIWORK_TOKEN:', step)
         self.assertEqual(text.count('uses: azure/login@'), 1)
         self.assertEqual(text.count('run: python src/pipeline.py\n'), 1)
         self.assertIn('output/pipeline_manifest.json', text)
+        self.assertIn('output/sync_manifest.json', text)
         self.assertNotIn('path: output/*.xlsx', text)
-        self.assertIn('output/promotion_bonus_manifest.json', text)
 
     def test_summary_executes_for_success_failure_and_skipped(self):
         import json
@@ -251,36 +251,24 @@ class PromotionBonusWorkflowTests(unittest.TestCase):
                 root = Path(tmp)
                 (root / 'output').mkdir()
                 if status:
-                    (root / 'output/promotion_bonus_manifest.json').write_text(
-                        json.dumps(dict(status=status, program_count=3, data_row_count=7,
-                                        dry_run=True, error='report incomplete' if status == 'failed' else '')),
+                    (root / 'output/sync_manifest.json').write_text(
+                        json.dumps(dict(status=status, sync_scope='today', source_row_count=7,
+                                        error='report incomplete' if status == 'failed' else '',
+                                        report_results=[dict(report='order', status=status, source_rows=7,
+                                                             master_rows=9, filename='DonDatHang.xlsx')])),
                         encoding='utf-8')
                 summary = root / 'summary.md'
-                # Replace the pathlib import with the temporary filesystem mapping.
                 script = code.replace('from pathlib import Path', '')
                 with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary),
                                              'PIPELINE_OUTCOME': 'skipped'}):
                     exec(compile(script, '<workflow summary>', 'exec'),
                          {'Path': lambda value, root=root: original_path(root / value)})
+                if not status:
+                    self.assertFalse(summary.exists())
+                    continue
                 content = summary.read_text(encoding='utf-8')
-                self.assertIn('## Promotion Bonus', content)
-                self.assertIn(status or 'skipped', content)
-                for label in ('Programs', 'Data rows', 'Target rows', 'Reward rows', 'Workbook bytes', 'Dry run'):
-                    self.assertIn(label, content)
+                self.assertIn('## MobiWork DMS Sync', content)
+                self.assertIn(status, content)
+                self.assertIn('DonDatHang.xlsx', content)
                 if status == 'failed':
                     self.assertIn('report incomplete', content)
-
-class PromotionDetailWorkflowTests(unittest.TestCase):
-    def test_detail_build_runs_after_sources_and_preserves_snapshot(self):
-        text = (WORKFLOWS / 'mobiwork-sync.yml').read_text(encoding='utf-8')
-        self.assertIn('run: python src/pipeline.py', text)
-        self.assertIn('PROMOTION_DETAIL_SCOPE:', text)
-        self.assertIn('output/promotion_detail_manifest.json', text)
-        self.assertIn('## Promotion detail report', text)
-        self.assertNotIn('path: output/*.xlsx', text)
-        import json
-        cfg = json.loads((ROOT / 'config/promotion_detail.json').read_text(encoding='utf-8'))
-        self.assertIs(cfg['publish_enabled'], True)
-        self.assertIs(cfg['allow_incomplete_publish'], True)
-        self.assertNotIn('publish_promotion_detail:', text)
-        self.assertNotIn('allow_incomplete_detail:', text)

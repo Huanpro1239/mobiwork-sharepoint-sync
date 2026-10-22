@@ -133,7 +133,7 @@ class JsonRequestTests(unittest.TestCase):
         payload = client.get_json(
             "https://example.test/report",
             {"id_ct": "p1"},
-            operation_key="promotion_bonus_report",
+            operation_key="order_unit_products",
             request_number=7,
         )
 
@@ -385,7 +385,7 @@ class PaginationIntegrityTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-class PromotionBonusHttpTests(unittest.TestCase):
+class JsonHttpRetryTests(unittest.TestCase):
     def test_json_retry_throttle_and_status_false(self):
         from unittest.mock import Mock, patch
         for error in (429, 503, requests.Timeout('timeout')):
