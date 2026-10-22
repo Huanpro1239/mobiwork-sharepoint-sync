@@ -13,8 +13,10 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 if __package__:
+    from .order_units import load_conversions, standardise_order_units
     from .region_mapping import enrich_visit_records
 else:
+    from order_units import load_conversions, standardise_order_units
     from region_mapping import enrich_visit_records
 
 
@@ -48,6 +50,8 @@ class ReportConfig:
     primary_key: list[str] = field(default_factory=list)
     required_fields: list[str] = field(default_factory=list)
     upsert_keys: list[str] = field(default_factory=list)
+    # Rewrite loose-unit order lines (e.g. Chai) into Thùng/Két/Bình: so_luong / hsqd.
+    normalize_units: bool = False
 
 
 def get_by_path(payload: Any, path: str | None) -> Any:
@@ -206,6 +210,7 @@ class MobiWorkClient:
         self.min_interval_seconds = min_interval_seconds
         self.max_retries = max_retries
         self._last_request_at = 0.0
+        self._unit_conversions: dict[tuple[str, str], dict[str, Any]] | None = None
         self.session = session or requests.Session()
         self.session.auth = HTTPBasicAuth(user, token)
         self.session.headers.update({"Accept": "application/json"})
@@ -457,6 +462,10 @@ class MobiWorkClient:
 
         if cfg.key == "visit":
             all_records = enrich_visit_records(all_records)
+        if cfg.normalize_units:
+            if self._unit_conversions is None:
+                self._unit_conversions = load_conversions(self)
+            all_records = standardise_order_units(all_records, self._unit_conversions)
         all_records = _deduplicate_exact_primary_keys(all_records, cfg)
         validate_records(all_records, cfg)
         return all_records

@@ -66,6 +66,15 @@ Với `order`/`bill`:
 - `ChiTietSP`: unique `ma_phieu + stt`.
 - `stt` thiếu/không hợp lệ được chuẩn hóa deterministic khi có thể; duplicate thực sự vẫn bị reject.
 
+Riêng `order` (`"normalize_units": true` trong `config/reports.json`), dòng `ChiTietSP` nhập bằng ĐVT lẻ (Chai, …) được ghi đè sang ĐVT chuẩn Thùng / Két / Bình ngay khi tải về:
+
+- `so_luong` = `so_luong` gốc / `hsqd`; `ten_dvt` (và `ma_dvt` nếu có) = ĐVT chuẩn.
+- `don_gia` và `thanh_tien` giữ nguyên như DMS gửi (`don_gia` vẫn là giá của ĐVT gốc, nên `so_luong × don_gia` không bằng `thanh_tien` trên dòng đã quy đổi).
+- `hsqd` ưu tiên danh mục `/OpenAPI/V1/Product` (`dvt_chan`/`dvt_le`/`hsqd`); SKU danh mục chưa khai thì dùng `unit_conversions` trong `config/promotion_detail.json`.
+- Dòng không tìm được `hsqd` giữ nguyên như DMS gửi (vẫn là Chai) và được ghi cảnh báo `missing hsqd` vào log để bổ sung quy cách trên DMS.
+
+Workbook không lưu số lượng/ĐVT gốc của dòng đã quy đổi. Các dòng đồng bộ trước thay đổi này vẫn là ĐVT gốc cho tới khi tháng đó được rebuild.
+
 ## 3. Visit và Vùng bán hàng
 
 Các trường sau có ý nghĩa khác nhau:
