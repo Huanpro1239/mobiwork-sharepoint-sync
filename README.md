@@ -1,6 +1,6 @@
 # MobiWork DMS → SharePoint
 
-Production data pipeline bằng Python để nạp 4 báo cáo lịch sử từ MobiWork DMS Open API (viếng thăm, mở mới khách hàng, đơn đặt hàng, đơn bán hàng) vào thư viện SharePoint `MobiWorkDMS`, kèm **Data chấm ảnh**, **Báo cáo trả thưởng** và **Chi tiết CTKM theo khách hàng**. Lệnh `src/pipeline.py` điều phối toàn bộ các bộ xuất hiện có theo thứ tự và dùng chung danh mục trong mỗi lượt chạy.
+Production data pipeline bằng Python để nạp 4 báo cáo lịch sử từ MobiWork DMS Open API (viếng thăm, mở mới khách hàng, đơn đặt hàng, đơn bán hàng) vào thư viện SharePoint `MobiWorkDMS`, kèm **Data chấm ảnh**. Lệnh `src/pipeline.py` điều phối các bộ xuất theo thứ tự.
 
 ```text
 MobiWork Open API
@@ -29,7 +29,7 @@ MobiWork Open API
             └─ Data_don_hang: chi tiết đơn bán hàng
 ```
 
-Data chấm ảnh dùng link ảnh gốc của MobiWork. Phần trả thưởng tính điều kiện doanh số từ đơn bán và đọc kết quả trưng bày từ DMS; các điều kiện chưa đủ chứng cứ được giữ ở trạng thái cần kiểm tra.
+Data chấm ảnh dùng link ảnh gốc của MobiWork. DonDatHang quy đổi dòng ĐVT lẻ (Chai, …) sang Thùng/Két/Bình theo `hsqd` (xem [data contract](docs/DATA_CONTRACT.md)).
 
 ## Bootstrap production trước khi chạy lịch
 
@@ -78,61 +78,6 @@ Các report được khai báo tại `config/reports.json`:
 | `new_customer` | `MoMoiKhachHang_YYYY-MM.xlsx` | flat | `ID` của record MobiWork |
 | `order` | `DonDatHang_YYYY-MM.xlsx` | header + detail | `ma_phieu` |
 | `bill` | `DonBanHang_YYYY-MM.xlsx` | header + detail | `ma_phieu` |
-
-Báo cáo trả thưởng được tính từ danh mục chương trình, đơn bán hàng theo ngày giao,
-danh mục khách và kết quả trưng bày (`PROMOTION_BONUS_SOURCE=auto` → `calc`).
-Cấu hình đích lưu tại `config/promotion_bonus.json`:
-
-```text
-06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
-├─ TheoDoiTichLuy: mẫu theo dõi KH tham gia, mục tiêu, kết quả và suất đạt từng tháng
-├─ KhuyenMaiDonHang: mẫu chi tiết CTKM với đơn/quà thực tế DMS, giữ 26 cột A–Z
-├─ TraThuong: từng khách/CT/khoản tiền hoặc quà, gồm dự kiến và đủ điều kiện
-├─ BaoCao: dòng bán tính vào CT và dòng TRẢ THƯỞNG của khách đủ điều kiện
-├─ Thuong_theo_don: thưởng phân bổ theo đơn/chương trình của khách đủ điều kiện
-├─ ChuongTrinh: toàn bộ mức trả thưởng trong kỳ và CTKM có trên đơn, kể cả CT chưa tính được
-├─ Tong_hop: chỉ tiêu và thưởng dự kiến theo khách/chương trình
-├─ Ket_qua: sản phẩm thưởng của khách đủ điều kiện
-├─ Kiem_tra: nguồn, kỳ và trạng thái chương trình
-├─ CanBoSung: chỉ tạo khi thiếu mapping hoặc lỗi nguồn/quy đổi
-└─ Can_xem: quy tắc, kỳ tích lũy, trưng bày hoặc số suất cần kiểm tra
-```
-
-Hai sheet đầu là hai góc nhìn theo các mẫu người dùng cung cấp, trong cùng file Current
-và bản lưu từng tháng, được cập nhật bởi pipeline hằng ngày. `TheoDoiTichLuy` lấy toàn bộ
-khách đăng ký ở các mức CT trong kỳ, kể cả chưa mua hàng. Mỗi khách/mức là 1 suất theo
-xác nhận người dùng; ngày đăng ký và người liên hệ thiếu nguồn để trống. Các cột tháng
-theo thời gian áp dụng CT, có năm để không lẫn hai năm. Mục tiêu và đơn vị lấy từ quy tắc
-CT; số suất đạt tính riêng từng tháng hoặc phần tăng/giảm của lũy kế tùy cách tính đã khai.
-Tổng tích lũy thể hiện doanh số/sản lượng từ đầu CT, còn lại là số âm chưa đạt mục tiêu
-tối thiểu của kỳ xét thưởng. Thiếu tháng nguồn/ĐVT thì để trống kỳ bị ảnh hưởng và tổng,
-giữ nguyên kết quả tháng đủ nguồn, ghi lý do ở `Thông tin nguồn`. Tháng tương lai/ngoài CT
-để trống. Số suất đạt chưa phải xác nhận chi thưởng; trạng thái đủ điều kiện lấy từ bộ
-tính hiện có. Danh sách tham gia hiện tại không xác nhận thời điểm tham gia trong quá khứ.
-
-`BaoCao` trả thưởng giữ 26 cột A–Z của mẫu và thêm cột phân bổ thưởng theo đơn,
-tiền mặt phân bổ, giá trị quà ước tính và tiền mặt trả thưởng. Cột Z chỉ chứa số lượng
-quà. Cột `Tiền thưởng phân bổ (đ)` giữ tổng tiền mặt + giá trị quà ước tính để tương thích;
-thiếu giá quà thì tổng này trống, nhưng tiền mặt riêng vẫn hiển thị.
-`TraThuong` dùng ĐVT gốc của quà; không cộng số lượng khác ĐVT. Đủ điều kiện tính toán
-chưa xác nhận đã chi tiền hoặc giao quà. Voucher giữ là quà theo mã nguồn.
-`ChuongTrinh` liệt kê toàn bộ mức trong danh mục trả thưởng được API chọn cho kỳ;
-phần CTKM chỉ liệt kê chương trình thực sự có trên đơn, không suy danh mục chưa phát sinh.
-`BaoCao` CTKM giữ đúng 26 cột. `KhuyenMaiDonHang` trong file trả thưởng dùng cùng
-quy tắc ngày đơn, mã CT và quy đổi, thêm dòng/ĐVT/số lượng/chiết khấu nguồn để đối soát.
-Phần phân bổ theo đơn dùng chức năng đã tích hợp trên
-main; giá trị quà hiện vật không có giá bán nguồn được để trống.
-
-Tài liệu API chính thức: [Danh sách chương trình trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonus/findPromotionBonus) và [Báo cáo trả thưởng](https://dms.mobiwork.vn/openapi/#/PromotionBonusReport/findPromotionBonusReport). Chi tiết tham số và mapping nằm trong [data contract](docs/DATA_CONTRACT.md#promotion-bonus-snapshot-contract).
-
-Workflow `MobiWork DMS Sync` cập nhật file Current và bản tháng
-`06_BaoCaoTraThuong/YYYY/MM/BaoCaoTraThuong_YYYY-MM.xlsx`. `promotion_history`
-tính các tháng đã có Bill monthly master, không ghi đè Current.
-Danh sách đăng ký và cây phòng ban là dữ liệu hiện tại, nên chưa cam kết tái tạo
-đầy đủ lịch sử hoặc khớp mọi dòng DMS. `CanBoSung` phân biệt thiếu thông tin mô tả
-với lỗi chặn xuất bản; lỗi nguồn, identity hoặc hệ số không hợp lệ không được đưa lên SharePoint.
-Thiếu quy cách giữ số lượng quy đổi trống, ghi rõ `unit_gaps`, không tự chọn hệ số.
-Nguồn `ui` và `openapi` vẫn có thể chọn khi chạy CLI để đối chiếu; không phải nguồn mặc định.
 
 `makh` của `new_customer` là mã nghiệp vụ và **không được giả định unique**: dữ liệu lịch sử đã có các record khác `ID` nhưng dùng lại cùng `makh`. Pipeline giữ đủ các record đó và dùng `ID` làm identity/upsert key. `order` và `bill` kiểm uniqueness header theo `ma_phieu`; detail kiểm theo `ma_phieu + stt`. `bill` còn đối chiếu `API total == fetched rows` trước khi chấp nhận dữ liệu.
 
@@ -216,20 +161,11 @@ python src\pipeline.py --check
 python src\pipeline.py --scope all_reports
 ```
 
-Lệnh chạy chung gọi lần lượt: 4 báo cáo nguồn → Data chấm ảnh → Trả thưởng → Chi tiết CTKM.
+Lệnh chạy chung gọi lần lượt: 4 báo cáo nguồn → Data chấm ảnh.
 Các lệnh cũ vẫn dùng được riêng để sửa lỗi/vận hành, nhưng workflow hằng ngày chỉ gọi pipeline một lần.
-Danh mục khách hàng, sản phẩm, nhân viên và mapping bổ sung được dùng chung khi cấu hình đầu vào giống nhau;
-mỗi lượt chạy tải mới và chỉ giữ bản đọc thành công trong bộ nhớ. Xem [kiến trúc](docs/ARCHITECTURE.md).
+Xem [kiến trúc](docs/ARCHITECTURE.md).
 
-Xuất lại cả trả thưởng và CTKM của tháng đã có Bill master:
-
-```powershell
-$env:PROMOTION_BONUS_MONTHS = "2026-09"
-python src\pipeline.py --scope promotion_history
-```
-
-`DRY_RUN=true` không ghi SharePoint. Chạy lịch sử vẫn đọc Bill master trên SharePoint;
-chạy toàn bộ ở chế độ này dùng master cục bộ vừa xuất cho các bước phụ thuộc.
+`DRY_RUN=true` không ghi SharePoint; Data chấm ảnh dùng master cục bộ vừa xuất.
 
 Dùng `.env.example` làm danh sách biến và thiết lập thông tin MobiWork/SharePoint
 trong môi trường của phiên shell trước khi chạy. Các lệnh Python không tự nạp file
@@ -252,9 +188,3 @@ coverage report
 - Runbook: [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
 - Data contract: [`docs/DATA_CONTRACT.md`](docs/DATA_CONTRACT.md)
 - Security: [`SECURITY.md`](SECURITY.md)
-
-Báo cáo chi tiết CTKM theo KH do `src/promotion_detail.py` xử lý trong pipeline chung, từ
-chi tiết Bill, theo 26 cột mẫu. W là tiền trước VAT; Z là hàng tặng thực tế. Một
-đơn có nhiều CTKM được ghi chung một ô ở dòng bán, giữ mỗi dòng bán đúng một lần;
-hàng tặng là dòng riêng để không nhân đôi số liệu. Xem quy tắc mapping, ĐVT và gate
-publish tại [Operations](docs/OPERATIONS.md#báo-cáo-chi-tiết-ctkm-theo-khách-hàng).

@@ -20,40 +20,6 @@ Tài liệu này là hợp đồng dữ liệu giữa MobiWork DMS, pipeline đ�
 | `order` | `DonDatHang_YYYY-MM.xlsx` | `DonHang` + `ChiTietSP` | `ma_phieu` | `ma_phieu` |
 | `bill` | `DonBanHang_YYYY-MM.xlsx` | `DonHang` + `ChiTietSP` | `ma_phieu` | `ma_phieu` |
 
-### Promotion Bonus snapshot contract
-
-**Phạm vi:** phần dưới mô tả adapter snapshot thô `PROMOTION_BONUS_SOURCE=openapi`.
-Nguồn mặc định hiện tại là `calc`; xem [vận hành trả thưởng](OPERATIONS.md#báo-cáo-trả-thưởng).
-Không dùng schema snapshot thô để đọc workbook tính toán `BaoCao/Tong_hop/Ket_qua`.
-
-Nguồn contract: [findPromotionBonus](https://dms.mobiwork.vn/openapi/#/PromotionBonus/findPromotionBonus) và [findPromotionBonusReport](https://dms.mobiwork.vn/openapi/#/PromotionBonusReport/findPromotionBonusReport), đối chiếu ngày 2026-10-05. Host thực thi là `https://openapi.mobiwork.vn`; host `dms.mobiwork.vn` phục vụ tài liệu.
-
-| Operation | Endpoint GET | Tham số bắt buộc | Tham số tùy chọn |
-|---|---|---|---|
-| `findPromotionBonus` | `/OpenAPI/V1/PromotionBonus` | `page_size` (tối đa 200), `page_number` (từ 1) | `ma`, `fromdate`, `todate`, `ptype`, `isActive`, `isArchived` |
-| `findPromotionBonusReport` | `/OpenAPI/V1/PromotionBonusReport` | `id_ct` (tối đa 5 ID phân cách bằng dấu phẩy) | `projectID`, `assignTo`, `idcustomer`, `sttt` |
-
-Catalogue trả full document, gồm chi tiết chương trình trong `products`. Sheet `ChuongTrinh` giữ `products` dưới dạng JSON Unicode, bao gồm `khuyen_mai`; không bỏ chi tiết này hoặc tự tính lại mức thưởng. `ptype` dạng object được flatten thành các cột tương ứng. Không chuyển `startDate`/`endDate` thành ngày dựa chỉ vào giá trị ví dụ, vì schema không cam kết đơn vị timestamp.
-
-Luồng snapshot không truyền bộ lọc catalogue tùy chọn hoặc bộ lọc report tùy chọn để không loại bỏ chương trình/khách hàng. `fromdate`/`todate` (định dạng `dd/MM/yyyy`) thuộc catalogue; chúng không phải tham số as-of của report. API dùng Basic Auth với tài khoản Open API đã được phân quyền cho cả hai operation; credential chỉ lấy từ secrets hiện có. CI không tải Swagger hoặc thêm probe tài liệu.
-
-`PromotionBonusReport` không thuộc monthly-master contract ở trên. API bắt buộc `id_ct` (tối đa 5 id/lần) và không có tham số ngày/as-of, vì vậy pipeline không được gắn dữ liệu hiện tại vào partition lịch sử.
-
-Canonical output:
-
-```text
-06_BaoCaoTraThuong/BaoCaoTraThuong_Current.xlsx
-```
-
-Workbook có 4 sheet:
-
-- `ChuongTrinh`: catalogue từ `/OpenAPI/V1/PromotionBonus`;
-- `Data`: dữ liệu báo cáo trả thưởng theo khách hàng;
-- `ChiTieu`: `arrChiTieu` của từng chương trình;
-- `TraThuong`: `arrTraThuong` của từng chương trình.
-
-Mọi dòng lấy từ report được bổ sung `promotion_program_id` và `promotion_program_name`. Pipeline gọi một `id_ct` mỗi request dù API cho phép tối đa 5, nhằm giữ mapping program → row rõ ràng khi schema response không cam kết một khóa program trên mọi row. `total` của từng report phải khớp số row `data`; sai lệch làm job fail trước publish.
-
 Với `new_customer`:
 
 - `ID` là identity ổn định của record MobiWork và là khóa dùng để validate/upsert.
@@ -70,7 +36,7 @@ Riêng `order` (`"normalize_units": true` trong `config/reports.json`), dòng `C
 
 - `so_luong` = `so_luong` gốc / `hsqd`; `ten_dvt` (và `ma_dvt` nếu có) = ĐVT chuẩn.
 - `don_gia` và `thanh_tien` giữ nguyên như DMS gửi (`don_gia` vẫn là giá của ĐVT gốc, nên `so_luong × don_gia` không bằng `thanh_tien` trên dòng đã quy đổi).
-- `hsqd` ưu tiên danh mục `/OpenAPI/V1/Product` (`dvt_chan`/`dvt_le`/`hsqd`); SKU danh mục chưa khai thì dùng `unit_conversions` trong `config/promotion_detail.json`.
+- `hsqd` ưu tiên danh mục `/OpenAPI/V1/Product` (`dvt_chan`/`dvt_le`/`hsqd`); SKU danh mục chưa khai thì dùng `unit_conversions` trong `config/unit_conversions.json`.
 - Dòng không tìm được `hsqd` giữ nguyên như DMS gửi (vẫn là Chai) và được ghi cảnh báo `missing hsqd` vào log để bổ sung quy cách trên DMS.
 
 Workbook không lưu số lượng/ĐVT gốc của dòng đã quy đổi. Các dòng đồng bộ trước thay đổi này vẫn là ĐVT gốc cho tới khi tháng đó được rebuild.
@@ -205,18 +171,9 @@ Các trường cần theo dõi gồm:
 
 Khi thêm/sửa report:
 
-1. cập nhật `config/reports.json` cho monthly report, hoặc `config/promotion_bonus.json` cho Promotion Bonus snapshot;
+1. cập nhật `config/reports.json`;
 2. khai báo `required_fields`, `primary_key`, `upsert_keys` khi monthly report có business key;
 3. thêm/đổi test trong `tests/`;
 4. chạy compile + Ruff + unit tests + coverage;
 5. chỉ merge khi CI xanh;
 6. nếu thay đổi schema workbook/mapping có thể ảnh hưởng lịch sử, bootstrap hoặc rebuild toàn bộ phạm vi tháng liên quan trước khi consumer refresh dashboard.
-
-Catalogue `total`, when supplied, must match raw and unique program counts and
-remain stable across pages. Without `total`, only an empty page confirms EOF.
-Exact duplicate IDs are collapsed only when no supplied total claims distinct
-programs; conflicting duplicates fail. All catalogue programs are included,
-including archived/inactive entries. Missing/null `arrChiTieu` and `arrTraThuong`
-are empty; `data` is required. Source fields cannot override request provenance.
-Excel strings are literal data; overlong cells, excessive columns and flattened
-column collisions are rejected before publish.
