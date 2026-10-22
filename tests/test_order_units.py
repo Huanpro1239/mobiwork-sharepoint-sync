@@ -44,6 +44,13 @@ class StandardiseOrderUnitsTests(unittest.TestCase):
         self.assertEqual(records[0]["san_pham"], source[0]["san_pham"])
         self.assertIn("SP3|Chai, SP9|Chai", logs.output[0])
 
+    def test_lines_without_sku_are_kept_and_not_reported(self):
+        source = order({"stt": 1, "ma_sp": "", "ten_dvt": "", "so_luong": 1},
+                       {"stt": 2, "ten_sp": "Chiết khấu", "so_luong": 1})
+        with self.assertNoLogs("mobiwork_sync", "WARNING"):
+            records = standardise_order_units(source, CONVERSIONS)
+        self.assertEqual(records[0]["san_pham"], source[0]["san_pham"])
+
     def test_promotional_lines_are_standardised_and_exported(self):
         records = standardise_order_units([{"ma_phieu": "DH1",
             "san_pham": [{"stt": 1, "ma_sp": "SP1", "ten_dvt": "Chai", "so_luong": 12}],
