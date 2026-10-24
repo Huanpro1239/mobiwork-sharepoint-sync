@@ -32,14 +32,16 @@ Với `order`/`bill`:
 - `ChiTietSP`: unique `ma_phieu + stt`.
 - `stt` thiếu/không hợp lệ được chuẩn hóa deterministic khi có thể; duplicate thực sự vẫn bị reject.
 
-Riêng `order` (`"normalize_units": true` trong `config/reports.json`), dòng `ChiTietSP` nhập bằng ĐVT lẻ (Chai, …) được ghi đè sang ĐVT chuẩn Thùng / Két / Bình ngay khi tải về:
+Cả `order` và `bill` (`"normalize_units": true` trong `config/reports.json`), dòng `ChiTietSP` nhập bằng ĐVT lẻ (Chai, …) được ghi đè sang ĐVT chuẩn Thùng / Két / Bình ngay khi tải về, gồm cả dòng bán hàng và khuyến mãi:
 
-- `so_luong` = `so_luong` gốc / `hsqd`; `ten_dvt` (và `ma_dvt` nếu có) = ĐVT chuẩn.
+- `so_luong` = `so_luong` gốc / `hsqd`; `ten_dvt` và `ma_dvt` = ĐVT chuẩn (bổ sung `ma_dvt` nếu source thiếu).
 - `don_gia` và `thanh_tien` giữ nguyên như DMS gửi (`don_gia` vẫn là giá của ĐVT gốc, nên `so_luong × don_gia` không bằng `thanh_tien` trên dòng đã quy đổi).
 - `hsqd` ưu tiên danh mục `/OpenAPI/V1/Product` (`dvt_chan`/`dvt_le`/`hsqd`); SKU danh mục chưa khai thì dùng `unit_conversions` trong `config/unit_conversions.json`.
 - Dòng không tìm được `hsqd` giữ nguyên như DMS gửi (vẫn là Chai) và được ghi cảnh báo `missing hsqd` vào log để bổ sung quy cách trên DMS.
 
 Workbook không lưu số lượng/ĐVT gốc của dòng đã quy đổi. Các dòng đồng bộ trước thay đổi này vẫn là ĐVT gốc cho tới khi tháng đó được rebuild.
+
+`Data_cham_anh` / `Data_don_hang` kế thừa số lượng và ĐVT từ monthly master `bill`, không quy đổi lần hai. Cột `ma_dvt` lấy tên đơn vị `ten_dvt` khi mã đơn vị trống. `visit` và `new_customer` không có dòng sản phẩm nên không áp dụng quy đổi.
 
 ## 3. Visit và Vùng bán hàng
 

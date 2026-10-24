@@ -71,6 +71,15 @@ class ImageUrlParsingTests(unittest.TestCase):
 
 
 class DataChamAnhTransformTests(unittest.TestCase):
+    def test_unit_name_fills_missing_codes_without_reconverting_quantities(self):
+        source = pd.DataFrame([
+            {"ma_dvt": missing, "ten_dvt": "Thùng", "so_luong": 2}
+            for missing in (None, "", "  ", float("nan"))
+        ] + [{"ma_dvt": "DVT01", "ten_dvt": "Thùng", "so_luong": 3}])
+        result = build_data_don_hang_frame(source)
+        self.assertEqual(result["ma_dvt"].tolist(), ["Thùng"] * 4 + ["DVT01"])
+        self.assertEqual(result["so_luong"].tolist(), [2, 2, 2, 2, 3])
+
     def test_data_anh_uses_vung_not_loai_kh_and_explodes_image_urls(self):
         source = pd.DataFrame(
             [

@@ -104,6 +104,7 @@
         "trang_thai": ""
       },
       "export_mode": "order",
+      "normalize_units": true,
       "primary_key": [
         "ma_phieu"
       ],

@@ -191,6 +191,11 @@ def build_data_anh_frame(source: pd.DataFrame) -> pd.DataFrame:
 def build_data_don_hang_frame(source: pd.DataFrame) -> pd.DataFrame:
     """Project the published Bill detail master to the exact approved sample schema."""
     frame = source.reindex(columns=DATA_DON_HANG_COLUMNS).copy()
+    if "ten_dvt" in source.columns:
+        frame["ma_dvt"] = [
+            _first_present(record, "ma_dvt", "ten_dvt")
+            for record in source.to_dict("records")
+        ]
     for column in _BILL_CODE_COLUMNS.intersection(frame.columns):
         frame[column] = frame[column].astype("string")
     for column in _BILL_NUMERIC_COLUMNS.intersection(frame.columns):

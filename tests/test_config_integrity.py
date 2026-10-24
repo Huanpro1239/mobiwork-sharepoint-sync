@@ -50,6 +50,10 @@ class ProductionConfigIntegrityTests(unittest.TestCase):
     def test_bill_has_api_total_completeness_check(self):
         self.assertEqual(self.reports["bill"].get("total_path"), "total")
 
+    def test_all_product_reports_normalize_units(self):
+        for report in self.reports.values():
+            self.assertEqual(bool(report.get("normalize_units")), report["export_mode"] == "order")
+
     def test_promotion_reports_are_not_configured(self):
         self.assertFalse(list((ROOT / "config").glob("promotion*.json")))
         self.assertTrue((ROOT / "config" / "unit_conversions.json").exists())
