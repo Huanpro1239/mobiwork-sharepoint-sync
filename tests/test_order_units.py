@@ -1,9 +1,12 @@
 import unittest
+import json
 from datetime import date
 from decimal import Decimal
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from src.excel_export import build_order_frames
+from src.data_cham_anh_export import build_data_don_hang_frame
 from src.mobiwork import MobiWorkClient, ReportConfig
 from src.order_units import catalogue_conversions, load_conversions, standardise_order_units
 
@@ -86,8 +89,32 @@ class StandardiseOrderUnitsTests(unittest.TestCase):
         self.assertEqual(first[0]["san_pham"][0]["so_luong"], 2.0)
         loader.assert_called_once()
 
-    def test_unflagged_report_is_left_untouched(self):
-        self.assertFalse(ReportConfig(key="bill", enabled=True, name="b", folder="b").normalize_units)
+    def test_production_order_and_bill_feed_standard_units_to_exports(self):
+        payload = json.loads((Path(__file__).resolve().parents[1] / "config/reports.json").read_text(encoding="utf-8"))
+        client = MobiWorkClient("u", "t", min_interval_seconds=0, max_retries=0)
+        for report in payload["reports"]:
+            if report["key"] not in {"order", "bill"}:
+                continue
+            with self.subTest(report=report["key"]):
+                source = [{"ma_phieu": "DH1", "san_pham": [
+                    {"stt": 1, "ma_sp": "SP1", "ten_dvt": "Chai", "so_luong": 48, "don_gia": 10000},
+                    {"stt": 2, "ma_sp": "SP1", "ten_dvt": "Thùng", "so_luong": 3},
+                ], "san_pham_km": [
+                    {"stt": 3, "ma_sp": "SP2", "ma_dvt": "Chai", "so_luong": 10},
+                ]}]
+                with patch("src.mobiwork.load_conversions", return_value=CONVERSIONS), \
+                        patch.object(client, "_get_with_retry", side_effect=[
+                            Mock(json=Mock(return_value={"data": source, "total": 1})),
+                            Mock(json=Mock(return_value={"data": [], "total": 1})),
+                        ]):
+                    records = client.fetch_report(ReportConfig(**report), date(2026, 10, 1))
+                _, detail = build_order_frames(records)
+                projected = build_data_don_hang_frame(detail)
+                self.assertEqual(detail["so_luong"].tolist(), [2.0, 3.0, 0.5])
+                self.assertEqual(projected["ma_dvt"].tolist(), ["Thùng", "Thùng", "Két"])
+                self.assertEqual(projected["so_luong"].tolist(), [2.0, 3.0, 0.5])
+                self.assertEqual(projected.iloc[0]["don_gia"], 10000)
+                self.assertEqual(source[0]["san_pham"][0]["so_luong"], 48)
 
 if __name__ == "__main__":
     unittest.main()

@@ -260,9 +260,10 @@ Python lấy Graph token bằng GitHub OIDC assertion mới mỗi lần xin toke
 
 Data contract chi tiết: `docs/DATA_CONTRACT.md`.
 
-## Quy đổi ĐVT DonDatHang
+## Quy đổi ĐVT DonDatHang và DonBanHang
 
-DonDatHang ghi đè dòng ĐVT lẻ (Chai, …) sang Thùng/Két/Bình theo `so_luong / hsqd` (xem [data contract](DATA_CONTRACT.md)).
+DonDatHang và DonBanHang ghi đè dòng ĐVT lẻ (Chai, …) sang Thùng/Két/Bình theo `so_luong / hsqd` (xem [data contract](DATA_CONTRACT.md)). Data chấm ảnh kế thừa số lượng và ĐVT đã quy đổi từ DonBanHang, không chia hệ số lần hai.
+Sau khi triển khai, chạy `MobiWork Full Month Rebuild` cho từng tháng lịch sử cần chuyển đổi; workflow tự refresh Data chấm ảnh cho tháng vừa rebuild. Chỉ backfill Data chấm ảnh từ master Bill cũ sẽ không chuyển đổi dữ liệu lịch sử. Đơn giá và thành tiền tiếp tục giữ nguyên từ DMS.
 `hsqd` ưu tiên danh mục Product trên DMS; SKU chưa khai trên DMS dùng `config/unit_conversions.json`.
 Dòng có mã SP mà thiếu hsqd được giữ nguyên và liệt kê trong cảnh báo `missing hsqd` của log.
 

@@ -131,8 +131,7 @@ def standardise_item(item: dict[str, Any],
     result = dict(item)
     result["so_luong"] = float(round(quantity / per_pack, 6))
     result["ten_dvt"] = conversion["target_unit"]
-    if _text(item.get("ma_dvt")):
-        result["ma_dvt"] = conversion["target_unit"]
+    result["ma_dvt"] = conversion["target_unit"]
     return result
 
 

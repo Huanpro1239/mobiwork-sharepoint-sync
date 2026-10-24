@@ -29,7 +29,7 @@ MobiWork Open API
             └─ Data_don_hang: chi tiết đơn bán hàng
 ```
 
-Data chấm ảnh dùng link ảnh gốc của MobiWork. DonDatHang quy đổi dòng ĐVT lẻ (Chai, …) sang Thùng/Két/Bình theo `hsqd` (xem [data contract](docs/DATA_CONTRACT.md)).
+Data chấm ảnh dùng link ảnh gốc của MobiWork. DonDatHang và DonBanHang quy đổi dòng ĐVT lẻ (Chai, …) sang Thùng/Két/Bình theo `hsqd`; Data chấm ảnh kế thừa số lượng và ĐVT đã quy đổi từ DonBanHang (xem [data contract](docs/DATA_CONTRACT.md)).
 
 ## Bootstrap production trước khi chạy lịch
 

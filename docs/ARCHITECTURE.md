@@ -19,7 +19,7 @@ Chúng dùng chung lock ghi SharePoint với workflow thường ngày.
 | `mobiwork`, `sharepoint`, `sharepoint_semantic` | Xác thực, request, retry, kiểm tra/publish dữ liệu |
 | `main`, `monthly_master` | Cấu hình báo cáo nguồn, partition theo ngày, ghép/rebuild monthly master |
 | `api_contract` | Kiểm tra cấu trúc danh sách và tổng bản ghi API |
-| `order_units`, `import_product_reference` | Quy đổi ĐVT DonDatHang sang Thùng/Két/Bình; nhập bảng quy đổi từ danh mục sản phẩm |
+| `order_units`, `import_product_reference` | Quy đổi ĐVT DonDatHang và DonBanHang sang Thùng/Két/Bình; nhập bảng quy đổi từ danh mục sản phẩm |
 | `region_mapping` | Gắn Vùng bán hàng cho báo cáo viếng thăm |
 | `excel_export` | Ghi Excel nguyên tử và định dạng |
 | `data_cham_anh_export` | Dựng workbook Data chấm ảnh từ monthly master |
