@@ -44,7 +44,8 @@ class FITExportClient:
         if not client_id or not client_secret:
             raise ValueError("FIT Access service credentials are not configured")
         self.session = session or requests.Session()
-        self.headers = {"CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": client_secret}
+        self.headers = {"CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": client_secret,
+                        "User-Agent": "FITAutoReport/1.0"}
         self.clock, self.sleep = clock, sleep
 
     def request(self, method, path, key=None, stream=False):

@@ -49,6 +49,7 @@ class FITReceivingTests(unittest.TestCase):
         for call in session.request.call_args_list:
             self.assertTrue(call.args[1].startswith(ORIGIN + ROOT))
             self.assertFalse(call.kwargs["allow_redirects"])
+            self.assertEqual(call.kwargs["headers"]["User-Agent"], "FITAutoReport/1.0")
 
     def test_login_expired_or_failed_never_downloads_or_publishes(self):
         for phase in ["needs_login", "failed", "expired", "unknown"]:

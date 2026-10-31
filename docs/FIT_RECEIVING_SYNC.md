@@ -23,6 +23,8 @@ Không bật lịch trước khi kiểm tra thành công toàn bộ luồng bằ
 
 ## Giới hạn xác thực FIT
 
+Worker có kiểm tra giữ phiên mỗi 15 phút khi `ERP_SYNC_KEEPALIVE_ENABLED=true`. Kiểm tra chỉ đọc màn hình Nhận hàng, không khởi động container Excel; bỏ qua khi đang xuất/đăng nhập hoặc có lượt đọc FIT khác. Cookie được máy chủ xoay vòng sẽ được lưu mã hóa lại, không làm thay đổi trạng thái xuất hoặc file đã hoàn tất.
+
 Lịch tự dùng phiên FIT đã lưu. Nếu FIT yêu cầu CAPTCHA/đăng nhập mới, runner dừng với `needs_login` và giữ file SharePoint cũ. Không thể cam kết tự đăng nhập vĩnh viễn qua CAPTCHA. Muốn bỏ hoàn toàn thao tác xác nhận FIT cần tài khoản/API tích hợp do FIT hỗ trợ.
 
 ## Các phần mã
@@ -31,4 +33,4 @@ Lịch tự dùng phiên FIT đã lưu. Nếu FIT yêu cầu CAPTCHA/đăng nh�
 - Runner: `src/fit_receiving_sync.py`; kiểm thử `tests/test_fit_receiving_sync.py`.
 - Worker ở dự án ERP cloud: `worker/src/receiving-sync.js`, giới hạn danh tính trong `worker/src/security.js`, định tuyến trong `worker/src/index.js`.
 
-Đã đạt Ruff/compile và 227 kiểm thử repository trên main mới nhất (coverage 69%), gồm 8 kiểm thử runner mới. Worker đạt 157 kiểm thử Node và đóng gói dry run. Nghiệm thu live cần xác minh danh tính máy, quyền ghi đúng thư mục và tải lại kiểm tra nội dung Excel trước khi bật lịch.
+Đã đạt Ruff/compile và 227 kiểm thử repository trên main mới nhất (coverage 69%), gồm 8 kiểm thử runner mới. Worker đạt 160 kiểm thử Node và đóng gói dry run. Nghiệm thu live cần xác minh danh tính máy, quyền ghi đúng thư mục và tải lại kiểm tra nội dung Excel trước khi bật lịch.
