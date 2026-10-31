@@ -1,0 +1,40 @@
+name: FIT Receiving to SharePoint
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 00:00 UTC = 07:00 Vietnam. GitHub can queue scheduled runs later.
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: fit-receiving-sharepoint
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # Automatic runs remain disabled until the source identity is approved/tested.
+    if: github.event_name == 'workflow_dispatch' || vars.FIT_RECEIVING_SYNC_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      FIT_CF_ACCESS_CLIENT_ID: ${{ secrets.FIT_CF_ACCESS_CLIENT_ID }}
+      FIT_CF_ACCESS_CLIENT_SECRET: ${{ secrets.FIT_CF_ACCESS_CLIENT_SECRET }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Export FIT and verify SharePoint replacement
+        run: python src/fit_receiving_sync.py
+      # No artifact upload: business workbooks stay in SharePoint, not Actions artifacts.
