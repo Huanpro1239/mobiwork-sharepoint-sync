@@ -1,0 +1,62 @@
+name: FIT Ban Hang NPP to SharePoint
+
+# FIT "ĐH Bán trong kỳ NPP" (Mức lấy Đơn hàng + Hóa Đơn) qua Worker erp-nhan-hang
+# -> SharePoint Planning: BCDonHangBanTrongKyNPP.xlsm, Lay So Hoa don.xlsm
+# Kích hoạt: Telegram /banhang [kỳ] (Worker gửi repository_dispatch fit_ban_hang),
+# chạy tay (ô ky) hoặc lịch 07:05 giờ VN (đầu tháng -> hôm nay).
+
+on:
+  repository_dispatch:
+    types:
+      - fit_ban_hang
+  workflow_dispatch:
+    inputs:
+      ky:
+        description: "Kỳ: trống = đầu tháng→hôm nay | thangtruoc | 10/2026 | 01/10/2026 15/10/2026"
+        required: false
+        default: ""
+  schedule:
+    # 00:05 UTC = 07:05 Vietnam (sau Nhận hàng 07:00). GitHub có thể xếp lịch trễ.
+    - cron: "5 0 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: fit-sales-sharepoint
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FIT_CF_ACCESS_CLIENT_ID: ${{ secrets.FIT_CF_ACCESS_CLIENT_ID }}
+      FIT_CF_ACCESS_CLIENT_SECRET: ${{ secrets.FIT_CF_ACCESS_CLIENT_SECRET }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      FIT_SALES_SP_FOLDER: ${{ vars.FIT_SALES_SP_FOLDER }}
+      KY: ${{ github.event.inputs.ky }}
+      START: ${{ github.event.client_payload.start }}
+      END: ${{ github.event.client_payload.end }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Export FIT sales and publish to SharePoint
+        run: |
+          if [[ -n "$START" ]]; then
+            python src/fit_sales_sync.py --start "$START" --end "$END"
+          else
+            python src/fit_sales_sync.py --ky "$KY"
+          fi
+      # Không upload artifact: file nghiệp vụ chỉ nằm trên SharePoint/Telegram.
