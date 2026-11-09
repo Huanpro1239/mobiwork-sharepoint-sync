@@ -68,6 +68,43 @@ class ClientTests(unittest.TestCase):
         self.assertFalse(kwargs["allow_redirects"])
         self.assertEqual(sleeps, [30])
 
+    def test_gateway_502_recovers_without_changing_report_period(self):
+        session = Mock()
+        session.get.side_effect = [
+            response(502, payload={"error": "FIT export timeout"}),
+            response(200, workbook()),
+        ]
+        sleeps = []
+        client = SalesExportClient("id", "secret", session=session, sleep=sleeps.append)
+        result = client.fetch(REPORTS[0], date(2026, 11, 1), date(2026, 11, 8))
+        self.assertEqual(result, workbook())
+        self.assertEqual(sleeps, [20])
+        self.assertEqual(session.get.call_count, 2)
+        for call in session.get.call_args_list:
+            self.assertEqual(call.kwargs["params"]["start"], "2026-11-01")
+            self.assertEqual(call.kwargs["params"]["end"], "2026-11-08")
+
+    def test_repeated_502_stops_after_three_attempts(self):
+        session = Mock()
+        session.get.return_value = response(502, payload={"error": "FIT export timeout"})
+        sleeps = []
+        client = SalesExportClient("id", "secret", session=session, sleep=sleeps.append)
+        with self.assertRaises(SalesSyncError) as ctx:
+            client.fetch(REPORTS[0], TODAY, TODAY)
+        self.assertEqual(session.get.call_count, 3)
+        self.assertEqual(sleeps, [20, 40])
+        self.assertIn("HTTP 502 sau 3 lần thử", str(ctx.exception))
+        self.assertIn("Chưa ghi SharePoint", str(ctx.exception))
+
+    def test_401_does_not_retry(self):
+        session = Mock()
+        session.get.return_value = response(401, payload={"code": "ERP_LOGIN_REQUIRED"})
+        with self.assertRaises(SalesSyncError):
+            SalesExportClient("id", "secret", session=session, sleep=lambda _: None).fetch(
+                REPORTS[0], TODAY, TODAY
+            )
+        self.assertEqual(session.get.call_count, 1)
+
     def test_clear_errors(self):
         cases = [
             (response(401, payload={"code": "ERP_LOGIN_REQUIRED"}), "/dangnhap"),

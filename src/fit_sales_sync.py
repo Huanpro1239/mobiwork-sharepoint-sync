@@ -167,9 +167,25 @@ class SalesExportClient:
                 raise SalesSyncError("Phiên FIT đã hết hạn. Gửi /dangnhap cho bot, trả lời mã rồi gửi lại /banhang.")
             if response.status_code in (301, 302, 303, 307, 308, 403) and not info:
                 raise SalesSyncError("Cloudflare Access từ chối: kiểm tra service token và Worker đã deploy bản có /banhang.")
-            if response.status_code in (502, 503, 504) and attempt < attempts:
-                self.sleep(20)
-                continue
+            if response.status_code in (429, 500, 502, 503, 504):
+                # Cloudflare/FIT export sometimes times out while preparing a workbook.
+                # Retry the same date range: never publish a partial or stitched workbook.
+                # Cap gateway-error retries to avoid wasting Actions minutes on a
+                # consistently broken upstream service.
+                retry_limit = min(attempts, 3)
+                if attempt < retry_limit:
+                    delay = min(20 * attempt, 60)
+                    print(f"[Worker] {report.muc}: HTTP {response.status_code} "
+                          f"({attempt}/{retry_limit}), thử lại sau {delay}s")
+                    self.sleep(delay)
+                    continue
+                detail = f" – {info['error']}" if info.get("error") else ""
+                raise SalesSyncError(
+                    f"{report.title}: Worker HTTP {response.status_code} sau "
+                    f"{retry_limit} lần thử{detail}. "
+                    "Kiểm tra phiên FIT/Worker; nếu báo cáo quá lâu, "
+                    "thử chạy tay với kỳ ngắn hơn. Chưa ghi SharePoint."
+                )
             detail = f" – {info['error']}" if info.get("error") else ""
             raise SalesSyncError(f"{report.title}: Worker trả HTTP {response.status_code}{detail}")
         raise SalesSyncError("Không lấy được báo cáo từ Worker.")
