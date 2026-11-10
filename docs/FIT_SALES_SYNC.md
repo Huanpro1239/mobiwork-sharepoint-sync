@@ -26,3 +26,20 @@ Lịch 07:05 VN (đầu tháng→hôm nay) và chạy tay (ô `ky`: trống | th
 Có sẵn: `FIT_CF_ACCESS_CLIENT_ID`, `FIT_CF_ACCESS_CLIENT_SECRET`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`.
 Thêm: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Worker cần secret `GITHUB_DISPATCH_TOKEN`
 (fine-grained, chỉ repo này, Contents: Read and write) và biến `GITHUB_REPO=Huanpro1239/mobiwork-sharepoint-sync`.
+
+## Chẩn đoán HTTP 502 an toàn (không thay đổi báo cáo production)
+
+Vào Actions → **FIT Ban Hang NPP to SharePoint** → Run workflow.
+Chọn nhánh chứa thay đổi (sau merge chọn `main`), nhập `ky=08/11/2026`
+và bật **probe_only**. Probe chỉ yêu cầu xuất báo cáo **Đơn hàng** trong một ngày;
+không ghi SharePoint, không tạo artifact và không gửi Telegram.
+
+- Probe vẫn HTTP 502: lỗi ở Worker/phiên FIT hoặc bước xuất báo cáo phía FIT; phải
+  kiểm tra log Worker tại route `/api/integrations/ban-hang-npp/file` (muc=don_hang).
+- Probe thành công nhưng chạy kỳ tháng lỗi: điều tra thời gian xuất/khối lượng
+  dữ liệu ở Worker. Không tự ghép nhiều workbook vì có thể mất macro, định dạng
+  hoặc sai nghiệp vụ.
+- Sau khi Worker được sửa, chạy lại kỳ tháng chuẩn và xác minh **cả hai file**
+  cùng được cập nhật thành công trên SharePoint.
+
+Không bật probe_only trên lịch; đây là bước kiểm tra thủ công.

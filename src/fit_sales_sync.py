@@ -281,8 +281,10 @@ def main(argv=None) -> int:
     parser.add_argument("--start", default="")
     parser.add_argument("--end", default="")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--probe", action="store_true",
+                        help="Only fetch the order report to diagnose FIT; no SharePoint/Telegram writes")
     args = parser.parse_args(argv)
-    notifier = notifier_from_env()
+    notifier = None if args.probe else notifier_from_env()
     try:
         if args.start:
             start, end = parse_period(f"{args.start} {args.end or args.start}")
@@ -295,6 +297,21 @@ def main(argv=None) -> int:
         if notifier:
             notifier.message(f"❌ /banhang: {exc}")
         return 2
+
+    if args.probe:
+        # A safe, read-only diagnostic, intended for a single day. The export
+        # still runs on FIT; never persist business data to runner artifacts.
+        if start != end:
+            print("[Probe] Chỉ cho phép một ngày; dùng --ky 08/11/2026.")
+            return 2
+        try:
+            print(f"[Probe] Kiểm tra FIT Đơn hàng: {start:%Y-%m-%d}")
+            data = client.fetch(REPORTS[0], start, end)
+            print(f"[Probe] OK: {len(data)} bytes, {workbook_extension(data)}")
+            return 0
+        except SalesSyncError as exc:
+            print(f"[Probe] FAILED: {exc}", file=sys.stderr)
+            return 1
 
     def graph_factory():
         from sharepoint_semantic import SemanticSharePointClient

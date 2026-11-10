@@ -15,6 +15,11 @@ on:
         description: "Kỳ: trống = đầu tháng→hôm nay | thangtruoc | 10/2026 | 01/10/2026 15/10/2026"
         required: false
         default: ""
+      probe_only:
+        description: "Chỉ kiểm tra FIT Đơn hàng trong 1 ngày, không ghi SharePoint/Telegram"
+        type: boolean
+        required: false
+        default: false
   schedule:
     # 00:05 UTC = 07:05 Vietnam (sau Nhận hàng 07:00). GitHub có thể xếp lịch trễ.
     - cron: "5 0 * * *"
@@ -42,6 +47,7 @@ jobs:
       KY: ${{ github.event.inputs.ky }}
       START: ${{ github.event.client_payload.start }}
       END: ${{ github.event.client_payload.end }}
+      PROBE_ONLY: ${{ github.event.inputs.probe_only }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -54,7 +60,10 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Export FIT sales and publish to SharePoint
         run: |
-          if [[ -n "$START" ]]; then
+          if [[ "$PROBE_ONLY" == "true" ]]; then
+            # Probe is deliberately manual-only, read-only, and single-day.
+            python src/fit_sales_sync.py --ky "$KY" --probe
+          elif [[ -n "$START" ]]; then
             python src/fit_sales_sync.py --start "$START" --end "$END"
           else
             python src/fit_sales_sync.py --ky "$KY"

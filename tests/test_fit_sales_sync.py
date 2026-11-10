@@ -122,6 +122,28 @@ class ClientTests(unittest.TestCase):
             SalesExportClient("", "")
 
 
+class ProbeTests(unittest.TestCase):
+    def test_probe_one_day_fetches_only_orders_and_never_publishes(self):
+        from unittest.mock import patch
+        from src.fit_sales_sync import main
+
+        client = Mock()
+        client.fetch.return_value = workbook()
+        with patch("src.fit_sales_sync.SalesExportClient", return_value=client), \
+             patch("src.fit_sales_sync.notifier_from_env", side_effect=AssertionError("no telegram")):
+            self.assertEqual(main(["--ky", "08/11/2026", "--probe"]), 0)
+        client.fetch.assert_called_once_with(REPORTS[0], date(2026, 11, 8), date(2026, 11, 8))
+
+    def test_probe_rejects_multi_day_before_fetching(self):
+        from unittest.mock import patch
+        from src.fit_sales_sync import main
+
+        client = Mock()
+        with patch("src.fit_sales_sync.SalesExportClient", return_value=client):
+            self.assertEqual(main(["--ky", "01/11/2026 08/11/2026", "--probe"]), 2)
+        client.fetch.assert_not_called()
+
+
 class PublishTests(unittest.TestCase):
     def test_names_and_macro_content_type(self):
         graph = Mock()
