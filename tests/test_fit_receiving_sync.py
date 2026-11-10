@@ -58,6 +58,28 @@ class FITReceivingTests(unittest.TestCase):
                 client.export("github-run-1")
             self.assertEqual(session.request.call_count, 2)
 
+    def test_failed_phase_reports_safe_code_and_job_for_worker_correlation(self):
+        client, session = self.client([
+            response(202, self.job()),
+            response(payload=self.job(phase="failed", errorCode="EXPORT_TIMEOUT")),
+        ])
+        with self.assertRaises(RuntimeError) as ctx:
+            client.export("github-run-1")
+        self.assertIn("code=EXPORT_TIMEOUT", str(ctx.exception))
+        self.assertIn("job=" + JOB, str(ctx.exception))
+        self.assertIn("SharePoint was not updated", str(ctx.exception))
+        self.assertEqual(session.request.call_count, 2)
+
+    def test_login_phase_explains_reauthentication_without_leaking_raw_error(self):
+        client, _ = self.client([
+            response(202, self.job()),
+            response(payload=self.job(phase="needs_login", code="secret leaked value")),
+        ])
+        with self.assertRaises(RuntimeError) as ctx:
+            client.export("github-run-1")
+        self.assertIn("/dangnhap", str(ctx.exception))
+        self.assertNotIn("secret leaked value", str(ctx.exception))
+
     def test_changed_job_period_and_bad_date_fail_closed(self):
         client, _ = self.client([response(202, self.job()), response(payload=self.job(phase="ready", end="2026-10-30"))])
         with self.assertRaises(ValueError):
