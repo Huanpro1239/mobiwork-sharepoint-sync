@@ -90,8 +90,24 @@ class FITExportClient:
                 raise ValueError("FIT changed the requested job or period")
             if status.get("phase") == "ready":
                 return self.download(job_id), f"Nhan_hang_{start[:4]}_{start[5:7]}.xlsx"
-            if status.get("phase") != "running":
-                raise RuntimeError(f"FIT export {status.get('phase', 'unknown')}; confirm the ERP session/status on the website. SharePoint was not updated")
+            phase = status.get("phase")
+            if phase != "running":
+                # Never log raw Worker error bodies: they can contain business data.
+                # A sanitized machine-readable code is enough to correlate with
+                # Cloudflare Worker logs without exposing session information.
+                code = status.get("errorCode") or status.get("error_code") or status.get("code")
+                safe_code = code if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", code) else None
+                suffix = f" (code={safe_code})" if safe_code else ""
+                if phase in ("needs_login", "expired"):
+                    raise RuntimeError(
+                        f"FIT export {phase}{suffix}: phiên FIT cần đăng nhập lại "
+                        "(Telegram /dangnhap). SharePoint was not updated"
+                    )
+                raise RuntimeError(
+                    f"FIT export {phase or 'unknown'}{suffix}, job={job_id}: "
+                    "check the Worker export job logs and FIT session. "
+                    "SharePoint was not updated"
+                )
             self.sleep(15)
         raise TimeoutError("FIT export did not finish within the allowed time; SharePoint was not updated")
 
